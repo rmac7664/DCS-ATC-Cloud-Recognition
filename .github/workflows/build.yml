@@ -20,8 +20,20 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Test suites (selftest, approach test, multiplayer test)
+        id: tests
+        continue-on-error: true
         shell: cmd
         run: call tests\alle.cmd
+
+      - name: Report test failures as annotations
+        if: steps.tests.outcome == 'failure'
+        shell: pwsh
+        run: |
+          foreach ($f in Get-ChildItem tmp\*.log -ErrorAction SilentlyContinue) {
+            $lines = Get-Content $f | Where-Object { $_ -match 'FAIL|FEHL|Unhandled|Exception|error' } | Select-Object -First 15
+            if (-not $lines) { $lines = Get-Content $f | Select-Object -Last 10 }
+            foreach ($l in $lines) { Write-Output "::warning title=$($f.Name)::$($l -replace '[\r\n]',' ')" }
+          }
 
       - name: Publish self-contained single-file exe
         shell: cmd
