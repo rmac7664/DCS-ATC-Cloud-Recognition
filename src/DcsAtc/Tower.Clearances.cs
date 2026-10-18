@@ -38,6 +38,7 @@ public partial class Tower
                     : FinalOk(Airfield.Opposite(rw)) && TailKt(w, Airfield.Opposite(rw)) <= 10 ? (Ifr ? $"Instrument conditions, due to terrain expect vectors for {ProcSay(Airfield.Opposite(rw))}. "
                                                                                                        : $"Due to terrain, straight in and instrument approaches runway {RwSay(Airfield.Opposite(rw))}. ")   // VMC too (Batumi 31 in use, Approach vectors straight in to 13)
                     : Ifr ? $"Instrument conditions, due to terrain expect vectors for circling approach runway {RwSay(rw)}. " : "") +
+               string.Concat(F.Notams.Select(x => Cap(x) + ". ")) +   // FI5
                $"Advise on initial contact you have information {word}.";
     }
 
@@ -239,7 +240,7 @@ public partial class Tower
     /// Aligned = with landing indicators, heading within 10° and in the inner third of the runway spacing (Dubai 383 m): not when turning in across the other, not in the overhead approach.
     string Aligned(Telemetry t)
     {
-        var (r, p) = (F.End(Runway), F.Ends.Where(e => HdgDiff(e.Hdg, LandHdg(Runway)) < 10).MinBy(e => Approach(t.X, t.Z, e.Name).lateral)!);
+        var (r, p) = (F.End(Runway), F.Ends.Where(e => HdgDiff(e.Hdg, LandHdg(Runway)) < 10 && (e.Name == Runway || !F.Closed.Contains(e.Name))).MinBy(e => Approach(t.X, t.Z, e.Name).lateral)!);
         if (p != r && LandingCues(t) && OnFinal(t.X, t.Z, t.Hdg, t.Agl, p.Name, 5 * NM) && HdgDiff(t.Hdg * 180 / Math.PI, p.Hdg) < 10 &&
             Approach(t.X, t.Z, p.Name).lateral < Math.Abs((p.CX - r.CX) * r.Dz - (p.CZ - r.CZ) * r.Dx) / 3)
         { if (vrw == Runway) vrw = p.Name; rwSwitched |= Phase == Phase.ClearedLand; Runway = p.Name; }

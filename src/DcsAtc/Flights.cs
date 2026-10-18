@@ -325,6 +325,7 @@ static class Flights
                 if (Wingman(u) is { } wing) Say(now, 2 + Rnd(), "down", wing, $"{Cs(wing)}, {Elem(u)} is down, good chute{Opt(bulls)}.", Tac(wing, w), 1, 45);   // maxAge 45: behind the threat calls it must still air (was dropped after 15 s)
                 else Say(now, 0.2, "down", u, $"{Cs(u)}, ejecting, ejecting.", Tac(u, w), 0, 5, stress: true);
                 down.Add((u, now, 0, bulls, e.Length > 6 && e[6] == "1"));
+                Csar.Down(u.Name, Cs(u), u.Side, D(4), D(5), now, bulls, e.Length > 6 && e[6] == "1");   // FI6
                 break;
             }
             case "eject" when w.Players.FirstOrDefault(p => p.Unit == e[2]) is { Unit: { Length: > 0 } } pl:   // Player (N45): no T entry, pseudo-unit for the down procedure
@@ -333,10 +334,15 @@ static class Flights
                 var bulls = Bulls(pu);   // "ejecting" is said by the player himself; only an AI wingman can report him (principle 8: with OwnWingmen)
                 if (Wingman(pu) is { } wing && Ours(wing, w, RadiusNm * 2)) Say(now, 2 + Rnd(), "down", wing, $"{Cs(wing)}, {Elem(pu)} is down, good chute{Opt(bulls)}.", Tac(wing, w), 1, 45);   // maxAge 45: behind the threat calls it must still air (was dropped after 15 s)
                 down.Add((pu, now, 0, bulls, e.Length > 6 && e[6] == "1"));
+                Csar.Down(pu.Name, Cs(pu), pu.Side, D(4), D(5), now, bulls, e.Length > 6 && e[6] == "1");   // FI6
                 break;
             }
             case "pilotdead":   // R361: ejected pilot dead -> no SAR call
                 down.RemoveAll(d => d.U.Name == e[2]);
+                Csar.Dead(e[2]);
+                break;
+            case "chute" when e.Length >= 4:   // FI6: S_EVENT_LANDING_AFTER_EJECTION, where the chute came down
+                Csar.Chute(D(2), D(3));
                 break;
         }
     }

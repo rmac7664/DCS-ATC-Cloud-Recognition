@@ -59,6 +59,7 @@ class Carrier
     // ------------------------------------------------------------ per player (Case I, M5)
     public int Stage;          // 0 nothing, 1 Marshal holding, 2 Charlie (Case I) or commencing (CV-1), 3 Paddles (initial or 3 NM to groove), 4 ball
     int caseNo = 1, ladder;    // Case at check-in; CV-1 calls: 1 ACLS (say needles), 2 three miles
+    public int CaseNo => caseNo;   // FI3: logbook (Case III trap)
     bool needlesAsked;
     bool seeMe;                // R280: Case I "see you at" reported (then Tower, no second suggestion)
     string fuel = "";          // R23: last reported fuel ("state 4.5"), for acknowledgment

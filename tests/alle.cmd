@@ -20,6 +20,7 @@ exit /b 0
 set NAME=%1
 shift
 %1 %2 %3 %4 %5 > tmp\%NAME%.log 2>&1
-if errorlevel 1 (echo FEHLER %NAME%: & findstr /b /c:"FAIL" /c:"FEHL" tmp\%NAME%.log & echo Log: tmp\%NAME%.log & exit /b 1)
+rem not "if errorlevel 1": an unhandled .NET exception exits with a negative code (0xE0434352) and slipped through as OK
+if %errorlevel% neq 0 (echo FEHLER %NAME%: & findstr /b /c:"FAIL" /c:"FEHL" /c:"Unhandled" tmp\%NAME%.log & echo Log: tmp\%NAME%.log & exit /b 1)
 echo OK %NAME%
 exit /b 0

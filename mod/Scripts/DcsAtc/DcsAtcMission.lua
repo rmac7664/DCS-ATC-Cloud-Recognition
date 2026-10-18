@@ -248,10 +248,12 @@ local function start()
       { "MAYDAY", "mayday mayday mayday", nil, "immediate" }, { "PAN PAN", "pan pan, pan pan, pan pan", nil, "priority" },
       { L("Spritmangel", "Minimum fuel"), "minimum fuel" },   -- R297 like the radio wheel (Wheel.cs): R245 minimum fuel, R251 hung ordnance, R296 Flameout
       { "Hung ordnance", "Approach: hung ordnance" }, { "Flameout, high key", "Tower: flameout, high key" },
-      { L("Notfall beenden", "Cancel emergency"), "cancel emergency" } } },
+      { L("Notfall beenden", "Cancel emergency"), "cancel emergency" },
+      { L("CSAR übernehmen", "CSAR pickup"), "CSAR: will pick up" }, { L("CSAR Rauch/Leuchtkugel", "CSAR smoke / flare"), "CSAR: pop smoke" } } },
     { L("Allgemein", "General"), nil, {
       { "Radio check", "radio check" }, { "Say again", "say again" }, { "QNH / weather", "request weather" },
-      { L("ATIS hören", "Listen to ATIS"), "atis" }, { "Request zone transit", "Approach: request zone transit" }, { "Debriefing", "debrief" } } },
+      { L("ATIS hören", "Listen to ATIS"), "atis" }, { "Request zone transit", "Approach: request zone transit" },
+      { L("Prüfflug an/aus", "Checkride on/off"), "checkride" }, { "Debriefing", "debrief" } } },
   }
   local function prune(items)   -- modules: drop entries of deselected modules, then empty groups
     for j = #items, 1, -1 do
@@ -486,6 +488,9 @@ local function start()
       ejected[uname(u)] = true
       local ok, st = pcall(land.getSurfaceType, { x = p.x, y = p.z })
       evt(string.format("X;eject;%s;%s;%.0f;%.0f;%d", uname(u), gname(u), p.x, p.z, ok and (st == 2 or st == 3) and 1 or 0))   -- R361: 1 = over water (SurfaceType 2/3)
+    elseif e.id == (E.S_EVENT_LANDING_AFTER_EJECTION or 31) and u then
+      local p = u:getPoint()   -- FI6: where the chute came down (initiator = the pilot), the app takes the nearest survivor
+      evt(string.format("X;chute;%.0f;%.0f", p.x, p.z))
     elseif e.id == E.S_EVENT_PILOT_DEAD and ejected[uname(u)] then
       ejected[uname(u)] = nil
       evt("X;pilotdead;" .. uname(u))   -- R361: no SAR call for a dead pilot
@@ -650,7 +655,7 @@ local function start()
     end) end })
   end
 
-  local G, W, wTime = "G;0;0;80000", {}, -100
+  local G, W, wTime, LL = "G;0;0;80000", {}, -100, nil
   local function weather()
     local v = (wx.visibility and wx.visibility.distance) or 80000
     local f2 = wx.fog2 and wx.fog2.mode   -- fog off in the ME: leftover fog values in the miz do not count
@@ -672,6 +677,20 @@ local function start()
     end
     for _, k in ipairs(beacons) do W[#W + 1] = k end
     if RZ then W[#W + 1] = string.format("Z;%.0f;%.0f;%.0f", RZ.x, RZ.z, RZ.r) end   -- Range (A17)
+    if not LL or #LL == 0 then   -- FI2: lat/lon grid 7x7 over the airfields +-150 km for the SRS transmitter positions (coord.LOtoLL once, the app interpolates)
+      LL = {}
+      local x0, x1, z0, z1 = math.huge, -math.huge, math.huge, -math.huge
+      for _, f in ipairs(fields) do x0, x1, z0, z1 = math.min(x0, f.p.x), math.max(x1, f.p.x), math.min(z0, f.p.z), math.max(z1, f.p.z) end
+      if x0 <= x1 then
+        x0, x1, z0, z1 = x0 - 150000, x1 + 150000, z0 - 150000, z1 + 150000
+        for i = 0, 6 do for j = 0, 6 do
+          local x, z = x0 + (x1 - x0) * i / 6, z0 + (z1 - z0) * j / 6
+          local ok, lat, lon = pcall(function() return coord.LOtoLL({ x = x, y = 0, z = z }) end)
+          if ok then LL[#LL + 1] = string.format("L;%.0f;%.0f;%.6f;%.6f", x, z, lat, lon) end
+        end end
+      end
+    end
+    for _, l in ipairs(LL) do W[#W + 1] = l end
   end
 
   -- Create groups ------------------------------------------------------------------------------------
@@ -1609,6 +1628,17 @@ local function start()
       return
     end
     if line:match("^MARK;") or line:match("^LASE") then pcall(jtacCmd, line) log("Befehl " .. line) return end   -- J4
+    local sx, sz, sk = line:match("^SIGNAL;([%-%d%.]+);([%-%d%.]+);(%a+)")   -- FI6: survivor signals, orange smoke by day, red flare at night
+    if sx then
+      pcall(function()
+        local p = { x = tonumber(sx), z = tonumber(sz) }
+        p.y = land.getHeight({ x = p.x, y = p.z })
+        if sk == "flare" then trigger.action.signalFlare(p, (trigger.flareColor or {}).Red or 1, 0)
+        else trigger.action.smoke(p, (trigger.smokeColor or {}).Orange or 3) end
+      end)
+      log("Befehl " .. line)
+      return
+    end
     if line:match("^CV") then carrierCmd(line) return end
     local dv = line:match("^DIVERT;([^;]+)")
     if dv then   -- N40: approach to captured airfield -> new airfield, there anew in the sequence

@@ -15,11 +15,14 @@ sealed class SrsListener
     readonly IPEndPoint server;
     volatile double[] freqsMHz;   // max. 20: 10 SRS radios, plus a second frequency each (secFreq, A22); SetFreqs changes them continuously
     internal const int Max = 20;
-    volatile bool resync;
+    volatile int resync;   // counter: every connection sends RADIO_UPDATE when it changes
+    volatile bool security;   // K4: COALITION_AUDIO_SECURITY of the server (SYNC/SERVER_SETTINGS) - it forwards voice only within the coalition
     readonly Action<Transmission> onTx;
     readonly Func<string, bool> ignoreName;   // do not monitor own controller voices (ExternalAudio)
-    readonly string guid = Convert.ToBase64String(Guid.NewGuid().ToByteArray()).Replace('/', '_').Replace('+', '-')[..22];
-    readonly Dictionary<string, (string Name, uint UnitId, double[]? Freqs)> clients = new();
+    readonly string[] guids = { NewGuid(), NewGuid() };   // K4: connection 0 (spectator, blue with security), 1 (red, only with security)
+    static string NewGuid() => Convert.ToBase64String(Guid.NewGuid().ToByteArray()).Replace('/', '_').Replace('+', '-')[..22];
+    int Side(int conn) => conn == 1 ? 2 : security ? 1 : 0;
+    readonly Dictionary<string, (string Name, uint UnitId, double[]? Freqs, Iff? Iff)> clients = new();
     readonly Dictionary<string, Rx> open = new();
     public bool Connected { get; private set; }
     static readonly bool Debug = Environment.GetEnvironmentVariable("DCSATC_SRSDEBUG") == "1";
@@ -41,7 +44,7 @@ sealed class SrsListener
         if (a.SequenceEqual(freqsMHz)) return;
         Program.Trace("SRS", $"Abhören: {string.Join(", ", freqsMHz.Select(x => x.ToString("0.0##")))} -> {string.Join(", ", a.Select(x => x.ToString("0.0##")))}");
         freqsMHz = a;
-        resync = true;
+        resync++;
         if (Connected) Console.WriteLine(L("      SRS-Abhören: ", "      SRS listening: ") + $"{string.Join(", ", a.Select(x => x.ToString("0.0##")))}");
     }
 
@@ -52,35 +55,56 @@ sealed class SrsListener
         lock (clients) return clients.Values.FirstOrDefault(c => c.UnitId == unit).Freqs;
     }
 
-    public void Start() => new Thread(Run) { IsBackground = true }.Start();
+    /// FI1: transponder of the player with this DCS unit ID (first SRS client that reports one); null = unknown.
+    public Iff? IffOf(uint unit)
+    {
+        if (unit == 0) return null;
+        lock (clients) return clients.Values.FirstOrDefault(c => c.UnitId == unit && c.Iff != null).Iff;
+    }
 
-    void Run()
+    /// FI1: "iff" of a SRS RadioInfo ({"control":0,"mode3":4521,"mode4":true,"status":1}); null = missing, control 2 (not fitted) or unreadable.
+    internal static Iff? IffFrom(JsonElement ri)
+    {
+        if (ri.ValueKind != JsonValueKind.Object || !ri.TryGetProperty("iff", out var x) || x.ValueKind != JsonValueKind.Object) return null;
+        int? I(string k) => x.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetInt32(out var i) ? i : null;
+        if (I("control") == 2 || I("status") is not { } st || I("mode3") is not { } m3) return null;
+        bool m4 = x.TryGetProperty("mode4", out var v4) && (v4.ValueKind == JsonValueKind.True || I("mode4") == 1);   // bool, older clients 0/1
+        return new Iff(m3, st, m4);
+    }
+
+    public void Start() { for (int c = 0; c < 2; c++) { int conn = c; new Thread(() => Run(conn)) { IsBackground = true }.Start(); } }
+
+    void Run(int conn)
     {
         while (true)
         {
-            try { Session(); }
-            catch (Exception e) { if (Connected) { Console.WriteLine(L("      SRS-Abhören getrennt: ", "      SRS listening disconnected: ") + e.Message); Program.Trace("SRS", $"getrennt: {e.GetType().Name}: {e.Message}"); } }
-            Connected = false;
+            try { if (conn == 0 || security) Session(conn); }   // K4: red connection only with coalition security
+            catch (Exception e) { if (Connected) { if (conn == 0) Console.WriteLine(L("      SRS-Abhören getrennt: ", "      SRS listening disconnected: ") + e.Message); Program.Trace("SRS", $"getrennt ({conn}): {e.GetType().Name}: {e.Message}"); } }
+            if (conn == 0) Connected = false;
             Thread.Sleep(5000);   // SRS server not there yet / restarted
         }
     }
 
-    void Session()
+    void Session(int conn)
     {
         using var tcp = new TcpClient();
         tcp.Connect(server);
         var stream = tcp.GetStream();
         var writer = new StreamWriter(stream, new UTF8Encoding(false)) { AutoFlush = true, NewLine = "\n" };
-        writer.WriteLine(Message(2));   // SYNC
-        writer.WriteLine(Message(3));   // RADIO_UPDATE: server forwards only frequencies we have "tuned"
+        int synced = resync;
+        writer.WriteLine(Message(2, conn));   // SYNC
+        writer.WriteLine(Message(3, conn));   // RADIO_UPDATE: server forwards only frequencies we have "tuned"
         using var udp = new UdpClient(0);
         udp.Connect(server);
-        var ping = Encoding.ASCII.GetBytes(guid);
+        var ping = Encoding.ASCII.GetBytes(guids[conn]);
         udp.Send(ping);
-        Connected = true;
         var fl = string.Join(", ", freqsMHz.Select(f => f.ToString("0.0#")));
-        Program.Trace("SRS", $"verbunden mit {server}, Abhören: {fl}");
-        Console.WriteLine(L($"      SRS-Abhören aktiv: {fl} – Spieler können direkt über SRS sprechen.", $"      SRS listening on: {fl} – players can talk directly over SRS."));
+        Program.Trace("SRS", $"verbunden mit {server} (Koalition {Side(conn)}), Abhören: {fl}");
+        if (conn == 0)
+        {
+            Connected = true;
+            Console.WriteLine(L($"      SRS-Abhören aktiv: {fl} – Spieler können direkt über SRS sprechen.", $"      SRS listening on: {fl} – players can talk directly over SRS."));
+        }
 
         var reader = new Thread(() =>
         {
@@ -98,20 +122,20 @@ sealed class SrsListener
         bool pong = false;
         var nextSync = DateTime.Now.AddSeconds(30);
         udp.Client.ReceiveTimeout = 100;
-        while (reader.IsAlive)
+        while (reader.IsAlive && (conn == 0 || security))
         {
-            try { var any = new IPEndPoint(IPAddress.Any, 0); var b = udp.Receive(ref any); if (Debug) Console.WriteLine($"udp {b.Length}"); if (b.Length == 22) pong = true; else OnVoice(b); }
+            try { var any = new IPEndPoint(IPAddress.Any, 0); var b = udp.Receive(ref any); if (Debug) Console.WriteLine($"udp {b.Length}"); if (b.Length == 22) pong = true; else OnVoice(b); }   // K4: duplicate packets (global frequencies) land on the same packet ID
             catch (SocketException e) when (e.SocketErrorCode == SocketError.TimedOut) { }
             if (DateTime.Now >= nextPing) { nextPing = DateTime.Now.AddSeconds(pong ? 15 : 1); udp.Send(ping); }   // every second until the first reply
-            if (resync) { resync = false; writer.WriteLine(Message(3)); }
-            if (DateTime.Now >= nextSync) { nextSync = DateTime.Now.AddSeconds(30); writer.WriteLine(Message(1)); writer.WriteLine(Message(3)); }   // PING + radios
+            if (synced != resync) { synced = resync; writer.WriteLine(Message(3, conn)); }   // also K4: coalition changed
+            if (DateTime.Now >= nextSync) { nextSync = DateTime.Now.AddSeconds(30); writer.WriteLine(Message(1, conn)); writer.WriteLine(Message(3, conn)); }   // PING + radios
             FlushFinished(DateTime.Now);
         }
         throw new IOException("Verbindung zum SRS-Server beendet");
     }
 
 
-    internal string Message(int type)   // internal: self-test A22
+    internal string Message(int type, int conn = 0)   // internal: self-test A22, K4
     {
         var fq = freqsMHz;
         var radios = Enumerable.Range(0, 11).Select(i => new Dictionary<string, object>
@@ -127,7 +151,7 @@ sealed class SrsListener
         };
         msg["Client"] = new Dictionary<string, object>
             {
-                ["ClientGuid"] = guid, ["Name"] = "DCS-ATC", ["Coalition"] = 0, ["AllowRecord"] = false, ["Seat"] = 0,
+                ["ClientGuid"] = guids[conn], ["Name"] = "DCS-ATC", ["Coalition"] = Side(conn), ["AllowRecord"] = false, ["Seat"] = 0,
                 ["LatLngPosition"] = new Dictionary<string, double> { ["lat"] = 0, ["lng"] = 0, ["alt"] = 0 },
                 ["RadioInfo"] = new Dictionary<string, object> { ["radios"] = radios, ["unit"] = "DCS-ATC", ["unitId"] = 0 },
             };
@@ -152,16 +176,24 @@ sealed class SrsListener
                                ri2.TryGetProperty("radios", out var rs) && rs.ValueKind == JsonValueKind.Array
                     ? rs.EnumerateArray().Select(x => x.TryGetProperty("freq", out var fr) && fr.TryGetDouble(out var hz) ? hz / 1e6 : 0).Where(m => m > 1).ToArray()
                     : clients.TryGetValue(id, out var o2) ? o2.Freqs : null;
+                var iff = c.TryGetProperty("RadioInfo", out var ri3) && ri3.ValueKind == JsonValueKind.Object ? IffFrom(ri3) : clients.TryGetValue(id, out var o4) ? o4.Iff : null;
                 lock (clients)
                 {
                     var was = clients.TryGetValue(id, out var o3) ? o3 : default;
-                    if (was.Name != name || was.UnitId != unit || !(was.Freqs ?? Array.Empty<double>()).SequenceEqual(fq ?? Array.Empty<double>()))   // Debug log: tuned frequencies per player
-                        Program.Trace("SRS", $"Client '{name}' unit {unit}: {Fl(was.Freqs)} -> {Fl(fq)}");
-                    clients[id] = (name, unit, fq);
+                    if (was.Name != name || was.UnitId != unit || was.Iff != iff || !(was.Freqs ?? Array.Empty<double>()).SequenceEqual(fq ?? Array.Empty<double>()))   // Debug log: tuned frequencies and transponder per player
+                        Program.Trace("SRS", $"Client '{name}' unit {unit}: {Fl(was.Freqs)} -> {Fl(fq)}{(iff == null ? "" : $", IFF {iff.Mode3} Status {iff.Status}{(iff.Mode4 ? " M4" : "")}")}");
+                    clients[id] = (name, unit, fq, iff);
                 }
             }
             static string Fl(double[]? f) => f == null ? "?" : string.Join("/", f.Select(x => x.ToString("0.0##")));
             int type = root.GetProperty("MsgType").GetInt32();
+            if (root.TryGetProperty("ServerSettings", out var ss) && ss.ValueKind == JsonValueKind.Object && ss.TryGetProperty("COALITION_AUDIO_SECURITY", out var cs)
+                && (bool.TryParse(cs.ToString(), out var sec) && sec) != security)   // K4: "true"/"false" (SYNC, SERVER_SETTINGS)
+            {
+                security = !security;
+                resync++;   // connection 0 becomes blue or spectator again
+                Program.Trace("SRS", $"Coalition Security {(security ? "an: zweite Verbindung als Rot" : "aus")}");
+            }
             if (root.TryGetProperty("Clients", out var list) && list.ValueKind == JsonValueKind.Array) foreach (var c in list.EnumerateArray()) Add(c);
             if (root.TryGetProperty("Client", out var one) && one.ValueKind == JsonValueKind.Object)
             {

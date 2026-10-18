@@ -184,6 +184,68 @@ public partial class Tower
         r = twId.OnTranscript("Kutaisi Approach, Enfield 11, airborne, passing 2000", airId, none, 20);
         var idA = twId.Tick(airId, none, 25).Count == 0 && twId.Tick(airId, none, 26) is [{ } idR] && idR.Role == "Approach" && idR.Contains("radar contact") && !idR.Contains("squawk") ? "ok" : "falsch";
         Check(r.Count == 1 && r[0].Contains("squawk") && !r[0].Contains("radar contact") && idA == "ok" && twId.Tick(airId, none, 40).Count == 0, "R128 airborne ohne Code: " + string.Join(" | ", r.Select(m => m.Text)) + " / " + idA);
+        // FI1 (issue #2): SRS "iff" -> Iff (control 2 / missing = unknown); IffCheck: "squawk … and ident", the ident identifies at once;
+        // wrong code -> "reset transponder" once more, then radar contact; under radar service after 20 s at most twice (second into the debrief)
+        {
+            Iff? f1Pi(string json) { using var d = System.Text.Json.JsonDocument.Parse(json); return SrsListener.IffFrom(d.RootElement); }
+            var (f1pi1, f1pi2, f1pi3, f1pi4) = (f1Pi("""{"iff":{"control":1,"mode1":51,"mode3":7700,"mode4":1,"status":2}}"""), f1Pi("""{"iff":{"control":0,"mode3":4521,"mode4":false,"status":1}}"""),
+                                        f1Pi("""{"iff":{"control":2,"mode3":-1,"mode4":false,"status":0}}"""), f1Pi("""{"radios":[]}"""));
+            Check(f1pi1 == new Iff(7700, 2, true) && f1pi2 == new Iff(4521, 1, false) && f1pi3 == null && f1pi4 == null, $"FI1 SRS-IFF gelesen: {f1pi1} | {f1pi2} | {f1pi3} | {f1pi4}");
+            var f1ic0 = IffCheck;
+            try
+            {
+                IffCheck = true;
+                var f1twI = new Tower("Enfield 1-1") { Iff = new Iff(-1, 0, false) };
+                f1twI.Tick(airId, none, 0);
+                var f1ri = f1twI.OnTranscript("Kutaisi Approach, Enfield 11, airborne, passing 2000", airId, none, 20);
+                var f1iw = f1twI.Tick(airId, none, 30).Count;   // without ident it waits (not after 6 s)
+                f1twI.Iff = new Iff(int.Parse(f1twI.Squawk!), 2, true);
+                var f1ii = f1twI.Tick(airId, none, 31);
+                Check(f1ri is [{ } f1ri0] && f1ri0.Contains("and ident") && !f1ri0.Contains("radar contact") && f1iw == 0 && f1ii is [{ } f1ii0] && f1ii0.Contains("radar contact"),
+                      $"FI1 I2 squawk and ident -> {f1ri.FirstOrDefault()} | {f1iw} | {f1ii.FirstOrDefault()}");
+                var f1twW = new Tower("Enfield 1-1") { Iff = new Iff(-1, 1, true) };
+                f1twW.Tick(airId, none, 0);
+                f1twW.OnTranscript("Kutaisi Approach, Enfield 11, airborne, passing 2000", airId, none, 20);
+                f1twW.Iff = new Iff(int.Parse(f1twW.Squawk!) == 1234 ? 4321 : 1234, 1, true);
+                var (f1w1, f1w2, f1w3, f1w4, f1w5) = (f1twW.Tick(airId, none, 41), f1twW.Tick(airId, none, 56), f1twW.Tick(airId, none, 57), f1twW.Tick(airId, none, 77), f1twW.Tick(airId, none, 120));
+                f1twW.Iff = new Iff(int.Parse(f1twW.Squawk!), 1, true);
+                var f1w6 = f1twW.Tick(airId, none, 200);
+                Check(f1w1 is [{ } f1w10] && f1w10.Contains("reset transponder, squawk") && !f1w10.Contains("radar contact") && f1w2 is [{ } f1w20] && f1w20.Contains("radar contact") && f1w3.Count == 0
+                      && f1w4.Any(m => m.Contains("reset transponder")) && f1w4.Any(m => m.Role == "Info" && m.Contains("ransponder")) && f1w5.Count == 0 && f1w6.Count == 0,
+                      $"FI1 I1 falscher Code -> {string.Join(" / ", new[] { f1w1, f1w2, f1w3, f1w4, f1w5 }.Select(l => string.Join(" | ", l)))}");
+                var f1twO = new Tower("Enfield 1-1") { Iff = new Iff(4021, 0, false) };   // transponder off -> "not observing"
+                f1twO.Tick(airId, none, 0);
+                f1twO.OnTranscript("Kutaisi Approach, Enfield 11, airborne, passing 2000", airId, none, 20);
+                Check(f1twO.Tick(airId, none, 41) is [{ } f1o1] && f1o1.Contains("not observing your transponder, squawk"), "FI1 I1 Transponder aus");
+                var f1tw76 = new Tower("Enfield 1-1") { Iff = new Iff(7600, 1, false) };   // 7600 with IffCheck: blind call, the ident answers
+                f1tw76.Tick(airId, none, 0);
+                var (f1n1, f1n2) = (f1tw76.Tick(airId, none, 6), (f1tw76.Iff = new Iff(7600, 2, false)) is { } ? f1tw76.Tick(airId, none, 20) : new());
+                Check(f1n1 is [{ } f1n10] && f1n10.Contains("observed squawk seven six zero zero. If you read, squawk ident.") && f1n2 is [{ } f1n20] && f1n20.Contains("ident observed"),
+                      $"FI1 I3 7600 -> {f1n1.FirstOrDefault()} | {f1n2.FirstOrDefault()}");
+                IffCheck = false;   // E2: 7700 also without IffCheck (after 5 s, once), 7600 not
+                var f1tw77 = new Tower("Enfield 1-1") { Iff = new Iff(7700, 1, false) };
+                f1tw77.Tick(airId, none, 0);
+                var (f1e1, f1e2, f1e3) = (f1tw77.Tick(airId, none, 3), f1tw77.Tick(airId, none, 6), f1tw77.Tick(airId, none, 30));
+                var f1tw76o = new Tower("Enfield 1-1") { Iff = new Iff(7600, 1, false) };
+                f1tw76o.Tick(airId, none, 0);
+                Check(!f1e1.Any(m => m.Contains("squawk")) && f1e2 is [{ } f1e20] && f1e20.Contains("Kutaisi Approach, observed squawk seven seven zero zero, say nature of emergency.") && f1e3.Count == 0
+                      && !f1tw76o.Tick(airId, none, 6).Any(m => m.Contains("squawk")), $"FI1 I3 7700 ohne IffCheck -> {f1e2.FirstOrDefault()}");
+                var f1twN = new Tower("Enfield 1-1") { Iff = new Iff(-1, 0, false) };   // without IffCheck no "and ident", no reminder
+                f1twN.Tick(airId, none, 0);
+                var f1rN = f1twN.OnTranscript("Kutaisi Approach, Enfield 11, airborne, passing 2000", airId, none, 20);
+                Check(f1rN is [{ } f1rN0] && !f1rN0.Contains("ident") && f1twN.Tick(airId, none, 26).Any(m => m.Contains("radar contact")) && f1twN.Tick(airId, none, 60).Count == 0, "FI1 ohne IffCheck wie bisher: " + f1rN.FirstOrDefault());
+            }
+            finally { IffCheck = f1ic0; }
+            var f1th0 = Airfield.Theatre;   // I4: VFR code by region
+            try
+            {
+                var f1tv = new Tower("Enfield 1-1") { Squawk = "4021" }; f1tv.Phase = Phase.Away;
+                Airfield.Theatre = "Nevada"; var f1vN = f1tv.SquawkVfr();
+                f1tv.Squawk = "4021"; Airfield.Theatre = "Caucasus"; var f1vC = f1tv.SquawkVfr();
+                Check(f1vN == "squawk VFR, " && f1vC == "squawk 7000, ", $"FI1 I4 VFR-Code: {f1vN} | {f1vC}");
+            }
+            finally { Airfield.Theatre = f1th0; }
+        }
         // Forum 0.15: acknowledging a call without readback with the callsign alone (also "okay"/"thanks", with the station name right after the call) -> silent, no "say again";
         // the station name long after the last call is a call-up again
         var akSt = twId.OnTranscript("Kutaisi Approach, Enfield 11", airId, none, 30);
@@ -224,7 +286,7 @@ public partial class Tower
             var sgR7 = twDr.Suggest(At(CX - 5 * NM, CZ, 600, 270, 250));
             var lz = twDr.OnTranscript("Kutaisi Approach, Enfield 11, leaving the control zone", At(CX - 8 * NM, CZ, 600, 270, 250), none, 28);
             var lz2 = twDr.Tick(At(CX - 10 * NM, CZ, 600, 270, 250), none, 30);
-            Check(sgR7?.Text == "leaving the control zone" && lz.Count == 1 && lz[0].Role == "Approach" && lz[0].Text == "Enfield one one, roger, resume own navigation, squawk VFR, frequency change approved. Good day." && lz2.Count == 0,
+            Check(sgR7?.Text == "leaving the control zone" && lz.Count == 1 && lz[0].Role == "Approach" && lz[0].Text == "Enfield one one, roger, resume own navigation, squawk 7000, frequency change approved. Good day." && lz2.Count == 0,
                   "R7 leaving the control zone: " + string.Join(" | ", lz.Concat(lz2)));
         }
 
@@ -412,7 +474,7 @@ public partial class Tower
         r = twSq.OnTranscript("Kutaisi Approach, Enfield 11, request flight following", ffQ, none, 30);
         Check(!r[0].Contains("squawk") && twSq.Squawk == sqVfr && twSq.Following, "A90 Flight Following behält den Code: " + r[0].Text);
         r = twSq.OnTranscript("Enfield 11, cancel flight following", ffQ, none, 31);
-        Check(r[0].Contains("radar service terminated, squawk VFR, frequency change approved") && twSq.Squawk == null, "A90 squawk VFR nach vergebenem Code: " + r[0].Text);
+        Check(r[0].Contains("radar service terminated, squawk 7000, frequency change approved") && twSq.Squawk == null, "A90 squawk VFR nach vergebenem Code: " + r[0].Text);
         r = twSq.OnTranscript("Enfield 11, cancel flight following", ffQ, none, 32);
         Check(r.Count == 0 || !r[0].Contains("squawk"), "A90 kein squawk VFR ohne Code: " + r.FirstOrDefault()?.Text);
         var twSfq = new Tower("Enfield 1-1");
@@ -568,7 +630,7 @@ public partial class Tower
         Check(dpA.Tick(At(CX - 9 * NM, CZ, 4000, 270, 300), none, 21).Count == 0 && dpA.Tick(At(CX - 16 * NM, CZ, 4000, 270, 300), none, 22).Count == 0,
               "Following: keine Abmeldung am Rand der Zone und bei 15 NM");
         r = dpA.OnTranscript("Enfield 11, cancel flight following", At(CX - 16 * NM, CZ, 4000, 270, 300), none, 23);
-        Check(r.Count == 1 && r[0].Contains("radar service terminated, squawk VFR, frequency change approved") && dpA.Tick(At(CX - 17 * NM, CZ, 4000, 270, 300), none, 24).Count == 0,
+        Check(r.Count == 1 && r[0].Contains("radar service terminated, squawk 7000, frequency change approved") && dpA.Tick(At(CX - 17 * NM, CZ, 4000, 270, 300), none, 24).Count == 0,
               "Following beendet: genau eine Abmeldung: " + (r.FirstOrDefault()?.Text ?? "-"));
         var dpB = Dep();
         dpB.Following = true;   // Following came along from another airfield: no "leaving control zone" (Kutaisi zone 9.1 NM, A100)
@@ -628,7 +690,7 @@ public partial class Tower
             var c4 = dpC.Tick(At(CX - 16 * NM, CZ, 4000, 270, 300), none, 138);
             Check(c1.Count == 1 && c1[0].Role == "Tower" && c1[0].Text == "Enfield one one, contact Kutaisi Approach now, two six six decimal five." && !c1[0].Contains("radar contact") && c2.Count == 0 &&
                   c3.Count == (dIfr ? 2 : 1) && c3[0].Role == "Tower" && c3[0].Text.StartsWith("Enfield one one, no contact with Kutaisi Approach, radar service not provided") &&
-                  (dIfr ? !c3[0].Contains("deviation") && c3[1].Text.StartsWith(L("Verstoß: kein Check-in bei Departure", "Deviation: no check-in with departure")) : c3[0].Text.EndsWith("radar service not provided, squawk VFR, frequency change approved.")) &&
+                  (dIfr ? !c3[0].Contains("deviation") && c3[1].Text.StartsWith(L("Verstoß: kein Check-in bei Departure", "Deviation: no check-in with departure")) : c3[0].Text.EndsWith("radar service not provided, squawk 7000, frequency change approved.")) &&
                   dpC.Phase == Phase.Away && !dpC.handedOff && c4.Count == 0, $"#8 Departure ohne Check-in ({(dIfr ? "IFR" : "VFR")}): " + string.Join(" | ", c1.Concat(c2).Concat(c3).Concat(c4)));
             // Review l2: IFR notice "possible pilot deviation" names the place of the violation (Departure = Kutaisi Approach), spoken by Tower (pilot never checked in with Approach)
             var c4n = dpC.Tick(At(CX - 16 * NM, CZ, 4000, 270, 300), none, 143);
@@ -1699,6 +1761,8 @@ public partial class Tower
         Check(Rb(twRa, west, 3, "Enfield 1-1, QNH").Contains("QNH") && Rb(twRa, west, 4, "Enfield 1-1, initial runway 25") != "", "Frage/Meldung mit Wert -> Antwort");
         twRa.last = new Msg("Approach", "Enfield one one, radar service terminated, squawk VFR, frequency change approved.");
         Check(Rb(twRa, west, 5, "Radar service terminated, squawk VFR, frequency change approved, Enfield 1-1") == "" && !twRa.Following, "Abmeldung zurückgelesen -> still");
+        twRa.last = new Msg("Approach", "Enfield one one, radar service terminated, squawk 7000, frequency change approved.");
+        Check(Rb(twRa, west, 6, "Radar service terminated, squawk 7000, frequency change approved, Enfield 1-1") == "", "FI1 I4: squawk 7000 zurückgelesen -> still");
         var twRv = new Tower("Enfield 1-1");   // real vector transmission ("…, downwind"): readback with "downwind" is not a pattern report
         twRv.Tick(west, none, 0);
         var vRb = HdgSlot(Normalize(twRv.OnTranscript("Kutaisi Approach, Enfield 1-1, inbound for landing", west, none, 1)[0].Text));
@@ -3803,6 +3867,25 @@ public partial class Tower
               $"R212 Batumi Circling: {fcFt:0} ft, {cc:0} ft, {fc} | {lastMsg} | {string.Join(" | ", ci31)}");
         Check(new Tower(bat, "x").AtisText("B", new Telemetry(bat.Elev + 2, 0, 0, 0, bat.X, bat.Z, 0, 0, 760), 15, true, 200, 3000).Contains("expect vectors for ILS approach runway one three, localizer one one zero decimal three"),
               "Batumi ATIS IFR -> 13");
+        // FI5: NOTAM ILS 13 u/s -> ATIS reads it, IFR gets PAR instead of ILS; own free text read as written; empty list = everything back
+        Airfield.SetNotams(new[] { bat }, new() { ["Batumi"] = new() { "ILS 13 u/s", "Taxiway B closed." } }, false, new DateTime(2026, 10, 18));
+        var atn5 = new Tower(bat, "x").AtisText("B", new Telemetry(bat.Elev + 2, 0, 0, 0, bat.X, bat.Z, 0, 0, 760), 15, true, 200, 3000);
+        Check(atn5.Contains("expect vectors for P A R approach runway one three") && atn5.Contains("ILS runway one three unserviceable. Taxiway B closed. Advise on initial contact"), "FI5 NOTAM ILS u/s: " + atn5);
+        Airfield.SetNotams(new[] { bat }, new(), false, new DateTime(2026, 10, 18));
+        Check(bat.IlsOn("13") && bat.Notams.Count == 0, "FI5 NOTAM zurückgesetzt");
+        // FI5: parallel runways: own "rwy 3L/21R clsd" closes the strip, runway choice takes the other, the DCS AI (dcs: true) stays on the main runway;
+        // random: at most one per day, same day = same NOTAM, closes only the parallel the AI does not use
+        var pf5 = new Airfield { Name = "Par", Main = "03L", Ends = { new("03L", 0, 0, 30, 3000, 1300, 750), new("21R", 2600, 1500, 210, 3000, 1300, 750),
+                                                                     new("03R", 300, -500, 30, 3000, 1600, 250), new("21L", 2900, 1000, 210, 3000, 1600, 250) } };
+        pf5.Ils["03L"] = (110.1, "IPA");
+        Airfield.SetNotams(new[] { pf5 }, new() { ["Par"] = new() { "rwy 3L/21R clsd" } }, false, new DateTime(2026, 10, 18));
+        Check(pf5.Closed.SetEquals(new[] { "03L", "21R" }) && pf5.Notams.Single() == "runway zero three left, two one right closed" &&
+              pf5.BestRunway(0, 0) == "03R" && pf5.BestRunway(0, 0, dcs: true) == "03L" && pf5.BestRunway(5, 0) == "21L", $"FI5 NOTAM Bahn gesperrt: {string.Join(",", pf5.Closed)} {pf5.BestRunway(0, 0)} {pf5.BestRunway(5, 0)}");
+        var days = Enumerable.Range(0, 60).Select(d => { Airfield.SetNotams(new[] { pf5 }, new(), true, new DateTime(2026, 1, 1).AddDays(d)); return (pf5.Notams.ToList(), pf5.Closed.ToList()); }).ToList();
+        Airfield.SetNotams(new[] { pf5 }, new(), true, new DateTime(2026, 1, 1).AddDays(7));
+        Check(days.All(d => d.Item1.Count <= 1) && days.Count(d => d.Item1.Count == 1) is > 10 and < 40 && days.SelectMany(d => d.Item2).All(r => r is "03R" or "21L") &&
+              days.Any(d => d.Item2.Count > 0) && days.Any(d => d.Item1.Any(x => x.StartsWith("ILS"))) && days.Any(d => d.Item1.Any(x => x.Contains("bird"))) &&
+              pf5.Notams.SequenceEqual(days[7].Item1), $"FI5 zufällige NOTAMs: {days.Count(d => d.Item1.Count == 1)} Tage, {string.Join(" | ", days.Where(d => d.Item1.Count > 0).Take(5).Select(d => d.Item1[0]))}");
         ForceIfr = false;
         var atV = new Tower(bat, "x").AtisText("B", new Telemetry(bat.Elev + 2, 0, 0, 0, bat.X, bat.Z, 0, 0, 760), 15, false, 0, 9999);
         Check(atV.Contains("Due to terrain, straight in and instrument approaches runway one three"), "Batumi ATIS Sicht: Approach fuehrt auf die 13: " + atV);

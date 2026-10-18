@@ -155,12 +155,27 @@ public partial class Tower
         if (idAt > 0)   // R128: code set (6 s), now identify; phase left/landed: lapses
         {
             if (ground || Phase is not (Phase.Away or Phase.Departing)) { idAt = -1; popDf = null; }   // R219: do not attach a lapsed pop-up clearance to a later identification
-            else if (now >= idAt)
+            else if (now >= idAt || identWant && Iff?.Status == 2)   // FI1: the ident identifies right away
             {
-                idAt = -1;
+                if (!idRetry && IffFix() is { } ifx) { (idRetry, identWant, idAt, iffTold) = (true, false, now + 15, 1); return Say($"{c}, {ifx}.", "Approach"); }   // FI1: code not observed: once more, then radar contact anyway
+                idAt = -1; identWant = false;
                 var pdf = popDf; popDf = null;
                 return Say($"{c}, {(idFf ? FfRc(t) : pdf != null ? $"{Rc}, {Where(t)}. {Cap(PopClr(t, pdf))}" : AirRc(t))}", "Approach");
             }
+        }
+
+        var esq = !ground && Iff is { Status: > 0 } ix && ix.Mode3 is 7700 or 7600 && (ix.Mode3 == 7700 || IffCheck) ? ix.Mode3 : 0;   // FI1 I3: emergency code on radar (7600 only with IffCheck)
+        if (esq != emSeen.Code) emSeen = (esq, now);
+        else if (esq != 0 && esq != emSq && now - emSeen.At >= 5 && Dist(t.X, t.Z, CX, CZ) < 60 * NM)   // 5 s: not when thumbwheels only pass through it
+        {
+            emSq = esq;
+            if (esq == 7600) nordoAt = now;
+            if (esq == 7600 || !Mayday) return Say($"{c}, {F.StationOf("Approach")}, observed squawk {Digits(esq.ToString())}{(esq == 7700 ? ", say nature of emergency." : ". If you read, squawk ident.")}", "Approach");
+        }
+        if (nordoAt > 0 && (Iff?.Status == 2 || now - nordoAt > 120))   // 7600: the ident answers, at most 2 min
+        {
+            bool heard = Iff?.Status == 2; nordoAt = -1;
+            if (heard) return Say($"{c}, ident observed. Continue, expect runway {RwSay(Runway)}.", "Approach");
         }
 
         if (!ground && t.Agl > 100 && kt > 30)   // forum 0.15: not at standstill (AGL outlier of a runway spawn)
@@ -247,6 +262,17 @@ public partial class Tower
         if (!ground && Phase is Phase.Initial or Phase.Pattern or Phase.ClearedLand && PatternTraffic(t, traffic) is { } pt) return pt;   // A99: crossing traffic in the pattern
         if (!ground && Phase == Phase.Away && Following && idAt <= 0 && FollowTick(t, traffic, now) is { } fm) return fm;
         if (!ground && idAt <= 0 && (Phase == Phase.Inbound || Phase is Phase.Departing or Phase.Away && (handedOff || Following)) && TerrainAlert(t, now) is { } lm) return lm;   // R114: also radar vectoring, holding, handed-over departure; R128: only after identification
+        if (!ground && idAt <= 0 && (Phase == Phase.Inbound || Phase is Phase.Departing or Phase.Away && (handedOff || Following)) && IffFix() is { } fx)   // FI1: code under radar service, 20 s to correct it
+        {
+            if (iffBadAt < 0) iffBadAt = now;
+            else if (now - iffBadAt >= 20 && iffTold < 2)
+            {
+                iffBadAt = now;
+                var im = Say($"{c}, {fx}.", "Approach");
+                return ++iffTold < 2 ? im : Note(im, $"Transponder falsch oder aus ({F.Name})", $"transponder wrong or off ({F.Name})");   // second reminder: into the debrief
+            }
+        }
+        else iffBadAt = -1;
         if (!ground && Phase == Phase.Away && Center && idAt <= 0 && CenterTick(t, now) is { } cm) return cm;   // Center: AWACS, next sector, destination
         if (!ground && Phase == Phase.Away && Following && !Center && ffIn && idAt <= 0 && AwacsContact == null && Dist(t.X, t.Z, CX, CZ) > CenterFfNm * NM && CenterContact(t, " for further flight following") is { } fh)
         {
@@ -850,7 +876,7 @@ public partial class Tower
         var cl = ceil >= 1000 ? "" : $"{(vis == "" ? " Ceiling" : ", ceiling")} {Alt(Math.Max(0, Math.Round(ceil / 100) * 100))}";
         return $"{vis}{cl}.{(visM < 550 || ceil < 200 ? " Say intentions." : "")}";
     }
-    void Park() { wxTold = false; special = null; Phase = Phase.Parked; exitDir = null; entry = null; Separate = false; depClr = false; dest = null; Following = false; cenName = null; cenTo = null; lowTold = lowAck = false; Squawk = null; cruiseFt = 0; climbOut = null; }
+    void Park() { wxTold = false; special = null; Phase = Phase.Parked; exitDir = null; entry = null; Separate = false; depClr = false; dest = null; Following = false; cenName = null; cenTo = null; lowTold = lowAck = false; Squawk = null; cruiseFt = 0; climbOut = null; iffTold = emSq = 0; }
 
     /// R128: identification by code (FAA JO 7110.65 5-3-3): "radar contact" only once the code is observed; idAt = time, idFf = flight following instead of departure report.
     double idAt = -1; bool idFf;
@@ -881,8 +907,23 @@ public partial class Tower
     {
         if (depClr || Squawk == null || Phase != Phase.Away) return "";
         Squawk = null;
-        return "squawk VFR, ";
+        return Airfield.Theatre is "Nevada" or "MarianaIslands" ? "squawk VFR, " : "squawk 7000, ";   // FI1 I4: VFR code 1200 (US) or 7000 (ICAO)
     }
+
+    /// R128 + FI1: code for the identification; with IffCheck and a transponder "and ident", identification then waits for the ident (at most 20 s).
+    string SqId(double now)
+    {
+        var s = $"squawk {Digits(TakeSquawk())}";
+        (identWant, idRetry) = (IffCheck && Iff != null, false);
+        idAt = now + (identWant ? 20 : 6);
+        return identWant ? s + " and ident" : s;
+    }
+    bool identWant, idRetry;
+    int iffTold, emSq; double iffBadAt = -1, nordoAt = -1; (int Code, double At) emSeen;   // FI1: reminders per flight, emergency code already called, NORDO waits for the ident
+
+    /// FI1 (issue #2): with IffCheck the observed code must be the assigned one -> the instruction, otherwise null.
+    string? IffFix() => IffCheck && Iff is { } x && Squawk != null && (x.Status == 0 || x.Mode3 != int.Parse(Squawk))
+        ? $"{(x.Status == 0 || x.Mode3 < 0 ? "not observing your transponder" : "reset transponder")}, squawk {Digits(Squawk)}" : null;
 
     /// A102: cruise altitude by semicircular rule (magnetic course 000-179 odd, 180-359 even thousands): FL150 or 14000 ft;
     /// low for an airfield under 40 NM (at least 1000 ft above departure altitude); always at least terrain of the route + 2000 ft.

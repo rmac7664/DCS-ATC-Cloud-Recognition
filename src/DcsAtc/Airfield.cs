@@ -139,15 +139,65 @@ public class Airfield
     /// (forum tests Anapa/Krymsk/Maykop/Mozdok: 3 m/s main runway, 4 m/s headwind; Senaki 3.1 m/s crosswind -> AI observed on 27).
     /// wx, wz: wind vector at the airfield (toward, m/s).
     /// Parallel runways: landing is on the runway matching the main runway (Main or its reciprocal, Program learns it from the AI), otherwise the first from getRunways.
-    public string BestRunway(double wx, double wz)
+    /// FI5: closed runways (NOTAM) are skipped; dcs = as the DCS AI picks it, it ignores NOTAMs.
+    public string BestRunway(double wx, double wz, bool dcs = false)
     {
-        var m = Ends.FirstOrDefault(e => e.Name == Main);
-        var b = Math.Sqrt(wx * wx + wz * wz) < 3.5 && m != null ? m : Ends.MaxBy(e => -(wx * e.Dx + wz * e.Dz))!;
-        return Ends.Where(e => Diff(e.Hdg, b.Hdg) < 10).OrderBy(e => m != null && e.CX == m.CX && e.CZ == m.CZ ? 0 : 1).First().Name;
+        var open = dcs || Ends.All(e => Closed.Contains(e.Name)) ? Ends : Ends.Where(e => !Closed.Contains(e.Name)).ToList();
+        var m = open.FirstOrDefault(e => e.Name == Main);
+        var b = Math.Sqrt(wx * wx + wz * wz) < 3.5 && m != null ? m : open.MaxBy(e => -(wx * e.Dx + wz * e.Dz))!;
+        return open.Where(e => Diff(e.Hdg, b.Hdg) < 10).OrderBy(e => m != null && e.CX == m.CX && e.CZ == m.CZ ? 0 : 1).First().Name;
     }
     /// DCS main runway = named direction from Airbase:getRunways (correct at all test airfields). Program corrects it
     /// when an AI takes off/lands differently in light wind.
     public string Main = "";
+
+    /// FI5: NOTAMs of the day as the ATIS speaks them; Closed = runway ends out of use (whole strip), IlsOut = runways whose ILS is unserviceable.
+    public List<string> Notams = new();
+    public HashSet<string> Closed = new(), IlsOut = new();
+    public bool IlsOn(string rw) => Ils.ContainsKey(rw) && !IlsOut.Contains(rw);
+
+    /// FI5: own NOTAMs (config Notams: airfield -> texts), with random in addition at most one per airfield and day (40 %, same seed all day: a restart keeps it):
+    /// ILS out, closed parallel runway (only one the DCS AI does not use: it ignores NOTAMs), bird activity.
+    public static void SetNotams(IEnumerable<Airfield> fields, Dictionary<string, List<string>> own, bool random, DateTime day)
+    {
+        foreach (var f in fields)
+        {
+            (f.Notams, f.Closed, f.IlsOut) = (new(), new(), new());
+            foreach (var s in own.GetValueOrDefault(f.Name) ?? new()) f.Notam(s);
+            if (!random) continue;
+            int seed = day.Year * 1000 + day.DayOfYear;
+            foreach (var c in f.Name) seed = unchecked(seed * 31 + c);   // string.GetHashCode differs per process
+            var r = new Random(seed);
+            if (r.NextDouble() >= 0.4) continue;
+            var m = f.Ends.FirstOrDefault(e => e.Name == f.Main);
+            var pick = f.Ils.Keys.Order().Select(k => $"ILS {k} unserviceable")
+                .Concat(f.Ends.Where(e => m != null && Diff(e.Hdg, m.Hdg) < 10 && (e.CX != m.CX || e.CZ != m.CZ)).Select(e => $"runway {e.Name} closed"))
+                .Append("bird activity").ToList();
+            f.Notam(pick[r.Next(pick.Count)]);
+        }
+    }
+
+    static readonly Regex NotamRwy = new(@"^(?:runway|rwy)\s*(\d{1,2}[LRC]?)(?:\s*/\s*\d{1,2}[LRC]?)?\s+(?:closed|clsd)$", RegexOptions.IgnoreCase),
+                          NotamIls = new(@"^ILS\s*(?:runway\s*|rwy\s*)?(\d{1,2}[LRC]?)\s+(?:unserviceable|u/s|out of service|out)$", RegexOptions.IgnoreCase);
+    /// One NOTAM: "runway 07 closed" (also "rwy 7/25 clsd", closes the strip), "ILS 25 unserviceable" (u/s, out), "bird activity"; anything else the ATIS reads as written.
+    void Notam(string s)
+    {
+        s = s.Trim().TrimEnd('.');
+        static string Rw(Match x) => x.Groups[1].Value.ToUpperInvariant() is var n && (n.Length < 2 || !char.IsDigit(n[1])) ? "0" + n : n;
+        if (s == "") return;
+        if (NotamRwy.Match(s) is { Success: true } a && Ends.FirstOrDefault(e => e.Name == Rw(a)) is { } c)
+        {
+            var strip = Ends.Where(e => e.CX == c.CX && e.CZ == c.CZ).Select(e => e.Name).ToList();
+            Closed.UnionWith(strip);
+            Notams.Add($"runway {string.Join(", ", strip.Select(Tower.RwSay))} closed");
+        }
+        else if (NotamIls.Match(s) is { Success: true } i && Ils.ContainsKey(Rw(i)))
+        {
+            IlsOut.Add(Rw(i));
+            Notams.Add($"ILS runway {Tower.RwSay(Rw(i))} unserviceable");
+        }
+        else Notams.Add(s.StartsWith("bird", StringComparison.OrdinalIgnoreCase) ? "caution, bird activity in the vicinity of the airfield" : s);
+    }
 
     /// Highest (low: lowest) terrain (ft) in the cells touching the circle of rNm around (x, z). Without terrain data/outside: very negative.
     public double TerrainFt(double x, double z, double rNm, bool low = false)

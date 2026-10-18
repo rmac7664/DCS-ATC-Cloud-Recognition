@@ -411,6 +411,14 @@ fire({ id = world.event.S_EVENT_PILOT_DEAD, initiator = low }); fire({ id = worl
 assert(has("X;pilotdead;Viper") and not has("X;pilotdead;Bandit1"), "X;pilotdead nur nach Ausstieg (R361) fehlt")
 p1.group = "P1grp"; p1.air = true
 fire({ id = world.event.S_EVENT_EJECTION, initiator = p1 }); assert(has("X;eject;P1;P1grp;0;0;1"), "X;eject für Spieler (N45) über Wasser (R361) fehlt: " .. table.concat(events, " "))
+-- FI6: chute down (S_EVENT_LANDING_AFTER_EJECTION, initiator = the pilot) -> X;chute; SIGNAL from the app -> orange smoke / red flare at the survivor
+fire({ id = 31, initiator = { getPoint = function() return { x = 61200, y = 0, z = 450 } end } }); assert(has("X;chute;61200;450"), "X;chute fehlt: " .. table.concat(events, " "))
+local SIG = {}
+trigger.action.smoke = function(p, c) SIG[#SIG + 1] = string.format("smoke %.0f %.0f %d", p.x, p.z, c) end
+trigger.action.signalFlare = function(p, c) SIG[#SIG + 1] = string.format("flare %.0f %.0f %d", p.x, p.z, c) end
+files["9-90.cmd"] = "SIGNAL;61200;450;smoke"; run(T + 1)
+files["9-91.cmd"] = "SIGNAL;-300;-20;flare"; run(T + 1)
+assert(table.concat(SIG, ",") == "smoke 61200 450 3,flare -300 -20 1", "SIGNAL Rauch/Leuchtkugel: " .. table.concat(SIG, ","))
 landX = nil
 -- KF6/LK14: red SAM radar tracks the AI Viper -> X;spike (once, with type and location), ends -> X;naked; radar on the player -> nothing
 local sr = unit("SR1", 70000, 1000, nil, 1)
@@ -577,6 +585,8 @@ do   -- fog off in the ME (fog2.mode 1 / older missions without enable_fog): lef
   w.fog2, w.enable_fog = nil, false; run(T + 12); assert(stateFile():find("G;%d+;%d+;80000;"), "Nebel aus (enable_fog): " .. stateFile())
   w.enable_fog = true; run(T + 12); assert(stateFile():find("G;%d+;%d+;25;"), "Nebel an (enable_fog, alte Mission): " .. stateFile())
   env.mission.version = 23; run(T + 12); assert(stateFile():find("G;%d+;%d+;80000;"), "Nebel aus (Version 23 ohne fog2, enable_fog Rest): " .. stateFile())
+  local _, nLL = stateFile():gsub("\nL;%-?%d+;%-?%d+;42%.180000;42%.480000", "")   -- FI2: 7x7 lat/lon grid for the SRS transmitter positions
+  assert(nLL == 49, "FI2 Lat/Lon-Raster: " .. nLL .. " L-Zeilen")
   pl[#pl], w.enable_fog, FOG[1], FOG[2], env.mission.version = nil, nil, 0, 0, nil
 end
 -- Hook: file paths with a real backslash (Lua 5.1: '\D' becomes 'D' -> %TMP%DcsAtc-..., autostart/session/DCS folder never arrived)

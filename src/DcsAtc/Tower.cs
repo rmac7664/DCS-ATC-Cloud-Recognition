@@ -8,6 +8,9 @@ public record Telemetry(double AltMsl, double Agl, double Ias, double Hdg, doubl
                         double WindX, double WindZ, double Pressure, double Vs = 0, double Gear = -1,   // Gear: nose gear 0 up – 1 down, -1 unknown
                         (double X, double Z, double AltMsl)? Lock = null);   // target locked in the cockpit (Export.lua, host/solo only)
 
+/// FI1 (issue #2): transponder from SRS. Mode3 = code as digits (7700), -1 = off; Status 0 off, 1 normal, 2 IDENT.
+public record Iff(int Mode3, int Status, bool Mode4);
+
 /// Other aircraft nearby (AI/players). Speed, Vs (climb/descent rate) in m/s. Flag: AI control (dep/dep-go/arr/arr-hold).
 public record Traffic(int Id, string Type, double X, double Z, double AltMsl, double Hdg, double Speed,
                       string Group = "", string Flag = "", bool InAir = true, int Coalition = 0, double Vs = 0, string Cs = "", double Fuel = 1, bool Heli = false,   // Heli: helicopter (mission, N50)
@@ -70,6 +73,8 @@ public partial class Tower
     public static IReadOnlyList<Airfield> All = new List<Airfield>();   // all airfields (Program): destination of the en-route clearance
     Airfield? dest; bool depClr; double depFt;   // V14: route clearance (Clearance Delivery) -> departure vector
     string? climbOut; double climbFt;   // requested departure: "free" (unrestricted climb) / "tactical" (spiral climb overhead), climbFt = requested altitude, 0 = none
+    public static bool IffCheck;   // FI1: config IffCheck (code check, ident, 7600, AWACS parrot); 7700 always
+    public Iff? Iff;               // FI1: this pilot's transponder (SRS, Program.Prep), null = unknown or not fitted
     public string? Squawk;   // A90: transponder code, assigned once per flight (en-route clearance, VFR taxi clearance, flight following), moves along on airfield change (Program)
     double cruiseFt;         // A102: cruise altitude of the en-route clearance (semicircular rule), 0 = not yet calculated
     Ramp? home;

@@ -51,6 +51,8 @@ partial class Ops
             ?? mine.FirstOrDefault(l => l.Id == casL)
             ?? (me.Tel is { } t ? mine.OrderBy(l => Dist(t.X, t.Z, l.X, l.Z)).FirstOrDefault() : mine.FirstOrDefault());
     }
+    /// K3 (#7): frequency of the JTAC / FAC(A) the player would reach (mission frequency, otherwise config); 0 = none.
+    public double JtacFreqFor(Me me) => LeaderFor(me) is { } l ? (l.Freq > 0 ? l.Freq : DefFreq) : 0;
     (string Name, double X, double Z)? IpFor(Me me, Trg t) =>
         NavPts.Where(p => p.Side == me.Coalition && Dist(p.X, p.Z, t.X, t.Z) is > 3000 and < 60000)
               .OrderBy(p => me.Tel is { } m ? Dist(p.X, p.Z, m.X, m.Z) : Dist(p.X, p.Z, t.X, t.Z)).Select(p => ((string, double, double)?)(p.Name, p.X, p.Z)).FirstOrDefault();
@@ -519,6 +521,8 @@ partial class Ops
         var (m6, o6) = (Mk("Enfield 6-1", "A-10C_2", 3000), new Ops());
         Leaders = new() { new("JTAC-9", "jtac", "Axeman 9-1", 2, -14000, 0, 10, 0, "AM", "", true), fa };
         check(o6.LeaderFor(m6 with { Freq = 251.5 })?.Id == "FAC-1" && o6.LeaderFor(m6 with { Freq = DefFreq })?.Id == "JTAC-9", "JTAC und FAC(A) auf eigenen Frequenzen: SRS-Frequenz waehlt den Lotsen");
+        check(o6.JtacFreqFor(m6 with { Freq = 251.5 }) == 251.5 && o6.JtacFreqFor(m6 with { Freq = DefFreq }) == DefFreq && o6.JtacFreqFor(m6 with { Coalition = 1 }) == 0,
+              "K3 (#7): Funkrad nennt die Missionsfrequenz des JTAC, ohne eigene die Config, ohne JTAC keine");
         Leaders = new() { fa };
         var f1 = o6.OnTranscript("JTAC", "Rover checking in", m6, none, fl, 40, false);
         check(f1.Count == 1 && f1[0].Role == "FACA" && f1[0].Freq == 251.5 && f1[0].Text.Contains("Type 1 control") && f1[0].Text.Contains("two APCs moving"), "J8: FAC(A) mit Sicht auf den Spieler -> Type 1, Rolle FACA, eigene Frequenz -> " + string.Join(" | ", f1.Select(c => c.Text)));

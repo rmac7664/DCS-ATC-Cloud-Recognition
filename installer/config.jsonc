@@ -69,6 +69,12 @@
   "SrsAutoConnect": true,   // SRS-Client nach dem Start automatisch mit dem lokalen SRS-Server verbinden (127.0.0.1, Port aus der server.cfg), nur wenn er noch nicht verbunden ist; false = selbst verbinden
   "Atis": true,      // ATIS-Dauersendung für Plätze mit Spielern im Umkreis von 40 NM
   "RunwayLights": "silent",   // Bahnbefeuerung nachts über das DCS-ATC-Menü: "silent" (Platz bleibt stumm), "dcs" (DCS-Lotse antwortet 15 s hörbar), "off"
+  "MapPort": 18600,   // Lagebild im Browser (Plätze, Verkehr, Lotse, letzte Funksprüche): http://localhost:18600/, 0 = aus; erst nach Neustart
+  "MapLan": false,   // true = Lagebild auch von anderen Geräten im Netz (Tablet): http://<PC-Name>:18600/, Windows fragt einmal nach der Firewall
+  "StationPositions": true,   // Lotsen senden mit Standort (Platz, AWACS, Tanker, JTAC): hat der SRS-Server Sichtlinie/Reichweite an, hört man sie hinter Bergen oder zu weit weg nicht
+  "RandomNotams": false,   // zufällige NOTAMs, je Platz und Tag höchstens eins: ILS außer Betrieb (Approach führt dann PAR oder Sichtanflug), Parallelbahn gesperrt, Vogelschlaggefahr; die ATIS liest sie vor
+  "Notams": {},   // eigene NOTAMs je Platz, z. B. { "Kutaisi": ["ILS 25 unserviceable", "taxiway B closed"] }: "runway 07 closed" sperrt die Bahn (beide Richtungen, die DCS-KI landet trotzdem), "ILS 25 u/s" schaltet das ILS ab, anderer Text wird so vorgelesen
+  "IffCheck": false,   // Transponder prüfen (über SRS): Code beim Radarkontakt, "squawk ident", 7600, AWACS "parrot sour" ohne Mode 4; 7700 wird immer bemerkt
   "AirspaceWatch": true,   // Kontrollzonen überwachen (Einflug ohne Kontakt wird angerufen) und Verstöße ansagen ("possible pilot deviation", z. B. Start ohne Freigabe) und ins Debriefing; false = nur Sicherheitswarnungen
   "AltimeterUnit": "auto",   // Höhenmesser-Einstellung im Funk: "auto" (nach eigenem Flugzeugtyp: westliche Typen "altimeter two niner niner two" in inHg, sonst "QNH one zero one three" in hPa; ATIS nennt beides), "hpa", "inhg"
   "AsrGpu": true,   // Spracherkennung auf einer eigenen Grafikkarte (Vulkan, ca. 1 GB Grafikspeicher, unter 1 s pro Funkspruch); ohne eine oder wenn sie versagt auf der CPU; false = immer CPU

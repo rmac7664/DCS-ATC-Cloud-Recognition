@@ -28,7 +28,7 @@ public partial class Tower
         dueAt = -1;   // Reporting obligation: checked in; #10 "leaving the control zone" is due from now on
         Phase = Phase.Away;
         nav = null; handedOff = true;
-        if (Squawk == null && t != null && !OnGround(t)) { idAt = now + 6; idFf = false; return Say($"{hdr}, squawk {Digits(TakeSquawk())}.", "Approach"); }   // R128: flight without a prior code (no taxi call): assign first, "radar contact" after observing (tick)
+        if (Squawk == null && t != null && !OnGround(t)) { idFf = false; return Say($"{hdr}, {SqId(now)}.", "Approach"); }   // R128: flight without a prior code (no taxi call): assign first, "radar contact" after observing (tick)
         return Say($"{hdr}, {AirRc(t)}", "Approach");   // R7 (zoneReport) in AirRc
     }
     double airRcAt = -1e9;   // LA25: time of the direct check-in on the shared frequency
@@ -171,6 +171,7 @@ public partial class Tower
             var we = F.Ends.FirstOrDefault(e => e.Name == wr) ?? F.Ends.Where(e => e.Name.StartsWith(ws)).OrderBy(e => e.Name != rw).FirstOrDefault();
             double tail = we == null ? 0 : TailKt(t, we.Name);
             if (we == null) rwNo = $"Unable runway {RwSay(wr)}, runway {RwSay(rw)} in use.";
+            else if (F.Closed.Contains(we.Name) && we.Name != rw) rwNo = $"Unable runway {RwSay(we.Name)}, runway closed, runway {RwSay(rw)} in use.";   // FI5: NOTAM
             else if (tail > 10) rwNo = $"Unable runway {RwSay(we.Name)}, tailwind {Digits(((int)Math.Round(tail)).ToString())} knots{(gwish ? $", runway {RwSay(rw)} in use" : "")}.";
             else
             {
@@ -331,12 +332,12 @@ public partial class Tower
                 if (t != null && !ground && df != null)   // R113: pop-up IFR in the air (named destination; R8 clearance limit only on the ground): route from here, no approach; handover to the destination airfield at 15 NM (R43)
                 {
                     bool known = Phase is Phase.Inbound or Phase.Entering || Following;   // already identified
-                    var sq = Squawk == null ? $"squawk {Digits(TakeSquawk())}, " : "";
+                    bool fresh = Squawk == null;
                     CancelApproach(t);
                     Phase = Phase.Away; handedOff = true; Following = false;
                     popM = Dist(t.X, t.Z, CX, CZ) + 5 * NM;   // already far out: do not hand over on the very next tick
-                    if (!known && sq != "") { idAt = now + 6; idFf = false; popDf = df; return Say($"{hdr}, {sq.TrimEnd(' ', ',')}.", "Approach"); }   // R219/R128: first the code, "radar contact" and clearance after observing (tick)
-                    return Say($"{hdr}, {sq}" + (known ? PopClr(t, df) : $"radar contact, {Where(t)}. {Cap(PopClr(t, df))}"), "Approach");
+                    if (!known && fresh) { idFf = false; popDf = df; return Say($"{hdr}, {SqId(now)}.", "Approach"); }   // R219/R128: first the code, "radar contact" and clearance after observing (tick)
+                    return Say($"{hdr}, {(fresh ? $"squawk {Digits(TakeSquawk())}, " : "")}" + (known ? PopClr(t, df) : $"radar contact, {Where(t)}. {Cap(PopClr(t, df))}"), "Approach");
                 }
                 return Say($"{hdr}, {rwAck}cleared {(dest != null ? $"to {dest.Name.Replace('-', ' ')} airport" : "out of the control zone")} via radar vectors, " +
                            $"after departure fly runway heading, climb and maintain {Alt(depFt)}, expect {Alt(cruiseFt)} ten minutes after departure, " +
@@ -424,7 +425,7 @@ public partial class Tower
                 ffIn = !cen && t != null && Dist(t.X, t.Z, CX, CZ) < CenterFfNm * NM;
                 Following = true;
                 if (Phase is Phase.ClearedTakeoff or Phase.Departing) { Phase = Phase.Away; nav = null; handedOff = true; }   // A51: counts as check-in like "airborne", otherwise tick signs off at the zone edge anyway
-                if (Squawk == null && t != null && Phase == Phase.Away && !OnGround(t)) { idAt = now + 6; idFf = true; return Say($"{hdr}, squawk {Digits(TakeSquawk())}.", "Approach"); }   // R128: first the code, "radar contact" after observing (tick)
+                if (Squawk == null && t != null && Phase == Phase.Away && !OnGround(t)) { idFf = true; return Say($"{hdr}, {SqId(now)}.", "Approach"); }   // R128: first the code, "radar contact" after observing (tick)
                 return Say($"{hdr}, {(Squawk == null ? $"squawk {Digits(TakeSquawk())}, " : "")}{FfRc(t)}", "Approach");
 
             case "ffoff":

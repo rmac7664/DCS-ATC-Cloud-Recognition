@@ -153,6 +153,9 @@ static class Settings
         var combat = Combo(new[] { L("voll", "full"), L("taktisch", "tactical"), L("aus", "off") }, Array.IndexOf(modes, cfg.AiFlightComms));
         Row(L("KI-Flüge im Gefecht", "AI flights in combat"), combat);
         var atis = Check(L("ATIS-Dauersendung", "ATIS broadcast"), cfg.Atis);
+        var iffc = Check(L("Transponder prüfen (Code, Ident, Mode 4, über SRS)", "Check transponder (code, ident, Mode 4, via SRS)"), cfg.IffCheck);
+        var spos = Check(L("Lotsen senden mit Standort (SRS-Reichweite und Sichtlinie)", "Controllers transmit with their position (SRS range and line of sight)"), cfg.StationPositions);
+        var notam = Check(L("Zufällige NOTAMs (ILS aus, Bahn gesperrt, Vogelschlag)", "Random NOTAMs (ILS out, runway closed, bird activity)"), cfg.RandomNotams);
         var watch = Check(L("Luftraum überwachen (Kontrollzonen, Verstöße, Debriefing)", "Watch airspace (control zones, deviations, debriefing)"), cfg.AirspaceWatch);
         var dbg = Check(L("Debug-Log für Fehlerberichte (atc-debug.txt)", "Debug log for bug reports (atc-debug.txt)"), cfg.DebugLog);
         string[] lights = { "silent", "dcs", "off" };
@@ -225,7 +228,7 @@ static class Settings
                 ("MyCallsign", J(call), "Callsign"), ("CallsignFromUnit", J(unitCs.Checked), "MyCallsign"), ("Volume", D(vol.Value / 100), "RadioFx"), ("SpeechRate", D(rate.Value), "Volume"),
                 ("ReplyPause", D(pause.Value), "SpeechRate"), ("RadioFx", J(fx.Checked), "PilotVoice"), ("RadioText", J(rtx.Checked), "RadioFx"),
                 ("PilotVoice", J(pv.Checked ? (cfg.PilotVoice != "" ? cfg.PilotVoice : new Config().PilotVoice) : ""), "Voices"),
-                ("AiChatter", J(chat.Checked), "ReplyPause"), ("AwacsBullseye", J(bull.Checked), "Coalition"), ("AwacsNewGroupNm", D(awNm.Value), "AwacsBullseye"), ("Atis", J(atis.Checked), "AiChatter"), ("RunwayLights", J(lights[light.SelectedIndex]), "Atis"), ("AltimeterUnit", J(units[unit.SelectedIndex]), "RunwayLights"), ("AiFlightComms", J(modes[combat.SelectedIndex]), "Volume"), ("AirspaceWatch", J(watch.Checked), "RunwayLights"), ("DebugLog", J(dbg.Checked), "AirspaceWatch"),
+                ("AiChatter", J(chat.Checked), "ReplyPause"), ("AwacsBullseye", J(bull.Checked), "Coalition"), ("AwacsNewGroupNm", D(awNm.Value), "AwacsBullseye"), ("Atis", J(atis.Checked), "AiChatter"), ("RunwayLights", J(lights[light.SelectedIndex]), "Atis"), ("AltimeterUnit", J(units[unit.SelectedIndex]), "RunwayLights"), ("AiFlightComms", J(modes[combat.SelectedIndex]), "Volume"), ("IffCheck", J(iffc.Checked), "AirspaceWatch"), ("StationPositions", J(spos.Checked), "IffCheck"), ("RandomNotams", J(notam.Checked), "StationPositions"),("AirspaceWatch", J(watch.Checked), "RunwayLights"), ("DebugLog", J(dbg.Checked), "AirspaceWatch"),
                 ("WheelInGame", J(ingames[ingame.SelectedIndex]), "WheelSize"), ("MicName", J(mic.SelectedIndex == 0 ? "" : mics[mic.SelectedIndex - 1]), "WheelSize"), ("SrsPath", J(srs.Text.Trim()), "DebugLog"),
             };
             try

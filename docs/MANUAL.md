@@ -13,14 +13,14 @@ DCS-ATC never spawns aircraft. It only provides the radio for units that are alr
 2. [Ways to talk](#ways-to-talk)
    - [Voice over SRS](#voice-over-srs) · [Phrasing that is always understood](#phrasing-that-is-always-understood) · [Radio wheel](#radio-wheel) · [Radio wheel in VR](#radio-wheel-as-text-in-the-game-vr) · [F10 menu](#f10-menu) · [Chat](#typing-in-the-chat-multiplayer) · [Text in the game](#text-in-the-game) · [Voices](#voices-radio-effect-and-speech-pace) · [Altimeter unit](#altimeter-setting-hpa-or-inhg) · [Runway lights](#runway-lights)
 3. [Airfield ATC](#airfield-atc)
-   - [Airfields, callsigns and frequencies](#airfields-callsigns-and-frequencies) · [ATIS](#atis) · [Runway selection](#runway-selection) · [Weather: VFR and IFR](#weather-vfr-and-ifr) · [Ground](#ground) · [Tower: departure](#tower-departure) · [Tower: arrival](#tower-arrival) · [Approach](#approach) · [Center](#center) · [Airspace](#airspace) · [Emergencies](#emergencies) · [Landing grade and debriefing](#landing-grade-and-debriefing) · [Mandatory reports](#mandatory-reports) · [Phrase table](#phrase-table)
+   - [Airfields, callsigns and frequencies](#airfields-callsigns-and-frequencies) · [ATIS](#atis) · [Runway selection](#runway-selection) · [NOTAMs](#notams) · [Weather: VFR and IFR](#weather-vfr-and-ifr) · [Ground](#ground) · [Tower: departure](#tower-departure) · [Tower: arrival](#tower-arrival) · [Approach](#approach) · [Center](#center) · [Airspace](#airspace) · [Transponder (IFF)](#transponder-iff) · [Emergencies](#emergencies) · [Landing grade and debriefing](#landing-grade-and-debriefing) · [Checkride](#checkride) · [Mandatory reports](#mandatory-reports) · [Phrase table](#phrase-table)
 4. [Carrier operations](#carrier-operations)
 5. [AWACS, tankers and ranges](#awacs-tankers-and-ranges)
-   - [AWACS](#awacs) · [Tankers](#tankers) · [Range](#range) · [JTAC and FAC(A)](#jtac-and-faca) · [AI flights on the radio](#ai-flights-on-the-radio) · [Ground crew and crew chief](#ground-crew-and-crew-chief)
+   - [AWACS](#awacs) · [Tankers](#tankers) · [Range](#range) · [JTAC and FAC(A)](#jtac-and-faca) · [AI flights on the radio](#ai-flights-on-the-radio) · [CSAR (helicopters)](#csar-helicopters) · [Ground crew and crew chief](#ground-crew-and-crew-chief)
 6. [Multiplayer, dedicated server, custom frequencies and other maps](#multiplayer-dedicated-server-custom-frequencies-and-other-maps)
    - [How multiplayer works](#how-multiplayer-works) · [Dedicated server, step by step](#dedicated-server-step-by-step) · [Custom frequencies per airfield](#custom-frequencies-per-airfield) · [Own airfield procedures](#own-airfield-procedures-chartsjsonc) · [Kneeboard pages](#kneeboard-pages) · [Other maps than Caucasus](#other-maps-than-caucasus)
 7. [Appendix: settings, logs and troubleshooting](#appendix-settings-logs-and-troubleshooting)
-   - [The settings window](#the-settings-window) · [config.jsonc reference](#configjsonc-reference) · [Log files](#log-files) · [Troubleshooting](#troubleshooting)
+   - [The settings window](#the-settings-window) · [config.jsonc reference](#configjsonc-reference) · [Situation map in the browser](#situation-map-in-the-browser) · [Log files](#log-files) · [Troubleshooting](#troubleshooting)
 
 The examples use the callsign Enfield 1-1 and write many numbers as digits. On the radio, controllers say them digit by digit (for example "two five one decimal five").
 
@@ -112,6 +112,7 @@ DCS-ATC can also run on a PC that hosts a DCS dedicated server (`DCS_server.exe`
   - **Other stations** have defaults: ATIS 263.5, AWACS 251.5, Tanker 255.5, Range 267.5, Carrier 127.5, JTAC 133.5. An AWACS, tanker, carrier, JTAC or FAC(A) that has its own frequency in the mission uses that frequency instead.
   - **The radio wheel** shows the frequency of every station on its top level. A station is shown in red with ✗ when none of your SRS radios is tuned to it.
 - **You only hear what you are tuned to.** Controllers transmit on their own frequency. A controller's call also appears as text in the game for your group, but only if one of your radios is on that frequency. If SRS can't tell which radios you have, you see all text.
+- **Range and line of sight.** Controllers transmit with their position: the airfield (antenna 30 m above it), the AWACS, tanker or JTAC unit, AI flights from their aircraft. If the SRS server has *line of sight* or *distance limit* on, you don't hear a tower behind a mountain or a station that is too far away. With both off, nothing changes. The Center has no position (it stands for a network of antennas), carrier stations don't either. SRS checks the line of sight about twice a second, so the first moment of a call can still get through. To turn it off: **Settings → Controllers transmit with their position** (`"StationPositions": false`).
 
 ### Keys at a glance
 
@@ -195,7 +196,7 @@ Approach: Enfield one one, roger, resume own navigation, … frequency change ap
 
 If you are already outside the control zone when you check in, you get "radar contact, …. Resume own navigation, maintain VFR." instead.
 
-Make the check-in call yourself. Approach does not identify you on its own. If you haven't checked in 60 s after the handoff (or when you reach the edge of the control zone), Tower reminds you once: "Enfield one one, contact Kutaisi Approach now." If you still don't check in, 60 s later you get no radar service: "no contact with Kutaisi Approach, radar service not provided, squawk VFR, frequency change approved." Under IFR this is also a deviation.
+Make the check-in call yourself. Approach does not identify you on its own. If you haven't checked in 60 s after the handoff (or when you reach the edge of the control zone), Tower reminds you once: "Enfield one one, contact Kutaisi Approach now." If you still don't check in, 60 s later you get no radar service: "no contact with Kutaisi Approach, radar service not provided, squawk 7000, frequency change approved." Under IFR this is also a deviation.
 
 **7. Coming back (Approach).** Call Approach while you are still well out:
 
@@ -566,6 +567,7 @@ The pilot voice adds your position, altitude and heading, and DCS-ATC picks the 
 | QNH / weather | `request weather` |
 | Listen to ATIS | Reads the current ATIS of your airfield. If the mission has no weather data, you get a text hint instead. |
 | Request zone transit | `request zone transit` (to Approach) |
+| Checkride on/off | Starts or ends a [checkride](#checkride) |
 | Debriefing | Shows your debriefing so far as text in the game |
 | Settings | Opens the settings window |
 
@@ -609,8 +611,8 @@ In every mission with DCS-ATC, each player group gets **F10 Other → ATC**. If 
 | Range (only if the mission has a range) | Check in · IP inbound · In hot · Off safe · Check out · Check out, hung ordnance |
 | AWACS / Tanker / Center | AWACS → Check in · Picture · Bogey dope · Sort · Nearest tanker · Vector nearest airfield · Check out · Combat → Committing / Fox three / Splash / Defending / Request support / Unable / Winchester / Bingo, RTB / Say again. Tanker → Request rejoin · Visual · Observation · Pre-contact · Refuel complete · Abort · Say position · Center → Check in · Request altitude · Request direct · Leaving frequency |
 | Carrier (only if the mission has a carrier) | Marshal check in · See you at · Initial · Commencing · Platform · Ball · Clara · Pigeons · Strike check in/out · Red Crown check in/out (only with an own cruiser) |
-| Emergency | MAYDAY → kind · PAN PAN → kind · Minimum fuel · Hung ordnance · Flameout, high key · Cancel emergency (kinds: engine failure, fuel (MAYDAY only), hydraulic failure, battle damage, medical, bird strike) |
-| General | Radio check · Say again · QNH / weather · Listen to ATIS · Request zone transit · Debriefing |
+| Emergency | MAYDAY → kind · PAN PAN → kind · Minimum fuel · Hung ordnance · Flameout, high key · Cancel emergency · CSAR pickup · CSAR smoke / flare (kinds: engine failure, fuel (MAYDAY only), hydraulic failure, battle damage, medical, bird strike) |
+| General | Radio check · Say again · QNH / weather · Listen to ATIS · Request zone transit · Checkride on/off · Debriefing |
 | Settings | Ground crew on/off · Show |
 
 F10 calls are handled like wheel calls, including the pilot voice and the choice of airfield. The F10 menu has the same groups, names and texts as the wheel, with at most 9 entries per level; only *Select airfield* is missing (use the wheel, or say the airfield's name). The wheel hides entries that don't fit your flight state, F10 always shows all of them; a call that doesn't fit is answered as usual (for example *unable*).
@@ -819,6 +821,20 @@ The ATIS broadcasts continuously for every airfield that has a player within 40 
   - Elsewhere: left-hand, unless the terrain on the left is more than 300 ft higher than on the right.
   - If the terrain doesn't allow a pattern at all (for example at Khasab), you only get straight-in approaches.
 
+### NOTAMs
+
+Airfields can have NOTAMs. The ATIS reads them before "Advise on initial contact", and the controllers act on them.
+
+- **Random NOTAMs:** with **Settings → Random NOTAMs** (`"RandomNotams": true`, off by default), an airfield has at most one NOTAM per day. It stays the same all day, even after a restart. The possible NOTAMs are:
+  - **ILS out of service:** "ILS runway two five unserviceable". In instrument weather Approach vectors you for a PAR approach, otherwise you get a straight-in or visual approach.
+  - **Parallel runway closed:** "runway three zero right, one two left closed". Only the runway the DCS AI doesn't use gets closed. If you ask for it: "Unable runway three zero right, runway closed, …".
+  - **Bird activity:** "caution, bird activity in the vicinity of the airfield".
+- **Your own NOTAMs:** add them per airfield in `config.jsonc`, for example `"Notams": { "Kutaisi": ["ILS 25 unserviceable", "taxiway B closed"] }`.
+  - `runway 07 closed` (or `rwy 07/25 clsd`) closes the runway in both directions, and the runway selection skips it. If no runway is left open, the closure doesn't count for the runway selection. The DCS AI ignores NOTAMs and still lands where DCS sends it.
+  - `ILS 25 unserviceable` (or `u/s`) takes the ILS out of service.
+  - Any other text is read out as written.
+- A new NOTAM gives the ATIS a new letter. The atc-log lists the NOTAMs as `[NOTAM]` lines.
+
 ### Weather: VFR and IFR
 
 **IFR conditions**
@@ -964,11 +980,11 @@ At about 500 ft above the airfield, Tower hands you to Departure (Approach, or t
 - **Check-in phrases:** "airborne", "passing …", "climbing …", "departed", "out of …", "with you", or just the station and your callsign.
 - **No squawk yet:** Approach first gives "squawk …", then "radar contact" a few seconds later.
 - **IFR:** "radar contact, … Fly heading 280, climb and maintain flight level one five zero."
-- **VFR still inside the zone:** "Continue as cleared, report leaving the control zone." When you then say "leaving the control zone", you get "roger, resume own navigation, squawk VFR, frequency change approved. Good day."
-- **If you don't check in:** Approach doesn't identify you by itself. 60 s after the handoff, or at the zone edge or the exit CRP, Tower reminds you once: "contact Kutaisi Approach now" (with the frequency if it differs from the one you are on; with an own Departure frequency "contact Kutaisi Departure now, two seven three decimal five five"). 60 s later: "no contact with Kutaisi Approach, radar service not provided" (VFR: plus "squawk VFR, frequency change approved"; IFR: deviation). See [Mandatory reports](#mandatory-reports).
-- **Leaving the zone before the handoff** (for example a low departure): "leaving control zone, squawk VFR, frequency change approved. Good day."
-- **VFR, after "report leaving the control zone":** if you don't report, you get "report leaving the control zone." at the zone edge or the exit CRP. 1 NM outside the zone (at least 30 s later): "I show you clear of the zone, radar service terminated, resume own navigation, squawk VFR, frequency change approved. Good day." and a deviation.
-- **15 NM from the airfield:** Departure signs you off: "radar service terminated, squawk VFR, frequency change approved."
+- **VFR still inside the zone:** "Continue as cleared, report leaving the control zone." When you then say "leaving the control zone", you get "roger, resume own navigation, squawk 7000, frequency change approved. Good day."
+- **If you don't check in:** Approach doesn't identify you by itself. 60 s after the handoff, or at the zone edge or the exit CRP, Tower reminds you once: "contact Kutaisi Approach now" (with the frequency if it differs from the one you are on; with an own Departure frequency "contact Kutaisi Departure now, two seven three decimal five five"). 60 s later: "no contact with Kutaisi Approach, radar service not provided" (VFR: plus "squawk 7000, frequency change approved"; IFR: deviation). See [Mandatory reports](#mandatory-reports).
+- **Leaving the zone before the handoff** (for example a low departure): "leaving control zone, squawk 7000, frequency change approved. Good day."
+- **VFR, after "report leaving the control zone":** if you don't report, you get "report leaving the control zone." at the zone edge or the exit CRP. 1 NM outside the zone (at least 30 s later): "I show you clear of the zone, radar service terminated, resume own navigation, squawk 7000, frequency change approved. Good day." and a deviation.
+- **15 NM from the airfield:** Departure signs you off: "radar service terminated, squawk 7000, frequency change approved."
   - IFR to another airfield: instead you are handed to that airfield's Approach: "contact Batumi Approach …"
   - If the mission has a friendly AWACS: "contact Overlord …"
 
@@ -1275,7 +1291,7 @@ The Center is a module of its own ("Center" in setup and in the settings window,
 
 - **What you get:** traffic advisories within 5 NM and ±1,500 ft ("traffic, 10 o'clock, 4 miles, southbound, 500 feet above, Hornet"), and "traffic no longer a factor" when the traffic is gone. If you said "negative contact", you get an update after 30 s. Traffic alerts and terrain warnings also apply.
 - **It stays with you** when you change airfield.
-- **To end it:** "cancel flight following" or "leaving frequency" gets "radar service terminated, squawk VFR, frequency change approved."
+- **To end it:** "cancel flight following" or "leaving frequency" gets "radar service terminated, squawk 7000, frequency change approved."
 
 #### Zone guard
 
@@ -1310,6 +1326,20 @@ With `"AirspaceWatch": true` (the default), Tower watches the control zone.
 If you are checked in with AWACS, only the pattern and the runway are watched.
 
 With `"AirspaceWatch": false`, only the safety calls remain. There are no "possible pilot deviation" calls and no debriefing entries.
+
+### Transponder (IFF)
+
+DCS-ATC reads your transponder from SRS: the Mode 3 code, the IDENT button and Mode 4. SRS gets it from the cockpit in modules with IFF export, otherwise from the SRS overlay. Without SRS, or in a module without a transponder, everything below is skipped.
+
+- **Squawk 7700** is always noticed (after 5 s, so a code you only dial through doesn't count): *"Enfield one one, Kutaisi Approach, observed squawk 7700, say nature of emergency."* Then declare as usual (see [Emergencies](#emergencies)). If you have already declared, nothing more is said.
+- **VFR code** when the controller releases you: *"squawk 7000"*, on the US maps (Nevada, Mariana Islands) *"squawk VFR"* (1200).
+
+With **Check transponder** in the settings (`"IffCheck": true`, off by default, because in some modules, such as the F-14, the transponder sits in the back seat):
+
+- **Code check:** when Approach or Departure assigns a code in the air, it asks *"squawk 4521 and ident"*. Your IDENT identifies you at once (*"radar contact, …"*). Without it, radar contact comes after 20 s if the code is right.
+- **Wrong code or transponder off:** *"reset transponder, squawk 4521"* or *"not observing your transponder, squawk 4521"*. It's said once more, then you get radar contact anyway. Under radar service, a wrong code is pointed out again after 20 s, at most twice per flight. The second time goes into the debriefing.
+- **Squawk 7600** (radio failure): *"observed squawk 7600. If you read, squawk ident."* Your IDENT answers: *"ident observed. Continue, expect runway 25."*
+- **AWACS:** at check-in without Mode 4: *"radar contact, parrot sour, picture …"*. With Mode 4 on, nothing extra is said.
 
 ### Emergencies
 
@@ -1366,6 +1396,27 @@ When you park after a flight, it is shown automatically and saved to `%LOCALAPPD
 
 **Deviation types:** takeoff without clearance; runway entered without clearance; landing without clearance; landing after go-around; airspace violation; runway crossed without clearance; removed from the sequence; taxi without clearance; approach without contact; no landing report; go-around without report; no check-in with departure (IFR); no check-in with approach after missed approach; no report "leaving the control zone"; no report "clear of the zone". Carrier, tanker and range add their own (approach time passed without "commencing", contact or approach to a tanker without clearance, no "off" call on the range).
 
+**Logbook**
+
+Every flight that ends with the debriefing goes into the logbook `%LOCALAPPDATA%\Programs\DCS-ATC\logbook.json`, one per player name. The last line of the debriefing shows the totals, for example `Logbook (12 flights): 9:40 h (FA-18C_hornet 7:10, F-16C_50 2:30), 23 landings (4 at night) at 6 airfields, 9 patterns, 11 traps (3 at night, 2 Case III), Boarding Rate 85 %, GPA 3.12, 2 bolters, 5 tanker contacts, 1 deviation`.
+
+- **What counts:** flight time per aircraft type (from the first time above 30 m until the debriefing), landing grades per airfield, patterns, LSO grades (a trap with a wire, a bolter, GPA over all graded passes), tanker contacts, range passes and deviations. Boarding rate = traps / (traps + bolters).
+- **Night** is after the end of civil twilight (sun more than 6° below the horizon). Landing grades and LSO grades at night are marked "(night)" in the debriefing, Case III traps "(Case III)".
+- **Milestones** appear as their own lines, for example `Milestone: first night landing`, `Milestone: first Case III trap`, `Milestone: 100th landing`, `Milestone: first tanker contact`, `Milestone: first flight in the F-16C_50`, `Milestone: 10 flight hours`.
+- **Starting over:** delete `logbook.json`. If the file can't be read, DCS-ATC leaves it as it is and says so in the debriefing.
+
+### Checkride
+
+An instructor rides along on the intercom and checks three patterns, an approach with a go-around and a landing. Start it with "request checkride" on any controller frequency or with wheel/F10 **General → Checkride on/off**. You need to fly solo and be within 10 NM of the selected airfield. You work the radio yourself: ask the tower for the touch and go, the low approach and the full stop.
+
+1. **Three patterns with touch and go.** On downwind: pattern altitude ±100 ft, ground track within 10° of the reciprocal, airspeed within ±10 kt of the middle of the leg.
+2. **Approach with go-around.** An ILS if the runway has one, otherwise a straight-in approach on a 3° glide path. Be established on final at 3 NM or more. From 3 to 0.5 NM, stay within three quarters of full scale: localizer 1.9°, glide slope 0.5°. The instructor calls "Minimums" at 200 ft above the airfield. Go around then, and not below 150 ft.
+3. **Full-stop landing in the touchdown zone:** past the threshold and within the first 900 m (the first third on short runways).
+
+- A deviation counts after it has lasted 5 s. The instructor calls it once per leg ("Check altitude.", "Check heading.", "Check glide slope.", "Check localizer.").
+- After the landing you hear "Checkride complete. Passed, well done." or "Not passed:" with the items. The debriefing has the details, for example `Checkride Kutaisi: failed – pattern 2: altitude +180 ft, touchdown 1100 m past the threshold, touchdown zone ends at 830 m`. The logbook counts checkrides and how many you passed.
+- "cancel checkride" or the wheel entry again ends it. Flying more than 15 NM from the airfield cancels it too.
+
 ### Mandatory reports
 
 **Principle:** you report your position yourself, as in real military flying. The controller does not report it for you. If you don't report, you first get a prompt. If you still don't report, a real consequence follows: no clearance, a go-around, a wave-off, or no radar service. Deviations go into the debriefing.
@@ -1379,9 +1430,9 @@ When you park after a flight, it is shown automatically and saved to `%LOCALAPPD
 | **First call before entering the zone** (Approach or Tower) | Zone guard: "…, say intentions" | Inside 1 NM on final: "go around, you are not cleared to land", plus a deviation |
 | **Tower check-in after "contact Tower"** ("…Tower, Enfield 1-1, initial / overhead / four mile final") | Only if Tower has its own frequency: after 60 s, or within 5 NM of the field, Approach says "contact Kutaisi Tower now, <freq>" (on a shared frequency the prompts above apply) | No landing clearance; the landing-call rule above applies |
 | **Going around:** "…, going around" | "I show you going around, confirm?" | Landing clearance cancelled, "…, report base", plus a deviation |
-| **Departure check-in:** "…Departure, Enfield 1-1, airborne, passing 2000" | 60 s after the handoff or at the zone edge, Tower: "contact Kutaisi Approach now" (own Departure frequency: "contact Kutaisi Departure now, <freq>") | 60 s later: "no contact with Kutaisi Approach, radar service not provided". IFR: deviation. VFR: "…, squawk VFR, frequency change approved" |
+| **Departure check-in:** "…Departure, Enfield 1-1, airborne, passing 2000" | 60 s after the handoff or at the zone edge, Tower: "contact Kutaisi Approach now" (own Departure frequency: "contact Kutaisi Departure now, <freq>") | 60 s later: "no contact with Kutaisi Approach, radar service not provided". IFR: deviation. VFR: "…, squawk 7000, frequency change approved" |
 | **Missed-approach check-in:** "…Approach, missed approach, climbing 3000" | After 45 s, Tower: "contact Kutaisi Approach now" | 60 s later: "no contact with Kutaisi Approach, continue runway heading, maintain 3000 feet, …", no vectors until you check in, plus a deviation |
-| **Leaving the control zone** (after "report leaving the control zone"): "…, leaving the control zone" | At the edge or the exit CRP: "report leaving the control zone" | 1 NM outside: "I show you clear of the zone, radar service terminated, resume own navigation, squawk VFR, …", plus a deviation |
+| **Leaving the control zone** (after "report leaving the control zone"): "…, leaving the control zone" | At the edge or the exit CRP: "report leaving the control zone" | 1 NM outside: "I show you clear of the zone, radar service terminated, resume own navigation, squawk 7000, …", plus a deviation |
 | **Transit complete:** "…, clear of the zone" | 0.5 NM outside: "report clear of the zone" | 1 NM outside: "I show you clear of the zone, frequency change approved", plus a deviation |
 | **Taxi to parking:** "…Ground, runway vacated, request taxi to parking" | "contact Kutaisi Ground" (30 s after vacating) | Faster than 5 kt and more than 150 m from the runway without clearance: "hold position, you are not cleared to taxi. Request taxi.", plus a deviation |
 | **Ready for departure** (also after spawning on the runway): "…, ready for departure" | none | Rolling without clearance: "stop immediately, … You are not cleared for takeoff.", plus a deviation |
@@ -1407,7 +1458,7 @@ Keywords are recognised anywhere in your call. Start with "<Airfield> <Controlle
 | "ready", "ready for departure", "holding short" (+ "closed pattern") | Tower | Takeoff clearance, line up and wait, or hold short |
 | "abort", "rejecting", "stopping", "cancel takeoff" | Tower, when cleared or lined up | Clearance cancelled, "vacate …, report ready for departure" |
 | "airborne", "passing 2000", "climbing", "departed", "out of", "with you" | Departure/Approach after takeoff | Radar contact (a squawk first if needed) |
-| "leaving the control zone" | Approach, after it was requested | Signed off, squawk VFR |
+| "leaving the control zone" | Approach, after it was requested | Signed off, squawk 7000 |
 | "inbound (for landing)", "landing", "recovery", "rejoin", "full stop" | Approach (Tower within 4 NM) | Radar vectors, holding, or pattern join |
 | "inbound for pattern work, touch and go" | Approach | Vectors, then circuits |
 | "request straight in", "ILS", "instrument", "TACAN/VOR/PAR approach", "radar approach", "IFR" | Approach | Straight-in or instrument approach |
@@ -1427,6 +1478,7 @@ Keywords are recognised anywhere in your call. Start with "<Airfield> <Controlle
 | "going around", "go around", "missed approach", "going missed" | Tower/Approach | Pattern go-around, or missed approach (IFR) |
 | "cancel approach", "abort landing", "leaving the pattern" | Approach/Tower | Approach cancelled, resume own navigation |
 | "request zone transit", "crossing", "overflight", "pass through" / "clear of the zone" | Approach (Tower within 5 NM) | Transit clearance / signed off |
+| "request checkride" / "cancel checkride" (any frequency) | Instructor (intercom) | Checkride tasks / cancelled |
 | "request flight following", "radar service", "traffic advisories" / "cancel flight following", "leaving frequency" | Approach | Flight following on / off |
 | "traffic in sight", "tally", "looking", "negative contact", "no joy" | Approach/Tower | "roger", advisory status noted |
 | "terrain in sight" | Approach | Terrain warning acknowledged |
@@ -2009,7 +2061,8 @@ DCS still only operates the basket or boom through its own F-menu tanker dialog.
 | **judy** / *radar contact* | *"roger, report visual."* The join guidance ends, the join itself still needs "visual". |
 | **visual** (*tally*, *in sight*), more than 8 NM away | *"continue, 20 miles, report visual."* |
 | **visual**, within 8 NM | *"cleared to join, observation left wing, number 1."* If several aircraft are waiting: *"number 2. Enfield one two first, then Enfield one one."* In front of the tanker's 3-9 line (more than 0.5 NM ahead of it): *"negative, rejoin from astern, Texaco 6 o'clock, 2 miles, report visual."* You only join from behind. |
-| **observation** / **left wing** / **joined** | Once joined: *"cleared pre-contact."* If others are ahead: *"stabilize observation left wing, number 2."* Not yet cleared to join (within 2 NM): *"cleared to join, left observation, number 1."* |
+| **moving to …** (*moving to pre-contact*, *moving into left observation*, *moving to the right wing*) | No answer. That's your readback, report once you're there. |
+| **observation** / **left wing** / **joined** / **stabilized left observation** | Once joined: *"cleared pre-contact."* If others are ahead: *"stabilize observation left wing, number 2."* Not yet cleared to join (within 2 NM): *"cleared to join, left observation, number 1."* |
 | **pre-contact** (*precontact*, *in position*, *ready for contact*, *stabilized*, *ready to refuel*) | *"Enfield one one, cleared contact, basket ready."* or *"boom ready"*. More than 2 NM away: *"negative, bearing 084, 12 miles, report visual."* Not your turn yet: *"negative, hold observation left wing, number 2."* Not yet cleared to join: *"negative, not cleared pre-contact, cleared to join, left observation, number 1."* |
 | **disconnect** | *"copy disconnect, move to the right wing."* |
 | **right wing** | *"roger, report complete or request more."* |
@@ -2284,6 +2337,18 @@ Friendly AI flights within 60 NM of a player on their side talk on the radio dur
 
 To keep the frequency usable, at most 10 low-priority and 16 normal calls are sent per minute on each frequency. Extra low-priority calls are dropped.
 
+### CSAR (helicopters)
+
+If a pilot of your side ejects over land, a helicopter player can pick them up (AI pilots count within about 120 NM of a player). Nothing is spawned: the survivor exists only in DCS-ATC and on the radio.
+
+- **Survivor:** where the chute came down (DCS event), otherwise where the pilot ejected. There is no pickup from the water.
+- **Call for helicopters:** once a helicopter player of that side is in the mission, the AWACS calls on guard: "Any helicopter, Overlord, downed pilot Enfield one two, bullseye two seven zero, 25 miles."
+- **Taking it:** "Overlord, Pedro 1-1, will pick up" (or "request CSAR", or wheel/F10 **Emergency → CSAR pickup**). You get the nearest survivor of your side within 100 NM: "Pedro one one, Overlord, copy, downed pilot Enfield one two, bearing two seven zero, 12 miles. Contact him on guard." Without an AWACS the survivor answers himself.
+- **On guard:** within 3 NM the survivor hears you: "Pedro one one, Enfield one two, I hear you, you are north of me." Ask for a signal with his callsign, "Enfield 1-2, Pedro, pop smoke", or with **Emergency → CSAR smoke / flare**. By day he pops orange smoke, at night a red flare, when you are within 5 NM and at most once a minute.
+- **Pickup:** land within 50 m of him and stay on the ground for 30 s. The crew reports on the intercom: "Survivor in sight, he's coming to us.", then "Survivor on board, door closed. Clear to lift." If you land 50–300 m away, the crew tells you where he is.
+- **Rescued:** land again at least 3 NM from the pickup point (base, FARP, ship) and stay for 10 s: "Survivor delivered." The debriefing notes `CSAR: Enfield one two rescued, 25 min after the ejection`, and the logbook counts it.
+- If your helicopter is lost or you leave the slot, the survivor waits for the next helicopter. A survivor on board is lost with the helicopter. A dead pilot, or a player who respawns, is no longer a survivor.
+
 ### Ground crew and crew chief
 
 The ground crew is **off by default**. Turn it on in the F10 menu **ATC → Settings → Ground crew on/off** (*Show* displays the current state). To make it the default for all missions, set `crew = true` in `Saved Games\DCS\Scripts\DcsAtc\DcsAtcOptions.lua`. A single mission can override this in a *Mission Start* trigger with the action *DO SCRIPT* and the code `DCSATC_OPTIONS = { crew = true }`. The ground crew consists only of soldiers and vehicles; DCS-ATC still spawns no aircraft.
@@ -2314,7 +2379,7 @@ The crew chief's voice is set in `config.jsonc` → `"Voices"` → `"Crew"` (def
 | Range | checking in · in hot · in dry · off safe · winchester · checking out | range briefing · cleared hot · cleared dry · pass result · switches safe · summary and exit |
 | JTAC / FAC(A) | checking in · ready to copy · readback · request mark · laser on · tally target · in from the west · off north · checking out | situation · 9-line · readback check · mark · laser · advise IN · cleared hot / continue / abort · damage report · copy checking out |
 
-The settings for these stations (`AwacsBullseye`, `AwacsNewGroupNm`, `TankerVectors`, `CommsKey`, voices) are listed in the [config.jsonc reference](#configjsonc-reference).
+The settings for these stations (`AwacsBullseye`, `AwacsNewGroupNm`, `TankerVectors`, `CommsKey`, voices) are listed in the [config.jsonc reference](#configjsonc-reference) · [Situation map in the browser](#situation-map-in-the-browser).
 
 ## Multiplayer, dedicated server, custom frequencies and other maps
 
@@ -2602,6 +2667,9 @@ Open it from **Start menu → DCS-ATC → Settings** or from **Radio wheel → G
 | **Hear AI traffic on frequency** | on/off | `AiChatter` |
 | **AI flights in combat** | full / tactical / off | `AiFlightComms` |
 | **ATIS broadcast** | on/off | `Atis` |
+| **Controllers transmit with their position (SRS range and line of sight)** | on/off | `StationPositions` |
+| **Check transponder (code, ident, Mode 4, via SRS)** | on/off | `IffCheck` |
+| **Random NOTAMs (ILS out, runway closed, bird activity)** | on/off | `RandomNotams` |
 | **Watch airspace (control zones, deviations, debriefing)** | on/off | `AirspaceWatch` |
 | **Debug log for bug reports (atc-debug.txt)** | on/off | `DebugLog` |
 | **Runway lights (at night)** | silent / with DCS controller (audible) / off. Takes effect the next time DCS-ATC starts. | `RunwayLights` |
@@ -2697,6 +2765,12 @@ Own frequencies per airfield and controller are not in `config.jsonc` but in the
 | Key | Default | Meaning |
 |---|---|---|
 | `Atis` | `true` | Continuous ATIS for airfields with a player within 40 NM. |
+| `MapPort` | `18600` | Port of the [situation map in the browser](#situation-map-in-the-browser), 0 = off. Applies after a restart. |
+| `MapLan` | `false` | `true` = the map can also be opened from other devices in the network (tablet). Applies after a restart. |
+| `StationPositions` | `true` | Controllers transmit with their position (airfield, AWACS, tanker, JTAC, AI flights). If the SRS server has line of sight or distance limit on, they can't be heard behind terrain or too far away. See [Setting up SRS](#setting-up-srs). |
+| `IffCheck` | `false` | Controllers check your transponder from SRS: code and *"squawk … and ident"* at radar contact, *"reset transponder"*, squawk 7600, AWACS *"parrot sour"* without Mode 4. See [Transponder (IFF)](#transponder-iff). Squawk 7700 is noticed even when it's off. |
+| `RandomNotams` | `false` | At most one random NOTAM per airfield and day: ILS out of service, parallel runway closed, bird activity. See [NOTAMs](#notams). |
+| `Notams` | `{}` | Your own NOTAMs per airfield, for example `{ "Kutaisi": ["ILS 25 unserviceable", "runway 07 closed"] }`. See [NOTAMs](#notams). |
 | `AirspaceWatch` | `true` | Watch control zones: entering without contact gets a call, and deviations such as a take-off without clearance are announced ("possible pilot deviation") and recorded for the debriefing. `false` = only safety warnings. |
 | `RunwayLights` | `"silent"` | Runway lighting at dusk, at night or in poor visibility, through DCS's own ATC menu: `"silent"` (DCS controller stays muted), `"dcs"` (DCS controller audible for 15 s), `"off"`. |
 | `AltimeterUnit` | `"auto"` | Altimeter setting in calls. `"auto"`: western types get "altimeter two niner niner two" (inHg), others "QNH one zero one three" (hPa); ATIS gives both. Or `"hpa"`, `"inhg"`. |
@@ -2708,6 +2782,14 @@ Own frequencies per airfield and controller are not in `config.jsonc` but in the
 - **In the game:** F10 → ATC → Settings.
 - **Default for all missions:** `Saved Games\DCS\Scripts\DcsAtc\DcsAtcOptions.lua` (`crew = false`).
 - **Different values for one mission:** in the Mission Editor, add a trigger "Mission Start" → DO SCRIPT: `DCSATC_OPTIONS = { crew = true }`.
+
+### Situation map in the browser
+
+Open `http://localhost:18600/` in a browser on the PC running DCS-ATC, for example on a second monitor. The map shows the airfields and traffic within 150 NM of your aircraft (blue: your side, red: the other side, grey: unknown), with altitude and speed. Next to it are the airfield you are working with its controller phase, runway, ATIS letter and frequencies, the last call to you, and the last 15 radio calls. The buttons switch the range between 10 and 100 NM. On a dedicated server the map follows the first player.
+
+- **Tablet or another PC:** set `"MapLan": true` and restart DCS-ATC. Windows asks once whether to allow the network access. Then open `http://<name or IP of the PC>:18600/`.
+- **Other port or off:** `"MapPort"` in `config.jsonc` (0 = off). If the port is in use, the DCS-ATC window says so and there is no map.
+- The page only reads. Nothing on it can change anything in DCS-ATC or the mission. In VR, use the kneeboard pages.
 
 ### Log files
 

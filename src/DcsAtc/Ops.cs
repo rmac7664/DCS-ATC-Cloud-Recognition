@@ -10,7 +10,7 @@ partial class Ops
     const double NM = 1852, Ft = 0.3048, Kt = 0.514444;
     public record Call(string Role, string Station, string Text, double Freq = 0, Ops? To = null, bool All = false, int Lead = 0);   // Freq: own frequency (mission AWACS), 0 = from the config; To: call to this other player (tanker: the next one); All: to everyone (Gid 0, tanker turn A121)
     /// The player from the controllers' point of view.
-    public record Me(string Callsign, Telemetry? Tel, string Type, int Coalition, int Flight = 1, double Fuel = -1, double Freq = 0);   // Flight: aircraft in the flight (player + AI wingmen); Fuel: tank 0–1, -1 unknown; Freq: SRS frequency of the call (MHz), 0 = menu/unknown
+    public record Me(string Callsign, Telemetry? Tel, string Type, int Coalition, int Flight = 1, double Fuel = -1, double Freq = 0, Iff? Iff = null);   // Flight: aircraft in the flight (player + AI wingmen); Fuel: tank 0–1, -1 unknown; Freq: SRS frequency of the call (MHz), 0 = menu/unknown
 
     // ------------------------------------------------------------ World (Program sets it from DcsAtc-State.txt)
     public static (double X, double Z, double R)? Range;              // Range Alpha (TrainingRange_build.lua)
@@ -38,6 +38,8 @@ partial class Ops
         if (rgPasses > 0) l.Add(L($"Range Alpha gesamt: {rgPasses} {(rgPasses > 1 ? "Anflüge" : "Anflug")}", $"Range Alpha total: {rgPasses} pass{(rgPasses > 1 ? "es" : "")}") + (rgBestD < 5000 ? L($", bester Einschlag {(rgBestD < 1.5 ? "shack" : $"{Feet(rgBestD)} bei {rgBestClock} Uhr")}", $", best impact {Score(rgBestD, rgBestClock)}") : ""));
         return l;
     }
+    public int TankerContacts => tkContacts;   // FI3: logbook
+    public int RangePasses => rgPasses;
     public void ResetDebrief() { Debrief.Clear(); (tkContacts, tkLb, rgPasses, rgBestD, rgBestClock) = (0, 0, 0, double.MaxValue, 0); }
 
     // Range
@@ -743,7 +745,7 @@ partial class Ops
     string PictureCall(List<Grp> groups, Telemetry? t, Me me, double now, bool contact)
     {
         Told(groups.Take(3), t, now);
-        var pic = (contact ? "radar contact, " : "") + Picture(groups, t, me.Coalition);
+        var pic = (contact ? "radar contact, " + (Tower.IffCheck && me.Iff is { Mode4: false } ? "parrot sour, " : "") : "") + Picture(groups, t, me.Coalition);   // FI1 I5: no Mode 4 (ATP 1-02.1 PARROT/SOUR)
         if (t == null || groups.FirstOrDefault(g => Dist(t.X, t.Z, g.Lead.X, g.Lead.Z) < 30 * NM && Hot(g.Lead, t) && !Own(g) && Tgt(g) == "") is not { } thr) return pic;
         Told(new[] { thr }, t, now, true);
         return $"{With($"threat, {Nm(thr)} {Braa(t, thr.Lead)}", Fill(thr, true))}. {Cap(pic)}";
@@ -1149,7 +1151,7 @@ partial class Ops
             if (l.FirstOrDefault(o => o.tank >= 2) is { } nx) dc.Add(new("Tanker", tk.Name, $"{nx.cs}, {tk.Name}, cleared pre-contact.", To: nx));
             return dc;
         }
-        if (Has(n, "mov") && Has(n, "right")) return new();   // LA16 (log): "moving to the right" reads back "move to the right wing"
+        if (Regex.IsMatch(n, @"\b(?:mov\w*|proceeding|going)\b") && Has(n, "right", "left", "observation", "pre contact", "precontact")) return new();   // LA16 (log) · K1 (#5): "moving to the right / pre-contact / left observation" reads back, the report follows once there
         if (Has(n, "right wing"))   // back on the right wing: no clearance, continue with "pre contact" or "complete"
             return T($"{c}, {tk.Name}, {OneOf("roger", "copy")}, report complete or request more.");
         // R56: confirm join/pre-contact only if the receiver is close enough to the tanker (ATP-56(C)), otherwise state the situation
@@ -1167,7 +1169,7 @@ partial class Ops
             var order = ahead.Count > 1 ? $" {ahead[0].cs} first, then {string.Join(", then ", ahead.Skip(1).Select(o => o.cs))}." : "";
             return T($"{c}, {tk.Name}, {neg}cleared to join, left observation, number {Pos(l)}.{order}");
         }
-        if (Has(n, "pre contact", "precontact", "in position", "ready for contact", "stabilized", "ready to refuel"))
+        if (Has(n, "pre contact", "precontact", "in position", "ready for contact", "stabilized", "ready to refuel") && !Has(n, "observation"))   // K1: "stabilized (left) observation" is the observation report
         {
             if (far) return Far();
             if (tank < 2) return Join("negative, not cleared pre-contact, ");   // R287 (ATP-56(C)): pre-contact only after "cleared to join"
@@ -1513,6 +1515,17 @@ partial class Ops
         var ol = new Ops();   // checked in low after takeoff (handover "leaving control zone, contact Overlord" below 900 m): no second one while climbing
         int rl = ol.OnTranscript("AWACS", "Overlord, Enfield 1-1, checking in", me with { Tel = me.Tel! with { Agl = 300 } }, air, f, 0).Concat(ol.Tick(me, air, 1)).Count(x => x.Text.Contains("adar contact"));
         check(rc == 1 && rl == 1 && bc is ["Enfield one one, Overlord, clean."], $"R50: Check-in {rc}x/tief {rl}x radar contact, bogey dope -> {string.Join(" | ", bc)}");
+        var ifc0 = Tower.IffCheck;   // FI1 I5: IffCheck and Mode 4 off -> "parrot sour" with the radar contact; Mode 4 on, unknown or without IffCheck nothing
+        try
+        {
+            string Ps(Iff? x) => string.Join(" | ", new Ops().OnTranscript("AWACS", "Overlord, Enfield 1-1, checking in", me with { Iff = x }, air, f, 0).Select(c => c.Text));
+            Tower.IffCheck = true;
+            var (ps0, ps1, ps2) = (Ps(new Iff(4521, 1, false)), Ps(new Iff(4521, 1, true)), Ps(null));
+            Tower.IffCheck = false;
+            var ps3 = Ps(new Iff(4521, 1, false));
+            check(ps0.Contains("adar contact, parrot sour, picture") && !(ps1 + ps2 + ps3).Contains("parrot"), $"FI1 I5 parrot sour -> {ps0} | {ps1}");
+        }
+        finally { Tower.IffCheck = ifc0; }
         // Forum log 0.9.4 (awacsdup): Approach hands over to Overlord below 2200 ft, low check-in with bullseye and 2 groups around 90 NM, then climb above 900 m: exactly one radar contact/picture
         var awFl = new List<Traffic> { air[3], new(11, "MiG-29A", 88 * NM, 20 * NM, 8500, 1.25 * Math.PI, 250, "Red 11", "", true, 1),
                                      new(12, "MiG-29A", 88.5 * NM, 20 * NM, 8500, 1.25 * Math.PI, 250, "Red 11", "", true, 1), new(13, "MiG-29A", 80 * NM, -15 * NM, 8500, 1.25 * Math.PI, 250, "Red 12", "", true, 1) };
@@ -2429,6 +2442,12 @@ partial class Ops
             var d16 = new Ops { tank = 2, tanker = "Texaco (KC-135MPRS Korb)" };   // LA16 (log): readback of the departure clearance and of "move to the right wing" stay silent
             var (dep16, rb16, mv16) = (K(d16, me, "Texaco, Enfield 1-1, complete"), K(d16, me, "Cleared to depart, contact Overlord, thanks, Enfield 1-1"), K(new Ops { tank = 2, tanker = "Texaco (KC-135MPRS Korb)" }, me, "Enfield 1-1, moving to the right"));
             check(v16.Contains("cleared to join, left observation") && dep16.Contains("cleared to depart") && rb16 == "" && mv16 == "", $"LA16 Tanker visual 16 NM, Rücklesungen still -> {v16} | {dep16} | {rb16} | {mv16}");
+            line.Clear();
+            var kph = new Ops();   // K1 (#5): "moving to …" reads back (silent), "stabilized left observation" is the observation report, not pre-contact
+            K(kph, nr1, "Texaco, Enfield 1-1, request rejoin"); K(kph, nr1, "Texaco, Enfield 1-1, visual");
+            var (mvO, stO, mvP, rdP) = (K(kph, nr1, "Enfield 1-1, moving into left observation"), K(kph, nr1, "Texaco, Enfield 1-1, stabilized left observation"),
+                                        K(kph, nr1, "Texaco, Enfield 1-1, moving to pre-contact"), K(kph, nr1, "Texaco, Enfield 1-1, stabilized pre-contact"));
+            check(mvO == "" && stO.Contains("cleared pre-contact") && mvP == "" && rdP.Contains("cleared contact"), $"K1 Tanker-Phrasen -> {mvO} | {stO} | {mvP} | {rdP}");
         }
         line.Clear();
         // R119: two tankers with the same call name (Texaco 1-1 / 2-1): queue, clearance and turn call per tanker, name with number

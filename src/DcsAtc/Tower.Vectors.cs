@@ -53,9 +53,9 @@ public partial class Tower
 
     /// K9: instrument approach as on the charts (minima only for ILS/PAR/SRA, no TACAN or VOR procedure): ILS of the runway (Beacons.lua),
     /// otherwise with IFR precision radar (PAR, final callouts from the controller); "" = in visual conditions without ILS "straight in approach". TACAN/VOR only navigation aid.
-    string Proc(string rw) => F.Ils.ContainsKey(rw) ? "ILS" : Ifr ? "P A R" : "";
+    string Proc(string rw) => F.IlsOn(rw) ? "ILS" : Ifr ? "P A R" : "";   // FI5: ILS unserviceable (NOTAM) -> PAR or visual
     /// "ILS approach runway one three, localizer one one zero decimal three", "P A R approach runway two five", otherwise "straight in approach runway one three".
-    string ProcSay(string rw) => F.Ils.TryGetValue(rw, out var i) ? $"ILS approach runway {RwSay(rw)}, localizer {FreqSay(i.Mhz)}"
+    string ProcSay(string rw) => F.IlsOn(rw) ? $"ILS approach runway {RwSay(rw)}, localizer {FreqSay(F.Ils[rw].Mhz)}"
         : $"{(Proc(rw) is var p && p != "" ? p : "straight in")} approach runway {RwSay(rw)}";
 
     /// R352: replanning under radar; other runway or route than before: "due to terrain, expect …" before the vector (FAA JO 7110.65 4-8-1, 5-9-2)

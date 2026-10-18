@@ -101,13 +101,14 @@ sealed class Wheel : Form
             new("Hung ordnance", "Approach: hung ordnance"),   // R251 (to Approach; no airfield in the Approach menu anymore, max. 9)
             new("Flameout, high key", "Tower: flameout, high key"),   // R296: real flameout over the airfield (emergency), then Enter "low key, gear down"
             new(L("Notfall beenden", "Cancel emergency"), "cancel emergency"),
+            new(L("CSAR übernehmen", "CSAR pickup"), "CSAR: will pick up"), new(L("CSAR Rauch/Leuchtkugel", "CSAR smoke / flare"), "CSAR: pop smoke"),   // FI6: helicopters
         }),
         new(L("Allgemein", "General"), Sub: new Item[]
         {
             new(L("Platz wählen", "Select airfield"), Sub: Array.Empty<Item>()),   // content on opening: nearest airfields (Near)
             new("Radio check", "radio check"), new("Say again", "say again"), new("QNH / weather", "request weather"), new(L("ATIS hören", "Listen to ATIS"), "atis"),
             new("Request zone transit", "Approach: request zone transit"),   // N3: transit through the control zone
-            new("Debriefing", "debrief"), new(L("Einstellungen", "Settings"), "settings"),
+            new(L("Prüfflug an/aus", "Checkride on/off"), "checkride"), new("Debriefing", "debrief"), new(L("Einstellungen", "Settings"), "settings"),
         }),
     };
     /// A30: type of emergency; Program adds position, altitude and heading (PilotCall), Approach picks the nearest suitable airfield.

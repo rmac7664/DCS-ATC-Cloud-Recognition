@@ -93,6 +93,8 @@ static partial class Program
             "Carrier: pigeons" => air,
             "Carrier: Strike, checking in" or "Carrier: Strike, checking out" => air && h.Boat.Stage == 0,   // optional, outside the recovery
             "Carrier: Red Crown, checking in" or "Carrier: Red Crown, checking out" => air && h.Boat.Stage == 0 && Carrier.RadarShips.Any(s => s.Coalition == h.Coalition),   // only with an own cruiser in the mission
+            "CSAR: will pick up" => h.Heli && Csar.Of(h.Unit) == null && Csar.Free(h.Coalition, Now()),   // FI6
+            "CSAR: pop smoke" => Csar.Of(h.Unit) is { Aboard: false },
             _ when x.StartsWith("Ground: ") => gnd,   // Progressive taxi, Hot brakes
             _ when x.StartsWith("Tower: ") || x.StartsWith("AWACS: ") => air,   // Initial … Going around, Closed/SFO; Picture, Bogey dope …
             _ when x.StartsWith("Center: ") => a?.Center == true,   // altitude, direct, leaving frequency: while the Center is running
