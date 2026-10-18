@@ -52,6 +52,13 @@ public class Config
     public bool AirspaceWatch { get; set; } = true;    // monitor control zones (N2) and announce violations ("possible pilot deviation") and into the debrief (N4); off: safety warnings only
     public bool DebugLog { get; set; } = true;         // atc-debug.txt for bug reports (speech recognition, airfield selection, phases, telemetry every 10 s), at most 2 × 20 MB
     public bool AsrGpu { get; set; } = true;           // GPU1: speech recognition on a dedicated graphics card (Vulkan), CPU without one or if it fails; false = always CPU
+    // Fork (cloud-asr): speech recognition through an OpenAI-compatible service instead of whisper-cli on this PC
+    public string AsrBackend { get; set; } = "local";  // local (whisper-cli, as before) / api (AsrApiUrl; local whisper as fallback)
+    public string AsrApiUrl { get; set; } = "https://api.openai.com/v1/audio/transcriptions";   // or a self-hosted OpenAI-compatible Whisper server
+    public string AsrApiKey { get; set; } = "";        // API key; "" = environment variable OPENAI_API_KEY
+    public string AsrApiModel { get; set; } = "gpt-4o-mini-transcribe";   // whisper-1, gpt-4o-mini-transcribe, gpt-4o-transcribe, or the model name of your own server
+    public int AsrApiTimeoutMs { get; set; } = 6000;   // after this the call falls back to local whisper
+    public int AsrMaxParallel { get; set; } = 2;       // local whisper: at most this many recognitions at once, the rest waits (0 = unlimited as before)
     public bool KneeboardPages { get; set; } = true;   // kneeboard pages into Saved Games\DCS\Kneeboard on mission start (Caucasus, German)
     public Dictionary<string, double> AtisFreqs { get; set; } = new();   // A35: own ATIS frequency per airfield (airfield name -> MHz), if the airfield is missing: Frequencies["ATIS"]; only after restart
     public int WheelKey { get; set; } = 0xDE;          // selection wheel: key (0xDE = Ä), 0 = off
@@ -148,7 +155,7 @@ static partial class Program
         TestRun = args.Any(a => a is "--selftest" or "--anflugtest" or "--mptest" or "--asr-test" or "--srs-test" or "--platztest");
         if (args.Length >= 1 && args[0] == "--charttest") { if (args.Length > 1) Airfield.ChartFile = args[1]; ChartTest(); return 0; }   // chart data check, optionally a file instead of the embedded one
         if (args.Contains("--platztest")) { Tower.PlatzTest(Airfield.Load(Path.Combine(Root, "airfields.txt"))); return 0; }
-        if (args.Contains("--selftest")) { RadioTest(); ChartTest(); Tower.PlatzTest(Airfield.Load(Path.Combine(Root, "airfields.txt"))); QueueTest(); SideTest(); FreqTest(); CaptureTest(); ControlAiTest(); FunkTest(); ConfigTest(); AtisTest(); CrewTest(); ExpectTest(); PromptTest(); GpuTest(); return Tower.SelfTest(); }
+        if (args.Contains("--selftest")) { RadioTest(); ChartTest(); Tower.PlatzTest(Airfield.Load(Path.Combine(Root, "airfields.txt"))); QueueTest(); SideTest(); FreqTest(); CaptureTest(); ControlAiTest(); FunkTest(); ConfigTest(); AtisTest(); CrewTest(); ExpectTest(); PromptTest(); GpuTest(); CloudAsrTest(); return Tower.SelfTest(); }
         LoadConfig();
         if (args.Contains("--settings")) { Dedicated = DedicatedNow(); Settings.Show(Cfg); return 0; }   // language then also in the server's Saved Games
         if (args.Contains("--buttons")) { ShowButtons(); return 0; }
@@ -2962,11 +2969,18 @@ static partial class Program
             prompt = WhisperPrompt(role, via ?? (h?.Lead ?? h)?.Active?.F ?? Fields[0], Fields, PromptNames(role, h),
                                    h?.SlotCallsign is { Length: > 0 } sc && sc != cs ? $"{sc}, {cs}" : cs);   // slot call sign too ("Trident 5-1" with own "Victory 9-1")
         }
+        if (Cfg.AsrBackend.Equals("api", StringComparison.OrdinalIgnoreCase) && TranscribeApi(wav, prompt, cs, role) is { } api)   // fork (cloud-asr)
+        {
+            if (keep) Keep(wav, api.Text);
+            return api;
+        }
         var model = Path.Combine(Root, "models", "ggml-small.en.bin");   // small: significantly fewer mishearings than base, ~1.7 s instead of 0.5 s
         if (!File.Exists(model)) model = Path.Combine(Root, "models", "ggml-base.en.bin");
         var json = Path.ChangeExtension(wav, null);   // -of: <wav without extension>.json
         try { File.Delete(json + ".json"); } catch (IOException) { }   // do not read old confidence
         var sw = Stopwatch.StartNew();
+        var slot = LocalAsrSlot();   // fork (cloud-asr): limit parallel whisper-cli runs (AsrMaxParallel)
+        try {
         var exe = Path.Combine(Root, "tools", "whisper", "Release", "whisper-cli.exe");
         string[] args = { "-m", model, "-t", Math.Clamp(Environment.ProcessorCount / 2 - 2, 2, 8).ToString(), "-f", wav, "-nt", "-l", "en", "--prompt", prompt, "-ojf", "-of", json };   // ponytail: -t leaves two cores to DCS (main/render thread), 16 threads -> 6; raise if replies lag, lower if DCS stutters while talking
         int dev = Cfg.AsrGpu ? asrDev : -1;
@@ -2986,9 +3000,61 @@ static partial class Program
         }
         double conf = 1;
         try { conf = Confidence(File.ReadAllText(json + ".json")); File.Delete(json + ".json"); } catch (Exception e) when (e is IOException or JsonException or KeyNotFoundException or InvalidOperationException) { Trace("FEHLER", $"Whisper-Sicherheit: {e.GetType().Name}: {e.Message}"); }
-        Trace("WHISPER", $"{Path.GetFileName(wav)} {Path.GetFileName(model)} {(dev == -2 ? "Gerätewahl" : dev < 0 ? "CPU" : $"GPU {dev}")} {sw.ElapsedMilliseconds} ms conf {conf:0.00} (Sender {cs}, Prompt {role ?? "allgemein"}): {output.Trim()}");
+        Trace("WHISPER", $"{Path.GetFileName(wav)} {Path.GetFileName(model)} {(dev == -2 ? "Gerätewahl" : dev < 0 ? "CPU" : $"GPU {dev}")} {sw.ElapsedMilliseconds} ms{(slot.Waited > 0 ? $" (davon {slot.Waited} ms gewartet)" : "")} conf {conf:0.00} (Sender {cs}, Prompt {role ?? "allgemein"}): {output.Trim()}");
         if (keep) Keep(wav, output.Trim());
         return (output.Trim(), conf);
+        } finally { slot.Release(); }
+    }
+
+    // ------------------------------------------------------------ Fork (cloud-asr): recognition via API, parallel limit for local whisper
+    static int apiFails;            // consecutive API failures; from 3 on the API is off for this session
+    static bool apiOff, apiWarned;
+
+    /// null = use local whisper (API off, no key, or this call failed).
+    static (string Text, double Conf)? TranscribeApi(string wav, string prompt, string cs, string? role)
+    {
+        if (apiOff) return null;
+        var key = Cfg.AsrApiKey is { Length: > 0 } k ? k : Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? "";
+        bool own = !Cfg.AsrApiUrl.Contains("api.openai.com", StringComparison.OrdinalIgnoreCase);   // a self-hosted server may need no key
+        if (key.Length == 0 && !own)
+        {
+            if (!apiWarned) { apiWarned = true; Log(L("[ASR] AsrBackend \"api\" ohne AsrApiKey: Spracherkennung lokal", "[ASR] AsrBackend \"api\" without AsrApiKey: speech recognition stays local")); }
+            return null;
+        }
+        var r = CloudAsr.Transcribe(Cfg.AsrApiUrl, key, Cfg.AsrApiModel, wav, prompt, Cfg.AsrApiTimeoutMs);
+        if (r.Error != null)
+        {
+            bool auth = r.Error.StartsWith("HTTP 401") || r.Error.StartsWith("HTTP 403") || r.Error.StartsWith("HTTP 404");   // wrong key/URL/model: no point retrying
+            if (auth || ++apiFails >= 3) apiOff = true;
+            Trace("FEHLER", $"ASR-API {Path.GetFileName(wav)} {r.Ms} ms: {r.Error}");
+            Log(apiOff ? L($"[ASR] Online-Spracherkennung fehlgeschlagen ({r.Error}), ab jetzt lokal", $"[ASR] Cloud speech recognition failed ({r.Error}), local from now on")
+                       : L($"[ASR] Online-Spracherkennung fehlgeschlagen ({r.Error}), dieser Funkspruch lokal", $"[ASR] Cloud speech recognition failed ({r.Error}), this call local"));
+            return null;
+        }
+        apiFails = 0;
+        if (!apiWarned) { apiWarned = true; Log(L($"[ASR] Spracherkennung online: {Cfg.AsrApiModel}", $"[ASR] Speech recognition online: {Cfg.AsrApiModel}")); }
+        Trace("WHISPER", $"{Path.GetFileName(wav)} API {Cfg.AsrApiModel} {r.Ms} ms conf {r.Conf:0.00} (Sender {cs}, Prompt {role ?? "allgemein"}): {r.Text}");
+        return (r.Text, r.Conf);
+    }
+
+    /// AsrMaxParallel: bursts of transmissions queue instead of all whisper-cli runs slowing each other down (one per CPU core set).
+    static SemaphoreSlim? asrGate;
+    static int asrGateSize = -1;
+    sealed class AsrSlot { public SemaphoreSlim? Gate; public long Waited; public void Release() { Gate?.Release(); Gate = null; } }
+    static AsrSlot LocalAsrSlot()
+    {
+        int n = Cfg.AsrMaxParallel;
+        if (n <= 0) return new AsrSlot();
+        if (asrGate == null || asrGateSize != n) lock (TowerLock) if (asrGate == null || asrGateSize != n) { asrGate = new SemaphoreSlim(n, n); asrGateSize = n; }
+        var g = asrGate; var sw = Stopwatch.StartNew();
+        g.Wait();
+        return new AsrSlot { Gate = g, Waited = sw.ElapsedMilliseconds };
+    }
+
+    static void CloudAsrTest()
+    {
+        if (CloudAsr.SelfTest() is { } err) throw new Exception("Online-Spracherkennung: " + err);
+        Console.WriteLine("OK   Online-Spracherkennung: verbose_json, gpt-4o-Logprobs, Stille/[BLANK_AUDIO], Fehlermeldung");
     }
 
     /// GPU1: whisper device: -2 = not yet known (the first call lists the devices), -1 = CPU, otherwise Vulkan device of the dedicated GPU.
