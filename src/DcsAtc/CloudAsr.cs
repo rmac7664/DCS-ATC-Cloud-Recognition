@@ -64,7 +64,7 @@ static class CloudAsr
                 double lp = s.TryGetProperty("avg_logprob", out var a) ? a.GetDouble() : 0;
                 double ns = s.TryGetProperty("no_speech_prob", out var n) ? n.GetDouble() : 0;
                 double w = Math.Max(1, (s.TryGetProperty("text", out var st) ? st.GetString() ?? "" : "").Length);
-                sum += Math.Exp(lp) * w; weight += w;
+                sum += Math.Clamp(1 + 0.35 * lp, 0, 1) * w; weight += w;   // calibrated to whisper.cpp's word confidence: Whisper's own "decode failed" mark (avg_logprob -1.0) -> 0.65 = MinConf
                 if (!(ns > 0.6 && lp < -0.8)) allSilent = false;   // Whisper's own no-speech rule
             }
             conf = sum / weight;
@@ -125,8 +125,10 @@ static class CloudAsr
     public static string? SelfTest()
     {
         var v = Parse("{\"text\":\" Kutaisi Tower, Enfield 1-1, ready for departure.\",\"segments\":[{\"text\":\" Kutaisi Tower, Enfield 1-1, ready for departure.\",\"avg_logprob\":-0.12,\"no_speech_prob\":0.01}]}");
-        if (v.Text != "Kutaisi Tower, Enfield 1-1, ready for departure." || v.Conf is < 0.85 or > 0.9) return $"verbose_json: {v}";
-        var q = Parse("{\"text\":\"Tower\",\"segments\":[{\"text\":\"Tower\",\"avg_logprob\":-0.9,\"no_speech_prob\":0.2}]}");
+        if (v.Text != "Kutaisi Tower, Enfield 1-1, ready for departure." || v.Conf is < 0.94 or > 0.97) return $"verbose_json: {v}";
+        var real = Parse("{\"text\":\"Focus, Dodge 5-3, bogey dope.\",\"segments\":[{\"text\":\"Focus, Dodge 5-3, bogey dope.\",\"avg_logprob\":-0.62,\"no_speech_prob\":0.05}]}");
+        if (real.Conf < 0.65) return $"clear call (avg_logprob -0.62, first real test) must not ask back: {real}";
+        var q = Parse("{\"text\":\"Tower\",\"segments\":[{\"text\":\"Tower\",\"avg_logprob\":-1.3,\"no_speech_prob\":0.2}]}");
         if (q.Conf >= 0.65) return $"unsure segment should be below MinConf: {q}";
         var s = Parse("{\"text\":\" you\",\"segments\":[{\"text\":\" you\",\"avg_logprob\":-1.2,\"no_speech_prob\":0.9}]}");
         if (s.Text != "[BLANK_AUDIO]") return $"silence: {s}";
