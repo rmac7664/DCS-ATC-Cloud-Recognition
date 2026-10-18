@@ -58,3 +58,8 @@ jobs:
           name: test-logs-${{ github.sha }}
           path: tmp/*.log
           if-no-files-found: ignore
+
+      - name: Fail the run if a test suite failed (the exe is still uploaded above)
+        if: steps.tests.outcome == 'failure'
+        shell: cmd
+        run: echo Test suites failed - see the annotations & exit /b 1
