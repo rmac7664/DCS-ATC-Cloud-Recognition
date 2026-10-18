@@ -56,7 +56,7 @@ public class Config
     public string AsrBackend { get; set; } = "local";  // local (whisper-cli, as before) / api (AsrApiUrl; local whisper as fallback)
     public string AsrApiUrl { get; set; } = "https://api.openai.com/v1/audio/transcriptions";   // or a self-hosted OpenAI-compatible Whisper server
     public string AsrApiKey { get; set; } = "";        // API key; "" = environment variable OPENAI_API_KEY
-    public string AsrApiModel { get; set; } = "gpt-4o-mini-transcribe";   // whisper-1, gpt-4o-mini-transcribe, gpt-4o-transcribe, or the model name of your own server
+    public string AsrApiModel { get; set; } = "whisper-1";   // whisper-1 (uses the prompt as a hint), gpt-4o-mini-transcribe/gpt-4o-transcribe (tend to read a long prompt back; echo is stripped), or the model name of your own server
     public int AsrApiTimeoutMs { get; set; } = 6000;   // after this the call falls back to local whisper
     public int AsrMaxParallel { get; set; } = 2;       // local whisper: at most this many recognitions at once, the rest waits (0 = unlimited as before)
     public bool KneeboardPages { get; set; } = true;   // kneeboard pages into Saved Games\DCS\Kneeboard on mission start (Caucasus, German)

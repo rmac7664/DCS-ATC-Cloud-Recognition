@@ -73,7 +73,7 @@
   "AsrBackend": "local",   // Fork cloud-asr: "local" = whisper auf diesem PC (wie bisher), "api" = online über AsrApiUrl (lokales whisper als Rückfall) / "api" = recognition via an OpenAI-compatible service, local whisper as fallback
   "AsrApiUrl": "https://api.openai.com/v1/audio/transcriptions",   // OpenAI oder ein eigener OpenAI-kompatibler Whisper-Server / OpenAI or your own OpenAI-compatible Whisper server
   "AsrApiKey": "",   // API-Schlüssel; leer = Umgebungsvariable OPENAI_API_KEY / API key; empty = environment variable OPENAI_API_KEY
-  "AsrApiModel": "gpt-4o-mini-transcribe",   // whisper-1, gpt-4o-mini-transcribe, gpt-4o-transcribe
+  "AsrApiModel": "whisper-1",   // whisper-1 empfohlen / recommended; gpt-4o-mini-transcribe, gpt-4o-transcribe
   "AsrApiTimeoutMs": 6000,   // danach dieser Funkspruch lokal / after this the call falls back to local whisper
   "AsrMaxParallel": 2,   // lokales whisper: höchstens so viele Erkennungen gleichzeitig, der Rest wartet (0 = unbegrenzt) / local whisper: max recognitions at once (0 = unlimited)
   "DebugLog": true,   // ausführliches Protokoll atc-debug.txt für Fehlerberichte (Spracherkennung, Platzwahl, Phasen, Telemetrie alle 10 s), höchstens 2 × 20 MB; false = aus

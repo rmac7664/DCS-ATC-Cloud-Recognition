@@ -40,7 +40,7 @@ static class CloudAsr
             var body = new StreamReader(resp.Content.ReadAsStream(cts.Token)).ReadToEnd();
             if (!resp.IsSuccessStatusCode)
                 return new("", 0, sw.ElapsedMilliseconds, $"HTTP {(int)resp.StatusCode}: {Short(ErrorMessage(body))}");
-            var (text, conf) = Parse(body);
+            var (text, conf) = Parse(body, prompt);
             return new(text, conf, sw.ElapsedMilliseconds, null);
         }
         catch (OperationCanceledException) { return new("", 0, sw.ElapsedMilliseconds, $"timeout after {timeoutMs} ms"); }
@@ -49,7 +49,7 @@ static class CloudAsr
     }
 
     /// Response -> (text, confidence 0–1). Silence/no speech -> "[BLANK_AUDIO]" like whisper.cpp, so the app drops it as before.
-    internal static (string Text, double Conf) Parse(string body)
+    internal static (string Text, double Conf) Parse(string body, string? prompt = null)
     {
         using var doc = JsonDocument.Parse(body);
         var root = doc.RootElement;
@@ -82,6 +82,7 @@ static class CloudAsr
             }
             if (words.Count > 0) conf = words.Average();
         }
+        text = StripPromptEcho(text, prompt);   // gpt-4o*-transcribe tends to read a long prompt back instead of (or before) the speech
         if (IsHallucination(text)) text = "";
         return (text.Length == 0 ? "[BLANK_AUDIO]" : text, Math.Clamp(conf, 0, 1));
     }
@@ -92,6 +93,25 @@ static class CloudAsr
     {
         var s = new string(text.ToLowerInvariant().Where(c => char.IsLetterOrDigit(c) || c == ' ').ToArray()).Trim();
         return s.Length == 0 ? text.Length > 0 : Ghosts.Contains(s) && s != "okay";
+    }
+
+    /// Removes the prompt when the model returned it (whole or as a prefix); what remains is the actual speech.
+    internal static string StripPromptEcho(string text, string? prompt)
+    {
+        if (string.IsNullOrWhiteSpace(prompt) || text.Length == 0) return text;
+        var p = prompt.Trim();
+        int i = text.IndexOf(p, StringComparison.OrdinalIgnoreCase);
+        if (i >= 0) return (text[..i] + " " + text[(i + p.Length)..]).Trim(' ', '.', ',');
+        static string N(string s) => new(s.ToLowerInvariant().Where(c => char.IsLetterOrDigit(c) || c == ' ').ToArray());
+        string nt = N(text).Trim(), np = N(p).Trim();
+        if (np.Length >= 20 && nt.StartsWith(np[..Math.Min(40, np.Length)]))
+        {   // echo with small differences: cut after the prompt's last words (usually the callsign)
+            var tail = p.TrimEnd('.', ' ');
+            tail = tail[Math.Max(0, tail.LastIndexOf(", ") + 2)..];
+            int j = text.LastIndexOf(tail, StringComparison.OrdinalIgnoreCase);
+            return j >= 0 ? text[(j + tail.Length)..].Trim(' ', '.', ',') : "";
+        }
+        return text;
     }
 
     static string ErrorMessage(string body)
@@ -118,6 +138,14 @@ static class CloudAsr
         if (l.Text != "Magic, Dodge 5-1, picture." || l.Conf is < 0.85 or > 0.95) return $"gpt-4o logprobs: {l}";
         var e = Parse("{\"text\":\"\"}");
         if (e.Text != "[BLANK_AUDIO]") return $"empty: {e}";
+        const string pr = "Request startup. Request taxi. Kutaisi Ground, Kutaisi Tower, Enfield 1-1.";
+        var echo = Parse("{\"text\":\"Request startup. Request taxi. Kutaisi Ground, Kutaisi Tower, Enfield 1-1.\"}", pr);
+        if (echo.Text != "[BLANK_AUDIO]") return $"prompt echo: {echo}";
+        var echo2 = Parse("{\"text\":\"Request startup. Request taxi. Kutaisi Ground, Kutaisi Tower, Enfield 1-1. Focus, Dodge 53, declare bullseye 342, 66.\"}", pr);
+        if (echo2.Text != "Focus, Dodge 53, declare bullseye 342, 66.") return $"prompt echo + speech: {echo2}";
+        var echo3 = Parse("{\"text\":\"Request start up, request taxi, Kutaisi Ground, Kutaisi Tower, Enfield 1-1, Dodge 5-1 radio check.\"}", pr);
+        if (echo3.Text != "Dodge 5-1 radio check.".TrimEnd('.')) return $"fuzzy prompt echo: {echo3}";
+        if (Parse("{\"text\":\"Kutaisi Tower, Enfield 1-1, request taxi.\"}", pr).Text != "Kutaisi Tower, Enfield 1-1, request taxi.") return "normal call must stay";
         if (ErrorMessage("{\"error\":{\"message\":\"Incorrect API key provided\"}}") != "Incorrect API key provided") return "error message";
         return null;
     }
