@@ -19,6 +19,10 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Mark repo root for the app (it looks for a "models" folder to find airfields.txt)
+        shell: cmd
+        run: if not exist models mkdir models
+
       - name: Test suites (selftest, approach test, multiplayer test)
         id: tests
         continue-on-error: true
