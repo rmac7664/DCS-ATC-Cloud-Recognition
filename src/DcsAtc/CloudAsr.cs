@@ -101,15 +101,15 @@ static class CloudAsr
         if (string.IsNullOrWhiteSpace(prompt) || text.Length == 0) return text;
         var p = prompt.Trim();
         int i = text.IndexOf(p, StringComparison.OrdinalIgnoreCase);
-        if (i >= 0) return (text[..i] + " " + text[(i + p.Length)..]).Trim(' ', '.', ',');
-        static string N(string s) => new(s.ToLowerInvariant().Where(c => char.IsLetterOrDigit(c) || c == ' ').ToArray());
-        string nt = N(text).Trim(), np = N(p).Trim();
-        if (np.Length >= 20 && nt.StartsWith(np[..Math.Min(40, np.Length)]))
+        if (i >= 0) return (text[..i] + " " + text[(i + p.Length)..]).Trim().TrimStart('.', ',', ' ');
+        static string N(string s) => new(s.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());   // letters and digits only: "start up" = "startup"
+        string nt = N(text), np = N(p);
+        if (np.Length >= 20 && nt.StartsWith(np[..Math.Min(30, np.Length)]))
         {   // echo with small differences: cut after the prompt's last words (usually the callsign)
             var tail = p.TrimEnd('.', ' ');
             tail = tail[Math.Max(0, tail.LastIndexOf(", ") + 2)..];
             int j = text.LastIndexOf(tail, StringComparison.OrdinalIgnoreCase);
-            return j >= 0 ? text[(j + tail.Length)..].Trim(' ', '.', ',') : "";
+            return j >= 0 ? text[(j + tail.Length)..].Trim().TrimStart('.', ',', ' ') : "";
         }
         return text;
     }
@@ -146,7 +146,7 @@ static class CloudAsr
         var echo2 = Parse("{\"text\":\"Request startup. Request taxi. Kutaisi Ground, Kutaisi Tower, Enfield 1-1. Focus, Dodge 53, declare bullseye 342, 66.\"}", pr);
         if (echo2.Text != "Focus, Dodge 53, declare bullseye 342, 66.") return $"prompt echo + speech: {echo2}";
         var echo3 = Parse("{\"text\":\"Request start up, request taxi, Kutaisi Ground, Kutaisi Tower, Enfield 1-1, Dodge 5-1 radio check.\"}", pr);
-        if (echo3.Text != "Dodge 5-1 radio check.".TrimEnd('.')) return $"fuzzy prompt echo: {echo3}";
+        if (echo3.Text != "Dodge 5-1 radio check.") return $"fuzzy prompt echo: {echo3}";
         if (Parse("{\"text\":\"Kutaisi Tower, Enfield 1-1, request taxi.\"}", pr).Text != "Kutaisi Tower, Enfield 1-1, request taxi.") return "normal call must stay";
         if (ErrorMessage("{\"error\":{\"message\":\"Incorrect API key provided\"}}") != "Incorrect API key provided") return "error message";
         return null;
