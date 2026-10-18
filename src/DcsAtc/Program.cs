@@ -176,7 +176,7 @@ static partial class Program
 
         TraceOn = Cfg.DebugLog;   // live from here: debug log (tests above without file)
         Dedicated = DedicatedNow();
-        Trace("START", $"{DateTime.Now:yyyy-MM-dd} DCS-ATC {System.Windows.Forms.Application.ProductVersion} {string.Join(" ", args)} | {JsonSerializer.Serialize(Cfg)}");
+        Trace("START", $"{DateTime.Now:yyyy-MM-dd} DCS-ATC {System.Windows.Forms.Application.ProductVersion} {string.Join(" ", args)} | {ConfigForLog()}");   // fork (cloud-asr): API key masked
         bool auto = args.Contains("--auto");   // started by the DCS hook at mission start
         using var single = new Mutex(true, "DcsAtc", out bool first);
         if (!first && !args.Contains("--say") && !args.Contains("--srs-test"))
@@ -3051,9 +3051,20 @@ static partial class Program
         return new AsrSlot { Gate = g, Waited = sw.ElapsedMilliseconds };
     }
 
+    /// Config for the START line of atc-debug.txt without the API key (logs get shared for bug reports).
+    internal static string ConfigForLog()
+    {
+        var c = JsonSerializer.Deserialize<Config>(JsonSerializer.Serialize(Cfg))!;
+        if (c.AsrApiKey.Length > 0) c.AsrApiKey = c.AsrApiKey.Length > 8 ? c.AsrApiKey[..3] + "…" + c.AsrApiKey[^4..] : "***";
+        return JsonSerializer.Serialize(c);
+    }
+
     static void CloudAsrTest()
     {
         if (CloudAsr.SelfTest() is { } err) throw new Exception("Online-Spracherkennung: " + err);
+        var keep = Cfg.AsrApiKey;
+        try { Cfg.AsrApiKey = "sk-proj-SECRETSECRETSECRET1234"; if (ConfigForLog().Contains("SECRET") || !ConfigForLog().Contains("1234")) throw new Exception("Online-Spracherkennung: API-Schlüssel im Protokoll"); }
+        finally { Cfg.AsrApiKey = keep; }
         Console.WriteLine("OK   Online-Spracherkennung: verbose_json, gpt-4o-Logprobs, Stille/[BLANK_AUDIO], Fehlermeldung");
     }
 
