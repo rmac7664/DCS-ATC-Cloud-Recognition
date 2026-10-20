@@ -10,7 +10,7 @@ partial class Ops
     const double NM = 1852, Ft = 0.3048, Kt = 0.514444;
     public record Call(string Role, string Station, string Text, double Freq = 0, Ops? To = null, bool All = false, int Lead = 0);   // Freq: own frequency (mission AWACS), 0 = from the config; To: call to this other player (tanker: the next one); All: to everyone (Gid 0, tanker turn A121)
     /// The player from the controllers' point of view.
-    public record Me(string Callsign, Telemetry? Tel, string Type, int Coalition, int Flight = 1, double Fuel = -1, double Freq = 0, Iff? Iff = null);   // Flight: aircraft in the flight (player + AI wingmen); Fuel: tank 0–1, -1 unknown; Freq: SRS frequency of the call (MHz), 0 = menu/unknown
+    public record Me(string Callsign, Telemetry? Tel, string Type, int Coalition, int Flight = 1, double Fuel = -1, double Freq = 0, Iff? Iff = null, string Modex = "");   // Flight: aircraft in the flight (player + AI wingmen); Fuel: tank 0–1, -1 unknown; Freq: SRS frequency of the call (MHz), 0 = menu/unknown
 
     // ------------------------------------------------------------ World (Program sets it from DcsAtc-State.txt)
     public static (double X, double Z, double R)? Range;              // Range Alpha (TrainingRange_build.lua)
@@ -126,7 +126,7 @@ partial class Ops
         if (unsure || Has(n, "radio check", "how do you read"))
         {
             var st = role == "Range" ? "Range Alpha" : role == "AWACS" ? AwacsName(MyAwacs(air, me), me) : Tankers(air, me).FirstOrDefault()?.Name ?? "Tanker";
-            return new() { new(role, st, unsure ? $"{Cs(me)}, {st}, say again." : $"{Cs(me)}, {st}, read you five.", role == "AWACS" ? AwacsFreqOf(MyAwacs(air, me)) : 0) };
+            return new() { new(role, st, unsure ? $"{Cs(me)}, {st}, say again." : $"{Cs(me)}, {st}, read you five.", role == "AWACS" ? AwacsFreqOf(MyAwacs(air, me), me) : 0) };
         }
         if (role != "AWACS" && Has(n, "say again") && lastRole.TryGetValue(role, out var lc)) return lc;   // R393: repeat the last call of the Range/tanker (AWACS: `last`)
         var res = role == "Range" ? RangeCall(n, me, air, fields, cfgAwacs, now, qnhOf) : role == "AWACS" ? AwacsCall(n, me, air, fields, now) : TankerCall(n, me, air, now);
@@ -361,11 +361,15 @@ partial class Ops
     /// Own AWACS (the nearest) with call name and frequency from the mission ("Magic11" -> Magic), otherwise Overlord / config.
     internal static Traffic? AwacsOf(IReadOnlyList<Traffic> air, Me me) => air.Where(a => Aw(a, me)).MinBy(a => me.Tel == null ? 0 : Dist(me.Tel.X, me.Tel.Z, a.X, a.Z));
     static bool Aw(Traffic a, Me me) => a.InAir && a.Coalition == me.Coalition && Regex.IsMatch(a.Type, "E-3|E-2|A-50|KJ-2000");
-    internal static string AwacsName(Traffic? a, Me me) => a == null && Gci.Contains(me.Coalition) ? (me.Coalition == 1 ? "Moscow" : "Magic") :   // GCI (V19)
+    internal static string AwacsName(Traffic? a, Me me) => a == null && GciOf(me) is { } g ? g.Name : a == null && Gci.Contains(me.Coalition) ? (me.Coalition == 1 ? "Moscow" : "Magic") :   // GCI (V19), #15 own GCI sector
         a != null && CsWord(a) is { } s ? s : a != null && Callsigns.TryGetValue(a.Group, out var cs) && Regex.IsMatch(cs, @"^\d+$") ? Digits(cs) : "Overlord";   // plain number: "two four seven" (A117)
     /// Letter call name of the group's DCS callsign ("Texaco11" / "Texaco 1-1" -> Texaco), null = none.
     static string? CsWord(Traffic a) => Callsigns.TryGetValue(a.Group, out var cs) && Regex.Match(cs, "^[A-Za-z]{3,}").Value is { Length: > 0 } s ? Cap(s.ToLowerInvariant()) : null;
-    internal static double AwacsFreqOf(Traffic? a) => a == null ? 0 : GroupFreq(AwacsFreq, a.Group);
+    internal static double AwacsFreqOf(Traffic? a, Me? me = null) => a == null ? (me != null && GciOf(me) is { } g ? g.Freq : 0) : GroupFreq(AwacsFreq, a.Group);
+    /// #15 (issue): GCI/CRC sector from config CenterSectors ("Gci": true) at the player's position (nearest center point inside its radius), null = none.
+    /// It answers like the built-in GCI when no AWACS is up or when called on its frequency, and sees what the side's radars see.
+    internal static CenterSector? GciOf(Me me) => me.Tel is not { } t ? null
+        : Tower.CenterSectors.Where(s => s.Gci && s.Fits(me.Coalition) && Dist(t.X, t.Z, s.Pos.X, s.Pos.Z) < s.RadiusNm * NM).MinBy(s => Dist(t.X, t.Z, s.Pos.X, s.Pos.Z));
     static double GroupFreq(Dictionary<string, double> d, string g) => d.TryGetValue(g, out var f) ? f
         : d.GetValueOrDefault(Regex.Replace(g, @"\s*#\d+$", ""));   // spawned later (MOOSE "Name#001", MIST "Name #1"): frequency of the template
     /// TP7: radio frequency of the tanker group from the mission editor, 0 = none (config "Tanker").
@@ -375,12 +379,13 @@ partial class Ops
     /// Handover after departure: "Overlord two five one decimal zero" (own AWACS or GCI), null = none in the air.
     /// maxNm > 0: an AWACS farther away than that is no contact (Center takes over); GCI has no position and stays.
     public static string? AwacsContact(IReadOnlyList<Traffic> air, Me me, double cfgFreq, double maxNm = 0) =>
-        AwacsUp(air, me) && AwacsOf(air, me) is var a && (maxNm <= 0 || a == null || me.Tel == null || Dist(me.Tel.X, me.Tel.Z, a.X, a.Z) < maxNm * NM) ? $"{AwacsName(a, me)} {Tower.FreqSay(AwacsFreqOf(a) is > 0 and var f ? f : cfgFreq)}" : null;
+        AwacsUp(air, me) && AwacsOf(air, me) is var a && (maxNm <= 0 || a == null || me.Tel == null || Dist(me.Tel.X, me.Tel.Z, a.X, a.Z) < maxNm * NM) ? $"{AwacsName(a, me)} {Tower.FreqSay(AwacsFreqOf(a, me) is > 0 and var f ? f : cfgFreq)}" : null;
     /// LA15 (log): the AWACS of this player: the one he calls on its mission frequency, otherwise the one he checked in with (while airborne and within 250 NM), otherwise the nearest.
     /// Before, every call took the nearest one, so the name changed mid-fight and its calls came on a frequency he had not tuned (copy on Guard).
     /// Issue #4: several on the called frequency -> the one he checked in with or called by name (OnTranscript), otherwise the nearest of them (before: the first in the list).
     internal Traffic? MyAwacs(IReadOnlyList<Traffic> air, Me me)
     {
+        if (me.Freq > 0 && GciOf(me) is { Freq: > 0 } g && Math.Abs(g.Freq - me.Freq) < 0.005) { awId = -1; return null; }   // #15: called on the GCI sector frequency -> the GCI, not the AWACS
         var on = air.Where(x => me.Freq > 0 && Aw(x, me) && Math.Abs(AwacsFreqOf(x) - me.Freq) < 0.005).ToList();
         var a = on.Count > 0 ? on.FirstOrDefault(x => x.Id == awId) ?? AwacsOf(on, me)
                 : air.FirstOrDefault(x => x.Id == awId && Aw(x, me) && (me.Tel == null || Dist(me.Tel.X, me.Tel.Z, x.X, x.Z) < 250 * NM)) ?? AwacsOf(air, me);
@@ -388,7 +393,7 @@ partial class Ops
         return a;
     }
     int awId = -1;
-    void SetAwacs(IReadOnlyList<Traffic> air, Me me) { var a = MyAwacs(air, me); awName = AwacsName(a, me); awFreq = AwacsFreqOf(a); side = me.Coalition; flight = Flight(me); }
+    void SetAwacs(IReadOnlyList<Traffic> air, Me me) { var a = MyAwacs(air, me); awName = AwacsName(a, me); awFreq = AwacsFreqOf(a, me); side = me.Coalition; flight = Flight(me); }
 
     // LK3: group names per side, not per player: all players and AI flights of a side hear the same AWACS and talk about the same group
     static readonly Dictionary<int, Dictionary<int, string>> labels = new();   // side -> enemy unit -> "north group"
@@ -831,7 +836,7 @@ partial class Ops
         return $"{old} split, 2 groups {(az ? "azimuth" : "range")} {Miles(az ? wide : deep)}, " + string.Join(", ", ord.Select((g, k) => With($"{names[k]} {Loc(g, t)}", Fill(g))));
     }
 
-    static bool AwacsUp(IReadOnlyList<Traffic> air, Me me) => AwacsOf(air, me) != null || Gci.Contains(me.Coalition);
+    static bool AwacsUp(IReadOnlyList<Traffic> air, Me me) => AwacsOf(air, me) != null || Gci.Contains(me.Coalition) || GciOf(me) != null;
     /// Radio wheel top level (Program): AWACS only with own AWACS/GCI, tanker only with own tanker in the air (otherwise nobody answers).
     public static (bool Awacs, bool Tanker) WheelUp(IReadOnlyList<Traffic> air, Me me) => (AwacsUp(air, me), Tankers(air, me).Count > 0);
 

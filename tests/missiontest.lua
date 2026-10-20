@@ -30,7 +30,7 @@ end
 
 FOG = { 0, 0 }
 env = { info = function(s) if os.getenv("DBG") then print(s) end end, error = function(s) print("ENV ERROR " .. s) end, mission = { theatre = "Caucasus", weather = {}, coalition = {
-  blue = { bullseye = { x = 0, y = 0 }, country = { { id = 2, plane = { group = { { name = "Players", units = { { skill = "Client", parking = "1" } },
+  blue = { bullseye = { x = 0, y = 0 }, country = { { id = 2, plane = { group = { { name = "Players", units = { { skill = "Client", parking = "1", name = "P1", onboard_num = "103" } },
            route = { points = { { airdromeId = 26 } } } } } } } } } } } }
 country = { id = { USA = 2, RUSSIA = 0 } }
 timer = { getTime = function() return T end, scheduleFunction = function(f, a, t) queue[#queue + 1] = { f = f, a = a, t = t } end }
@@ -212,7 +212,7 @@ run(T + 3); assert(stateFile():find("D;2;Bandit1;1", 1, true), "Typ erkannt fehl
 FOG[1], FOG[2] = 300, 0; run(T + 12); assert(stateFile():find("G;%d+;%d+;80000;"), "Nebel ohne Sichtweite: " .. stateFile())
 env.mission.weather.fog2 = { mode = 2 }   -- fog "auto" in the ME (fog off: see the end)
 FOG[2] = 600; run(T + 12); assert(stateFile():find("G;%d+;%d+;600;"), "Nebelsicht fehlt: " .. stateFile()); FOG[1], FOG[2] = 0, 0
-assert(("\n" .. stateFile()):find("\nP;[^\n]*;1%.00;0%.50;a\n"), "Fahrwerk/Kategorie fehlt in der P-Zeile: " .. stateFile())
+assert(("\n" .. stateFile()):find("\nP;P1;[^\n]*;1%.00;0%.50;a;103\n"), "Fahrwerk/Kategorie/Modex (#12) fehlt in der P-Zeile: " .. stateFile())
 local huey = coalition.addGroup(2, Group.Category.HELICOPTER, { name = "Huey", units = { { name = "Huey", x = 900000, y = 0, alt = 300 } } })   -- N50: category h/a in P and T line
 run(T + 3); assert(("\n" .. stateFile()):find("\nT;Huey;Huey;[^\n]*;h;%d+;[^;\n]*\n") and stateFile():find("T;Hornet CV;[^\n]*;a;%d+;[^;\n]*\n"), "Kategorie fehlt in der T-Zeile: " .. stateFile())
 huey:destroy()

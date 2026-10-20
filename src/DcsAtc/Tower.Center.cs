@@ -2,7 +2,8 @@ using System.Text.RegularExpressions;
 
 namespace DcsAtc;
 
-/// Center sector (config CenterSectors): the nearest center point inside RadiusNm wins. Lat/Lon only on Caucasus (Airfield.Ll2Xz), other maps X/Z.
+/// Center sector (config CenterSectors): the nearest center point inside RadiusNm wins. Lat/Lon: Caucasus exact (Airfield.Ll2Xz), #15 other maps from the
+/// mission's lat/lon grid (Program.XzOf, about 100 m); X/Z in metres still work. #15 "Gci": true = a GCI/CRC (radar controller like the AWACS), not a Center.
 public class CenterSector
 {
     public string Name { get; set; } = "";
@@ -13,7 +14,20 @@ public class CenterSector
     public double Z { get; set; }
     public double RadiusNm { get; set; } = 150;
     public string Side { get; set; } = "";   // "blue", "red", "" = both
-    internal (double X, double Z) Pos => Lat != 0 || Lon != 0 ? Airfield.Ll2Xz(Lat, Lon) : (X, Z);
+    public bool Gci { get; set; }
+    internal (double X, double Z) Pos
+    {
+        get
+        {
+            if (Lat == 0 && Lon == 0) return (X, Z);
+            if (Airfield.Theatre == "Caucasus") return Airfield.Ll2Xz(Lat, Lon);
+            var g = Program.LlGrid;
+            if (!ReferenceEquals(g, grid)) (grid, pos) = (g, Program.XzOf(Lat, Lon));   // once per grid (mission)
+            return pos ?? (X, Z);
+        }
+    }
+    object? grid;
+    (double X, double Z)? pos;
     internal bool Fits(int side) => Side.ToLowerInvariant() switch { "blue" => side != 1, "red" => side != 2, _ => true };
 }
 
@@ -48,7 +62,7 @@ public partial class Tower
     public static (string Name, double Freq)? CenterFor(int side, double x, double z)
     {
         if (!CenterOn()) return null;
-        var sec = CenterSectors.Where(s => s.Fits(side) && Dist(x, z, s.Pos.X, s.Pos.Z) < s.RadiusNm * NM).MinBy(s => Dist(x, z, s.Pos.X, s.Pos.Z));
+        var sec = CenterSectors.Where(s => !s.Gci && s.Fits(side) && Dist(x, z, s.Pos.X, s.Pos.Z) < s.RadiusNm * NM).MinBy(s => Dist(x, z, s.Pos.X, s.Pos.Z));
         if (sec != null) return (sec.Name, sec.Freq > 0 ? sec.Freq : Freqs["Center"]);
         return CenterName(side) is { } n ? (n, Freqs["Center"]) : null;
     }
@@ -58,7 +72,7 @@ public partial class Tower
         Regex.IsMatch(Regex.Replace(text.ToLowerInvariant(), "[^a-z ]", " "), $@"^(?:(?!contact\b)\w+\W+){{0,3}}(?:{CenterRx}|cent(?:er|re)\b(?!\W+(?:ground|tower|approach|departure|radar)\b))");
     /// Text without Center names ("Tbilisi Control, request direct Batumi": Tbilisi is not a destination).
     internal static string NoCenter(string n) => Regex.Replace(n, $@"\b(?:{CenterRx})\b", " ");
-    static string CenterRx => string.Join("|", new[] { CenterName(1), CenterName(2) }.Concat(CenterSectors.Select(s => s.Name)).Where(s => !string.IsNullOrEmpty(s)).Select(s => Regex.Escape(s!.ToLowerInvariant())).Distinct().DefaultIfEmpty("(?!)"));
+    static string CenterRx => string.Join("|", new[] { CenterName(1), CenterName(2) }.Concat(CenterSectors.Where(s => !s.Gci).Select(s => s.Name)).Where(s => !string.IsNullOrEmpty(s)).Select(s => Regex.Escape(s!.ToLowerInvariant())).Distinct().DefaultIfEmpty("(?!)"));
 
     string? cenName; double cenFreq; Airfield? cenTo; bool ffIn;   // Center service: name/frequency (sector at check-in), destination named by the pilot; ffIn = flight following started at the field
     /// Center service is running (en route, Phase.Away): flight following under the Center's name.

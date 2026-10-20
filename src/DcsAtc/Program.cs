@@ -52,6 +52,9 @@ public class Config
     public bool AirspaceWatch { get; set; } = true;    // monitor control zones (N2) and announce violations ("possible pilot deviation") and into the debrief (N4); off: safety warnings only
     public bool DebugLog { get; set; } = true;         // atc-debug.txt for bug reports (speech recognition, airfield selection, phases, telemetry every 10 s), at most 2 × 20 MB
     public bool AsrGpu { get; set; } = true;           // GPU1: speech recognition on a dedicated graphics card (Vulkan), CPU without one or if it fails; false = always CPU
+    public string AsrApiUrl { get; set; } = "";        // #11: speech recognition over an OpenAI-compatible endpoint (.../v1/audio/transcriptions: cloud or a whisper server on another PC), "" = local whisper; on errors local
+    public string AsrApiKey { get; set; } = "";        // #11: Bearer key for AsrApiUrl ("" = none, e.g. own server)
+    public string AsrApiModel { get; set; } = "whisper-1";   // #11: model name at AsrApiUrl
     public bool KneeboardPages { get; set; } = true;   // kneeboard pages into Saved Games\DCS\Kneeboard on mission start (Caucasus, German)
     public Dictionary<string, double> AtisFreqs { get; set; } = new();   // A35: own ATIS frequency per airfield (airfield name -> MHz), if the airfield is missing: Frequencies["ATIS"]; only after restart
     public int WheelKey { get; set; } = 0xDE;          // selection wheel: key (0xDE = Ä), 0 = off
@@ -81,6 +84,7 @@ class Pilot
 {
     public string Unit = "", Callsign = "", Name = "", Type = "";
     public string SlotCallsign = "";                  // call sign from the DCS slot (Callsign = own from the settings if set)
+    public string Modex = "";                         // #12: board number from the mission editor (onboard_num), carrier stations call it instead of the call sign
     public bool Heli;                                 // Helicopter (mission: P line, N50)
     public int Gid;                                   // DCS group ID for in-game text, 0 = to all
     public Telemetry? Tel;
@@ -125,7 +129,7 @@ static partial class Program
 {
     const double NM = 1852;
     static readonly string Root = FindRoot();
-    static Config Cfg = new();
+    internal static Config Cfg = new();
     static List<Airfield> Fields = new();
     static readonly Dictionary<string, Pilot> Pilots = new();
     static readonly Pilot Solo = new() { Unit = "#solo" };   // without mission data
@@ -231,7 +235,7 @@ static partial class Program
             lock (TowerLock)
             {
                 var h = Host(); var f = (h?.Lead ?? h)?.Active?.F;
-                if (role == "AWACS" && h != null && Ops.AwacsFreqOf(h.Ops.MyAwacs(TrafficFor(h), MeOf(h))) is > 0 and var af) return af;   // mission AWACS (LA15: the one he checked in with)
+                if (role == "AWACS" && h != null && Ops.AwacsFreqOf(h.Ops.MyAwacs(TrafficFor(h), MeOf(h)), MeOf(h)) is > 0 and var af) return af;   // mission AWACS (LA15: the one he checked in with)
                 if (role == "Tanker" && h != null && h.Ops.TankerFreqFor(TrafficFor(h), MeOf(h)) is > 0 and var tf) return tf;   // TP7: mission tanker
                 if (role == "JTAC" && h != null && h.Ops.JtacFreqFor(MeOf(h)) is > 0 and var jf) return jf;   // K3 (#7): mission JTAC instead of the config value
                 if (role == "Center") return h?.Tel is { } ct && Tower.CenterFor(h.Coalition, ct.X, ct.Z) is { } cc ? cc.Freq : null;   // Center: sector or map frequency
@@ -346,7 +350,7 @@ static partial class Program
 
     // follow along: console + atc-log.txt in the project folder
     static bool logDated;   // issue #7: date once per start, so a flight can be found
-    static void Log(string s) { if (SimLog != null) { SimLog.Add(s); return; } Console.WriteLine(s); Trace("LOG", s); try { File.AppendAllText(Path.Combine(Root, "atc-log.txt"), (logDated ? "" : $"===== {DateTime.Now:yyyy-MM-dd} =====\r\n") + $"{Clock:HH:mm:ss} {s}\r\n"); logDated = true; } catch (IOException) { } }
+    internal static void Log(string s) { if (SimLog != null) { SimLog.Add(s); return; } Console.WriteLine(s); Trace("LOG", s); try { File.AppendAllText(Path.Combine(Root, "atc-log.txt"), (logDated ? "" : $"===== {DateTime.Now:yyyy-MM-dd} =====\r\n") + $"{Clock:HH:mm:ss} {s}\r\n"); logDated = true; } catch (IOException) { } }
 
     // Debug log for bug reports: atc-debug.txt "HH:mm:ss.fff [KAT] Text", rolls over to atc-debug.old.txt via TraceMax. Live only with Config.DebugLog (TraceOn), tests without file.
     internal static bool TraceOn;
@@ -515,11 +519,12 @@ static partial class Program
         (p is { TankFq: > 0 } && Math.Abs(p.TankFq - mhz) < 0.01 ? "Tanker" : null)
         ?? (Cfg.Frequencies.FirstOrDefault(f => f.Key != "ATIS" && Math.Abs(f.Value - mhz) < 0.01).Key is var cr && cr == "RedCrown" ? "Carrier" : cr)   // Red Crown is a carrier station (module carrier)
         ?? (Carrier.RadarShips.Any(s => s.Freq > 0 && Math.Abs(s.Freq - mhz) < 0.01) ? "Carrier" : null)   // Red Crown on the mission frequency of the cruiser
-        ?? (Tower.CenterSectors.Any(s => s.Freq > 0 && Math.Abs(s.Freq - mhz) < 0.01) ? "Center" : null)   // Center sector frequency
+        ?? (Tower.CenterSectors.FirstOrDefault(s => s.Freq > 0 && Math.Abs(s.Freq - mhz) < 0.01) is { } cs ? (cs.Gci ? "AWACS" : "Center") : null)   // Center sector frequency, #15 GCI sector
         ?? (Ops.AwacsFreq.Values.Any(f => Math.Abs(f - mhz) < 0.01) ? "AWACS" : null)   // mission AWACS
         ?? (Ops.TankerFreq.Values.Any(f => Math.Abs(f - mhz) < 0.01) ? "Tanker" : null)   // TP7: mission tanker
         ?? (Ops.Leaders.Any(l => l.Freq > 0 && Math.Abs(l.Freq - mhz) < 0.01) ? "JTAC" : null)   // J5: mission JTAC / FAC(A)
-        ?? (Carrier.Boats.Any(b => b.Freq > 0 && Math.Abs(b.Freq - mhz) < 0.01) ? "Carrier" : null);   // mission carrier
+        ?? (Carrier.Boats.Any(b => b.Freq > 0 && Math.Abs(b.Freq - mhz) < 0.01) ? "Carrier" : null)   // mission carrier
+        ?? (Carrier.Boats.Count > 0 && Carrier.StationFreqs.Values.Any(f => Math.Abs(f - mhz) < 0.01) ? "Carrier" : null);   // #13: own carrier station frequency
 
     /// Sender of an SRS call (under TowerLock). R358: the only player only for an SRS client without unit (otherwise slot change, spectator, second client: call sign, A26)
     static Pilot? PilotFor(SrsListener.Transmission tx) =>
@@ -550,7 +555,7 @@ static partial class Program
     }
     static readonly HashSet<string> StationWords = new() { "tower", "ground", "approach", "departure", "radar", "control", "center", "centre", "marshal", "paddles", "strike", "red", "mother", "overlord", "awacs", "magic", "moscow", "darkstar", "wizard", "focus", "texaco", "shell", "arco", "tanker", "range", "jtac", "faca" };
 
-    static Ops.Me MeOf(Pilot p) => new(p.Callsign, p.Tel, p.Type, p.Coalition, p.FlightSize + (p.Gid == 0 ? 0 : Ai.Count(a => AiGid.GetValueOrDefault(a.Group) == p.Gid)), p.Fuel, Iff: Srs?.IffOf(p.Id));
+    static Ops.Me MeOf(Pilot p) => new(p.Callsign, p.Tel, p.Type, p.Coalition, p.FlightSize + (p.Gid == 0 ? 0 : Ai.Count(a => AiGid.GetValueOrDefault(a.Group) == p.Gid)), p.Fuel, Iff: Srs?.IffOf(p.Id), Modex: p.Modex);
     static Tx OpsTx(Pilot p, Ops.Call c)
     {
         if (c.To != null) lock (TowerLock) p = Pilots.Values.FirstOrDefault(x => x.Ops == c.To) ?? p;   // call to another player (tanker: the next one) goes to that player's group
@@ -1060,11 +1065,12 @@ static partial class Program
                                                || (f.Key == "RedCrown" && Carrier.RadarShips.Count > 0)
                                                || (!known && f.Key is "Ground" or "Tower" or "Approach")).Select(f => f.Value)
                         .Concat(Carrier.Boats.Where(b => b.Freq > 0 && On("carrier")).Select(b => b.Freq))
+                        .Concat(Carrier.StationFreqs.Values.Where(_ => Carrier.Boats.Count > 0 && On("carrier")))   // #13: own carrier station frequencies
                         .Concat(Carrier.RadarShips.Where(s => s.Freq > 0 && On("carrier")).Select(s => s.Freq))   // Red Crown (cruiser frequency from the mission)
                         .Concat(pilots.Where(p => p.TankFq > 0 && RoleOn("Tanker")).Select(p => p.TankFq))   // R387: tanker frequency tuned by DCS
                         .Concat(Ops.TankerFreq.Values.Where(_ => RoleOn("Tanker")))   // TP7: mission tanker
                         .Concat(Ops.Leaders.Where(l => l.Freq > 0 && RoleOn("JTAC")).Select(l => l.Freq))   // J5: mission JTAC / FAC(A)
-                        .Concat(Tower.CenterSectors.Where(s => s.Freq > 0 && RoleOn("Center")).Select(s => s.Freq));   // Center sectors
+                        .Concat(Tower.CenterSectors.Where(s => s.Freq > 0 && RoleOn(s.Gci ? "AWACS" : "Center")).Select(s => s.Freq));   // Center sectors, #15 GCI sectors
         // A22: order active airfields of all players, then taxiing, then neighboring airfields (SrsListener takes at most Max, duplicates count once)
         static IEnumerable<double> Fq(IEnumerable<Airfield> fs) => fs.SelectMany(f => f.FreqsOf("*") ?? Array.Empty<double>());   // UHF, VHF or own per controller
         var act = pilots.Where(p => p.Active != null && Served(p.Coalition, p.Active.F)).Select(p => p.Active!.F);   // N1: own and neutral airfields only
@@ -1543,8 +1549,21 @@ static partial class Program
         var bad = new List<string>();
         static string N(string s) => Regex.Replace(s.ToLowerInvariant(), "[^a-z0-9]", "");
         foreach (var f in fields) f.Own.Clear();
+        Carrier.StationFreqs.Clear();
         foreach (var (name, roles) in cfg ?? new())
         {
+            if (N(name) == "carrier" && roles.ValueKind == JsonValueKind.Object)   // #13: own frequency per carrier station (all carriers)
+            {
+                foreach (var x in roles.EnumerateObject())
+                {
+                    var st = Carrier.Stations.FirstOrDefault(s => s.Equals(x.Name, StringComparison.OrdinalIgnoreCase));
+                    var mhz = x.Value.ValueKind == JsonValueKind.Number ? x.Value.GetDouble() : x.Value.ValueKind == JsonValueKind.Array && x.Value.GetArrayLength() > 0 && x.Value[0].ValueKind == JsonValueKind.Number ? x.Value[0].GetDouble() : 0;
+                    if (st != null && mhz is >= 30 and <= 400) Carrier.StationFreqs[st] = mhz;
+                    else bad.Add(L($"[ATC] frequencies.jsonc: Carrier \"{x.Name}\": {x.Value} – {(st == null ? "unbekannte Station (" + string.Join(", ", Carrier.Stations) + ")" : "keine Frequenz 30–400 MHz")}, ignoriert",
+                                   $"[ATC] frequencies.jsonc: Carrier \"{x.Name}\": {x.Value} – {(st == null ? "unknown station (" + string.Join(", ", Carrier.Stations) + ")" : "no frequency 30–400 MHz")}, ignored"));
+                }
+                continue;
+            }
             var hit = fields.Where(f => N(f.Name) == N(name) || f.RadioName != "" && N(f.RadioName) == N(name)).ToList();   // RadioName: generated line without mission data
             if (hit.Count == 0 && N(name) != "") hit = fields.Where(f => N(f.Name).Contains(N(name))).ToList();
             if (hit.Count != 1 || roles.ValueKind != JsonValueKind.Object)
@@ -1960,6 +1979,7 @@ static partial class Program
                         if (p.Length > 18) { pl.Id = uint.Parse(p[17]); pl.Coalition = int.Parse(p[18]); }
                         if (p.Length > 19) pl.Fuel = D(19);
                         pl.Heli = p.Length > 21 && p[21] == "h";   // N50: category h/a
+                        pl.Modex = p.Length > 22 ? p[22].Trim() : "";   // #12: board number
                         bool air = p[16] == "1";
                         pl!.Tel = new Telemetry(D(8), air ? Math.Max(D(9), 3.5) : 0, D(10), D(11), D(6), D(7), D(12), D(13), D(14), D(15), p.Length > 20 ? D(20) : -1);
                         pl.Seen = Clock;
@@ -2641,8 +2661,8 @@ static partial class Program
         {
             var me = new Ops.Me("", new Telemetry(0, 0, 0, 0, x, z, 0, 0, 0), "", side);
             var a = Ops.AwacsOf(Ai, me);
-            if (a == null && !Ops.Gci.Contains(side)) return null;   // no AWACS, no ground radar: nobody acknowledges
-            return (Ops.AwacsName(a, me), Ops.AwacsFreqOf(a) is > 0 and var f ? f : Cfg.Frequencies.GetValueOrDefault("AWACS", 251.5));
+            if (a == null && !Ops.Gci.Contains(side) && Ops.GciOf(me) == null) return null;   // no AWACS, no ground radar: nobody acknowledges
+            return (Ops.AwacsName(a, me), Ops.AwacsFreqOf(a, me) is > 0 and var f ? f : Cfg.Frequencies.GetValueOrDefault("AWACS", 251.5));
         },
         Cfg.Frequencies.GetValueOrDefault("AWACS", 251.5));
 
@@ -2943,7 +2963,7 @@ static partial class Program
     static int wavNo;
     static string SaveWav(short[] pcm)
     {
-        var wav = Path.Combine(Root, "tmp", $"srs{Interlocked.Increment(ref wavNo) % 8}.wav");
+        var wav = Path.Combine(Root, "tmp", $"srs{Interlocked.Increment(ref wavNo) % 32}.wav");   // #11: 32, calls now queue for whisper
         using var w = new WaveFileWriter(wav, new WaveFormat(16000, 16, 1));
         w.WriteSamples(pcm, 0, pcm.Length);
         return wav;
@@ -2960,39 +2980,54 @@ static partial class Program
             var h = p ?? Host();   // A141: callsign and airfield of the sender (SRS), otherwise of the host
             cs = h?.Callsign ?? Cfg.Callsign;
             prompt = WhisperPrompt(role, via ?? (h?.Lead ?? h)?.Active?.F ?? Fields[0], Fields, PromptNames(role, h),
-                                   h?.SlotCallsign is { Length: > 0 } sc && sc != cs ? $"{sc}, {cs}" : cs);   // slot call sign too ("Trident 5-1" with own "Victory 9-1")
+                                   (h?.SlotCallsign is { Length: > 0 } sc && sc != cs ? $"{sc}, {cs}" : cs)   // slot call sign too ("Trident 5-1" with own "Victory 9-1")
+                                   + (role == "Carrier" && h?.Modex is { Length: > 0 } mx ? $", {mx}" : ""));   // #12: board number on the carrier frequencies ("Marshal, 103, ...")
         }
         var model = Path.Combine(Root, "models", "ggml-small.en.bin");   // small: significantly fewer mishearings than base, ~1.7 s instead of 0.5 s
         if (!File.Exists(model)) model = Path.Combine(Root, "models", "ggml-base.en.bin");
+        var sw = Stopwatch.StartNew();
+        if (Cfg.AsrApiUrl != "" && AsrApi.Transcribe(wav, prompt) is { } api)   // #11: endpoint first, local whisper if it fails
+        {
+            Trace("WHISPER", $"{Path.GetFileName(wav)} API {Cfg.AsrApiModel} {sw.ElapsedMilliseconds} ms conf {api.Conf:0.00} (Sender {cs}, Prompt {role ?? "allgemein"}): {api.Text}");
+            if (keep) Keep(wav, api.Text);
+            return api;
+        }
         var json = Path.ChangeExtension(wav, null);   // -of: <wav without extension>.json
         try { File.Delete(json + ".json"); } catch (IOException) { }   // do not read old confidence
-        var sw = Stopwatch.StartNew();
         var exe = Path.Combine(Root, "tools", "whisper", "Release", "whisper-cli.exe");
         string[] args = { "-m", model, "-t", Math.Clamp(Environment.ProcessorCount / 2 - 2, 2, 8).ToString(), "-f", wav, "-nt", "-l", "en", "--prompt", prompt, "-ojf", "-of", json };   // ponytail: -t leaves two cores to DCS (main/render thread), 16 threads -> 6; raise if replies lag, lower if DCS stutters while talking
-        int dev = Cfg.AsrGpu ? asrDev : -1;
         string[] On(int d) => args.Concat(d == -2 ? Array.Empty<string>() : d < 0 ? new[] { "-np", "-ng" } : new[] { "-np", "-dev", d.ToString() }).ToArray();   // -2: without -np, whisper lists its devices
-        var (output, exit, err) = RunErr(exe, null, On(dev));
-        if (exit != 0 && dev != -1)   // GPU1: GPU failed (memory full, driver): this call again and the rest of the session on the CPU
+        string output;
+        AsrGate.Wait();   // #11 (log: 15 at once on a CPU server, minutes each): one whisper at a time, each already uses half the cores; one after the other is faster for all
+        long queued = sw.ElapsedMilliseconds;
+        int dev = Cfg.AsrGpu ? asrDev : -1;
+        try
         {
-            asrDev = dev = -1;
-            Log(L("[ASR] Grafikkarte fehlgeschlagen, Spracherkennung ab jetzt auf dem Prozessor", "[ASR] Graphics card failed, speech recognition on the CPU from now on"));
-            (output, _, _) = RunErr(exe, null, On(-1));
+            (output, var exit, var err) = RunErr(exe, null, On(dev));
+            if (exit != 0 && dev != -1)   // GPU1: GPU failed (memory full, driver): this call again and the rest of the session on the CPU
+            {
+                asrDev = dev = -1;
+                Log(L("[ASR] Grafikkarte fehlgeschlagen, Spracherkennung ab jetzt auf dem Prozessor", "[ASR] Graphics card failed, speech recognition on the CPU from now on"));
+                (output, _, _) = RunErr(exe, null, On(-1));
+            }
+            else if (dev == -2)
+            {
+                (asrDev, var name) = GpuOf(err);
+                Log(asrDev < 0 ? L("[ASR] Keine dedizierte Grafikkarte: Spracherkennung auf dem Prozessor", "[ASR] No dedicated graphics card: speech recognition on the CPU")
+                               : L($"[ASR] Spracherkennung auf der Grafikkarte: {name}", $"[ASR] Speech recognition on the graphics card: {name}"));
+            }
         }
-        else if (dev == -2)
-        {
-            (asrDev, var name) = GpuOf(err);
-            Log(asrDev < 0 ? L("[ASR] Keine dedizierte Grafikkarte: Spracherkennung auf dem Prozessor", "[ASR] No dedicated graphics card: speech recognition on the CPU")
-                           : L($"[ASR] Spracherkennung auf der Grafikkarte: {name}", $"[ASR] Speech recognition on the graphics card: {name}"));
-        }
+        finally { AsrGate.Release(); }
         double conf = 1;
         try { conf = Confidence(File.ReadAllText(json + ".json")); File.Delete(json + ".json"); } catch (Exception e) when (e is IOException or JsonException or KeyNotFoundException or InvalidOperationException) { Trace("FEHLER", $"Whisper-Sicherheit: {e.GetType().Name}: {e.Message}"); }
-        Trace("WHISPER", $"{Path.GetFileName(wav)} {Path.GetFileName(model)} {(dev == -2 ? "Gerätewahl" : dev < 0 ? "CPU" : $"GPU {dev}")} {sw.ElapsedMilliseconds} ms conf {conf:0.00} (Sender {cs}, Prompt {role ?? "allgemein"}): {output.Trim()}");
+        Trace("WHISPER", $"{Path.GetFileName(wav)} {Path.GetFileName(model)} {(dev == -2 ? "Gerätewahl" : dev < 0 ? "CPU" : $"GPU {dev}")} {sw.ElapsedMilliseconds} ms{(queued > 100 ? $" (davon {queued} ms gewartet)" : "")} conf {conf:0.00} (Sender {cs}, Prompt {role ?? "allgemein"}): {output.Trim()}");
         if (keep) Keep(wav, output.Trim());
         return (output.Trim(), conf);
     }
 
     /// GPU1: whisper device: -2 = not yet known (the first call lists the devices), -1 = CPU, otherwise Vulkan device of the dedicated GPU.
     static volatile int asrDev = -2;
+    static readonly SemaphoreSlim AsrGate = new(1);   // #11: whisper processes one after the other
 
     /// GPU1: whisper's Vulkan list ("ggml_vulkan: 0 = NVIDIA GeForce RTX 5070 Ti (NVIDIA) | uma: 0 | …") -> first dedicated GPU, -1 = none (no Vulkan or iGPU only:
     /// an iGPU is slower than the CPU, GPU-MESSUNG.md 3.8 s instead of 2.1 s). ponytail: the first call runs on whisper's device 0, which may be the iGPU (one slow call)
@@ -3456,6 +3491,22 @@ static partial class Program
                 a.Lon * (1 - u) * (1 - w) + b.Lon * (1 - u) * w + c.Lon * u * (1 - w) + d.Lon * u * w);
     }
 
+    /// #15: lat/lon -> DCS x/z on any map, inverse of LatLonOf (Newton steps in the grid, converges in a few); null = no grid yet (before the mission data).
+    internal static (double X, double Z)? XzOf(double lat, double lon)
+    {
+        var g = LlGrid;
+        if (g.Length == 0 || LatLonOf(g[0].X, g[0].Z) == null) return null;
+        double x = g.Average(q => q.X), z = g.Average(q => q.Z);
+        for (int k = 0; k < 8; k++)
+        {
+            var (p, px, pz) = (LatLonOf(x, z)!.Value, LatLonOf(x + 1000, z)!.Value, LatLonOf(x, z + 1000)!.Value);
+            double a = (px.Lat - p.Lat) / 1000, b = (pz.Lat - p.Lat) / 1000, c = (px.Lon - p.Lon) / 1000, d = (pz.Lon - p.Lon) / 1000, det = a * d - b * c;
+            if (Math.Abs(det) < 1e-18) return null;
+            (x, z) = (x + (d * (lat - p.Lat) - b * (lon - p.Lon)) / det, z + (a * (lon - p.Lon) - c * (lat - p.Lat)) / det);
+        }
+        return (x, z);
+    }
+
     /// FI2: position of the transmitting station (x, z, m MSL) by its SRS name: player, airfield (antenna 30 m above the field), JTAC/FAC(A), AI aircraft (AWACS, tanker, flights).
     /// null = Center (antenna network), intercom, unknown -> without position as before. ponytail: carrier stations have none (close by over water), add with Carrier.Boats if LOS complaints come.
     static (double X, double Z, double Alt)? StationAt(string name)
@@ -3848,6 +3899,25 @@ static partial class Program
         }
         finally { (LlGrid, Cfg.StationPositions, Fields) = (llg0, sp0, fl0); }
         Console.WriteLine("OK   FI2: Lat/Lon aus dem Missionsraster, Platz und ATIS mit Position, Center, Intercom, ohne Raster oder Einstellung ohne");
+        // #15: lat/lon -> x/z on any map (inverse of the grid), sector by Lat/Lon outside Caucasus; GCI sector: name/frequency like the AWACS, not a Center, own frequency -> AWACS
+        var (th0, cs0) = (Airfield.Theatre, Tower.CenterSectors);
+        try
+        {
+            LlGrid = (from i in Enumerable.Range(0, 3) from j in Enumerable.Range(0, 3) select (i * 100000.0, j * 100000.0, 40.0 + i, 40.0 + 2 * j)).ToArray();
+            Airfield.Theatre = "GermanyCW";
+            var xz = XzOf(41.5, 43.0);
+            var crc = new CenterSector { Name = "Backlight", Freq = 262.1, Lat = 40.5, Lon = 41.0, RadiusNm = 60, Gci = true, Side = "blue" };
+            var cen = new CenterSector { Name = "Langen Radar", Freq = 269.0, X = 50000, Z = 50000, RadiusNm = 60 };
+            Tower.CenterSectors = new() { crc, cen };
+            var me = new Ops.Me("Enfield 1-1", new Telemetry(5000, 0, 0, 0, 60000, 60000, 0, 0, 0), "F-16C", 2);
+            var (gName, gFreq, cFor, role, red) = (Ops.AwacsName(null, me), Ops.AwacsFreqOf(null, me), Tower.CenterFor(2, 60000, 60000), SrsRole(null, 262.1), Ops.GciOf(me with { Coalition = 1 }));
+            var tuned = new Ops().MyAwacs(new List<Traffic>(), me with { Freq = 262.1 });
+            if (xz is not { } p || Math.Abs(p.X - 150000) > 1 || Math.Abs(p.Z - 150000) > 1 || Math.Abs(crc.Pos.X - 50000) > 1 || Math.Abs(crc.Pos.Z - 50000) > 1
+                || gName != "Backlight" || gFreq != 262.1 || cFor?.Name != "Langen Radar" || role != "AWACS" || red != null || tuned != null || Tower.IsCenterCall("Backlight, Enfield 1-1, checking in"))
+                throw new Exception($"#15: {xz} {crc.Pos} | {gName} {gFreq} {cFor} {role} {red?.Name}");
+        }
+        finally { (LlGrid, Airfield.Theatre, Tower.CenterSectors) = (llg0, th0, cs0); }
+        Console.WriteLine("OK   #15: Lat/Lon auf jeder Karte aus dem Raster, GCI-Sektor mit Name und Frequenz wie das AWACS, kein Center");
     }
 
     /// Self-test: airfield frequencies from Radio.lua (only if DCS is installed).
@@ -3858,6 +3928,7 @@ static partial class Program
         Checkride.SelfTest();
         Csar.SelfTest();
         Lagebild.SelfTest();
+        AsrApi.SelfTest();
         if (!JsonSerializer.Serialize(MapState()).Contains("\"fields\":")) throw new Exception("FI7: MapState");
         if (Tag("Träger LSO: (OK) 3-wire", "Case III", null, "Nacht") != "Träger LSO (Case III, Nacht): (OK) 3-wire" || Tag("Verstoß: x", null) != "Verstoß: x") throw new Exception("FI3: Debrief-Kennzeichen");
         // Etappe 1 (PLATZVERFAHREN-PLAN.md): Kutaisi from charts/caucasus.jsonc, CRPs as printed within 5 m of the old hand values, entries/exits/hand as before
@@ -4222,6 +4293,16 @@ static partial class Program
                 || FreqRoute(360.6, null).Via != nel || FreqRoute(275.0, null).Via != nlv)
                 throw new Exception("AirfieldFrequencies doppelt: " + string.Join(" | ", dup));
             Console.WriteLine($"OK   AirfieldFrequencies doppelt: {string.Join(" | ", dup)}");
+            // #13: "Carrier" = own frequency per carrier station (all carriers), unknown station / no frequency -> one line each; listened to and routed as Carrier (with a carrier)
+            var cvBad = ApplyFreqs(Fields, OwnFreqs("""{ "Carrier": { "Marshal": 285.0, "tower": [308.0], "CATCC": 282.0, "Paddles": 900 } }""", "Nevada").Own);
+            var (cvSf, boats0) = (new Dictionary<string, double>(Carrier.StationFreqs), Carrier.Boats);
+            Carrier.Boats = new() { new Carrier.Boat("CVN-73", "CVN", "CVN_73", 0, 0, 0, 10, 2, 127.5, "73X", "11") };
+            var (cvRole, cvListen) = (SrsRole(null, 285.0), ListenFreqs(new()).Contains(308.0));
+            Carrier.Boats = boats0;
+            ApplyFreqs(Fields, new());
+            if (cvSf.Count != 2 || cvSf["Marshal"] != 285.0 || cvSf["Tower"] != 308.0 || cvBad.Count != 2 || !cvBad[0].Contains("\"CATCC\"") || !cvBad[1].Contains("900") || cvRole != "Carrier" || !cvListen || Carrier.StationFreqs.Count != 0)
+                throw new Exception($"#13 Trägerfrequenzen: {string.Join(",", cvSf)} | {string.Join(" | ", cvBad)} | {cvRole} {cvListen}");
+            Console.WriteLine("OK   #13: frequencies.jsonc \"Carrier\" je Station, Fehler je Zeile, abgehört und als Träger erkannt");
             // create frequencies.jsonc (test Radio.lua: name from comment or beacon, config without UHF), uncomment a line, add without changing user lines
             var dir = Path.Combine(Path.GetTempPath(), "DcsAtc-FreqTest");
             Directory.CreateDirectory(Path.Combine(dir, "Mods", "terrains", "TestMap"));

@@ -96,7 +96,13 @@ class Carrier
     /// Review l4: new mission or restart (Program.MissionGap): forget the "99" state per ship.
     public static void NewMission() { said.Clear(); deckDelta.Clear(); }
 
-    static Ops.Call Say(string station, string text, Boat b) => new("Carrier", station, text, b.Freq);
+    static Ops.Call Say(string station, string text, Boat b) => new("Carrier", station, text, StationFreqs.TryGetValue(station, out var f) ? f : b.Freq);
+    /// #13 (issue): own frequency per carrier station from frequencies.jsonc ("Carrier": { "Marshal": 285.0, "Tower": 308.0, ... }), for all carriers; empty = all on the carrier frequency.
+    /// ponytail: one set for every carrier, per-carrier sets when a mission with two decks asks for it.
+    public static readonly string[] Stations = { "Marshal", "Approach", "Tower", "Paddles", "Departure", "Strike" };
+    public static Dictionary<string, double> StationFreqs = new(StringComparer.OrdinalIgnoreCase);
+    /// Handover "switch Tower", with an own station frequency "switch Tower three zero eight decimal zero".
+    static string Sw(string station) => StationFreqs.TryGetValue(station, out var f) ? $"switch {station} {FreqSay(f)}" : $"switch {station}";
     static int MagNum(double trueDeg) { int m = (int)Math.Round(((trueDeg - Ops.MagVar) % 360 + 360) % 360); return m == 0 ? 360 : m; }
     static string Mag(double trueDeg) => Digits(MagNum(trueDeg).ToString("000"));
     /// What is to be done now (text only in game): Case I/III phases in which nobody else says anything.
@@ -104,6 +110,8 @@ class Carrier
     static string ZipLip => L("Initial: zip lip, kein Funk bis zum eigenen Ball-Call (ca. 3/4 NM: „Hornet ball, 5.2“).", "Initial: zip lip, no radio until your own ball call (about 3/4 NM: \"Hornet ball, 5.2\").");
     static string DescendIII => L("4000 ft/min auf 5000 ft, dort „platform“ melden; dann 2000 ft/min auf 1200 ft; bei 10 DME Fahrwerk/Klappen/Haken.",
                                   "4000 ft/min to 5000 ft, call \"platform\" there; then 2000 ft/min to 1200 ft; at 10 DME gear/flaps/hook down.");
+    /// #12 (issue): carrier stations call the board number (modex, "one zero three") like on the boat, the call sign only without one.
+    internal static string CvCs(Ops.Me me) => me.Modex.Any(char.IsDigit) ? Digits(me.Modex) : SpokenCallsign(me.Callsign);
     static Boat? Nearest(Ops.Me me) => Boats.Where(b => b.Coalition == me.Coalition)
                                             .MinBy(b => me.Tel == null ? 0 : Dist(me.Tel.X, me.Tel.Z, b.X, b.Z));
     Boat? Mine => Boats.FirstOrDefault(b => b.Group == boat);
@@ -194,7 +202,7 @@ class Carrier
         var b = Mine ?? Nearest(me);
         if (b == null) return new();
         boat = b.Group;
-        var c = cs = SpokenCallsign(me.Callsign);
+        var c = cs = CvCs(me);
         bool grooved = Stage >= 3 && me.Tel is { } tg && InGroove(b, tg);   // R133: in the groove only Paddles speaks, Marshal never (LSO NATOPS)
         if (unsure && !(grooved && Has(n, "ball", "clara", "clarence"))) return grooved ? new() : new() { Say(Station, $"{c}, {Station}, say again.", b) };   // uncertain ball call in the groove counts; otherwise "call the ball" asks again; R231: the leading station
         if (launch == 1) return new() { Hint(L("Auf dem Deck kein Funk (kein Land-Tower): Anlassen, Rollen und Katapult nach Zeichen der Deckcrew.",
@@ -228,7 +236,7 @@ class Carrier
                 return new() { Say("Marshal", Clock >= 0 ? $"{c}, negative, your expected approach time is {Mm()}."
                                                          : $"{c}, negative, continue holding, {Math.Max(1, (int)Math.Round((charlieAt - now) / 60))} minutes to your approach time.", b) };
             Stage = 2; OffStack(); radar = false; fbSaid = b.ExpFb; delta = false;   // R282: radar = contact with Approach, only on its first report
-            return new() { Say("Marshal", $"{c}, radar contact, final bearing {Mag(b.ExpFb)}, switch Approach.", b), Hint(DescendIII) };
+            return new() { Say("Marshal", $"{c}, radar contact, final bearing {Mag(b.ExpFb)}, {Sw("Approach")}.", b), Hint(DescendIII) };
         }
         if (caseNo == 1 && Stage == 1 && Has(n, "initial"))   // R278: no initial without Charlie: rejection, holding, stack and Charlie time stay (CV NATOPS Case I)
             return new() { Say(Station, $"{c}, negative, not Charlie, hold angels {angels}{(Clock >= 0 ? ", expected Charlie " + Mm() : "")}.", b) };
@@ -242,7 +250,7 @@ class Carrier
         if (caseNo == 2 && Stage == 2 && Has(n, "see you at"))   // #18/R227: Case II ship in sight -> Tower, from the initial Case I pattern (zip lip)
         {
             caseNo = 1;
-            return new() { Say("Approach", OneOf($"{c}, roger, switch Tower.", $"{c}, copy, switch Tower."), b),
+            return new() { Say("Approach", OneOf($"{c}, roger, {Sw("Tower")}.", $"{c}, copy, {Sw("Tower")}."), b),
                            Hint(L($"Sinken zum Initial: 3 NM hinter dem Heck, 800 ft, Kurs {MagNum(b.ExpBrc):000}, 350 kt; Break über dem Bug nach links, Downwind 600 ft.",
                                     $"Descend to the initial: 3 NM astern, 800 ft, heading {MagNum(b.ExpBrc):000}, 350 kt; break left over the bow, downwind 600 ft.")) };
         }
@@ -250,7 +258,7 @@ class Carrier
         {
             seeMe = true;
             if (FuelSlot(n) is { } sf && Signal(me, b, "Marshal", false, (state = sf) * 1000) is { } sg) return sg;
-            return new() { Say("Marshal", $"{c}, {(FuelSlot(n) != null ? OneOf("roger", "copy") : "update state")}, switch Tower.", b) };
+            return new() { Say("Marshal", $"{c}, {(FuelSlot(n) != null ? OneOf("roger", "copy") : "update state")}, {Sw("Tower")}.", b) };
         }
         if (Stage >= 1 && Has(n, "see you at", "established", "holding", "in the stack"))
             return new() { Say(Station, OneOf($"{c}, roger.", $"{c}, copy."), b) };   // R280: after "see you at" the Tower
@@ -355,7 +363,7 @@ class Carrier
         {
             var p = Rel(db, t, db.Brc);
             if (launch != 1 || Math.Abs(p.Along - deckPos.Along) + Math.Abs(p.Lat - deckPos.Lat) > 50) (deckAt, deckPos) = (now, p);   // ponytail: 50 m against position jitter on the moving ship; shorter taxi moves do not reopen the window
-            (launch, boat, cs, deckWind) = (1, db.Group, SpokenCallsign(me.Callsign), !trapped && now - deckAt < 600);
+            (launch, boat, cs, deckWind) = (1, db.Group, CvCs(me), !trapped && now - deckAt < 600);
             return new();
         }
         trapped = false;
@@ -388,7 +396,7 @@ class Carrier
     List<Ops.Call> Strike(string n, Ops.Me me, Boat b)
     {
         launch = 0;   // contact with Strike ends the Case II/III departure phase
-        if (!Outbound(n)) return new() { Say("Strike", $"{cs}, Strike, radar contact, switch Marshal.", b) };
+        if (!Outbound(n)) return new() { Say("Strike", $"{cs}, Strike, radar contact, {Sw("Marshal")}.", b) };
         var next = RedCrownFor(me.Coalition, me.Tel) is { } rc ? $"switch Red Crown {FreqSay(rc.Freq)}" : Onward(me);
         return new() { Say("Strike", $"{cs}, Strike, radar contact, {next}.", b) };
     }
@@ -397,7 +405,7 @@ class Carrier
     List<Ops.Call> RedCrown(string n, Ops.Me me, Boat b)
     {
         if (RedCrownFor(me.Coalition, me.Tel) is not { } rc) return new();
-        var text = Outbound(n) ? $"{cs}, Red Crown, {OneOf("roger", "copy")}, {Onward(me)}." : $"{cs}, Red Crown, radar contact, identified, switch Strike {FreqSay(BoatFreq(b))}.";
+        var text = Outbound(n) ? $"{cs}, Red Crown, {OneOf("roger", "copy")}, {Onward(me)}." : $"{cs}, Red Crown, radar contact, identified, switch Strike {FreqSay(StationFreqs.GetValueOrDefault("Strike") is > 0 and var sf ? sf : BoatFreq(b))}.";
         return new() { new("Carrier", "Red Crown", text, rc.Freq) };
     }
 
@@ -405,7 +413,7 @@ class Carrier
     List<Ops.Call> Handoff(Ops.Me me, Boat b)
     {
         launch = 0;
-        return new() { Say("Departure", Ops.AwacsContact(Air, me, Freqs.GetValueOrDefault("AWACS", 251.5)) is { } aw ? $"{cs}, Departure, switch {aw}." : $"{cs}, Departure, switch Strike.", b) };   // R233: military instead of FAA civil phrase; E8: Strike (boat frequency) instead of "cleared to switch"
+        return new() { Say("Departure", Ops.AwacsContact(Air, me, Freqs.GetValueOrDefault("AWACS", 251.5)) is { } aw ? $"{cs}, Departure, switch {aw}." : $"{cs}, Departure, {Sw("Strike")}.", b) };   // R233: military instead of FAA civil phrase; E8: Strike (boat frequency) instead of "cleared to switch"
     }
 
     /// R27: wire from the DCS event (mission "W;Unit;Wire"), applies to the current approach.
@@ -452,13 +460,13 @@ class Carrier
         if (t == null) return new();
         if (Lead is { Stage: 1 or 2, caseNo: >= 2 } lw && (Stage == 0 || follow) && !OnGround(t) && Boats.FirstOrDefault(x => x.Group == lw.boat) is { } lb)   // R279: Case II/III single approach: own check-in (angels, EAT one minute behind the lead), take nothing over from the lead
         {
-            (Stage, caseNo, boat, cs, ladder, launch, follow, radar, delta) = (1, lw.caseNo, lw.boat, SpokenCallsign(me.Callsign), 0, 0, false, false, false);
+            (Stage, caseNo, boat, cs, ladder, launch, follow, radar, delta) = (1, lw.caseNo, lw.boat, CvCs(me), 0, 0, false, false, false);
             OffStack();
             return Assign(me, lb, mt);
         }
         if (Lead is { Stage: 1 or 2, caseNo: 1 } l && Stage < l.Stage && !OnGround(t))   // R26: flight in formation, Case I: check-in or Charlie of the lead applies to the flight (radio via the lead); not on the deck (lead circles above)
         {
-            (Stage, caseNo, angels, charlieAt, boat, cs, ladder, launch, follow, radar) = (l.Stage, l.caseNo, l.angels, l.charlieAt, l.boat, SpokenCallsign(me.Callsign), 0, 0, true, false);   // radar: Departure contact does not count for Approach
+            (Stage, caseNo, angels, charlieAt, boat, cs, ladder, launch, follow, radar) = (l.Stage, l.caseNo, l.angels, l.charlieAt, l.boat, CvCs(me), 0, 0, true, false);   // radar: Departure contact does not count for Approach
             OffStack();
         }
         else if (Lead == null && follow)   // Leave formation: in holding own slot in the stack by Charlie time
@@ -469,7 +477,7 @@ class Carrier
         if (Stage == 0 && Launch(me, t, now) is { } lc) return lc;
         if (Stage == 0 && Nearest(me) is { } gb && Landing(gb, t) is var (gd, gl) && gd is > -NM and < -0.5 * NM && Math.Abs(gl) < 0.2 * NM && t.AltMsl < 1000 * Ft
             && t.Ias < GrooveIas && t.Gear is < 0 or >= 0.5 && HdgDiff(t.Hdg * 180 / Math.PI, gb.Fb) <= 15)   // R26: without check-in/Charlie in the groove: LSO looks after every own aircraft
-            (Stage, caseNo, boat, cs, launch) = (3, CaseNow(), gb.Group, SpokenCallsign(me.Callsign), 0);
+            (Stage, caseNo, boat, cs, launch) = (3, CaseNow(), gb.Group, CvCs(me), 0);
         if (Stage == 0 || Mine is not { } b) return new();
         var c = cs;
         var (al, lat) = Rel(b, t, b.Brc);
@@ -490,7 +498,7 @@ class Carrier
         {
             Leave(); Gone = true;
             return new() { Ops.AwacsContact(Air, me, Freqs.GetValueOrDefault("AWACS", 251.5)) is { } aw ? Say("Marshal", $"{c}, Marshal, switch {aw}.", b)
-                                                                                                    : Say("Marshal", $"{c}, Marshal, switch Strike.", b) };
+                                                                                                    : Say("Marshal", $"{c}, Marshal, {Sw("Strike")}.", b) };
         }
         inHold = dist < 10 * NM;
         if (Stage >= 3 && !waved && t.Ias < GrooveIas && Landing(b, t) is var (pd, pl) && pd is > -0.6 * NM and < -100 && Math.Abs(pl) < 0.2 * NM
@@ -853,6 +861,20 @@ class Carrier
         var m2 = S(c2, "Enfield 1-2", "Marshal, Enfield 1-2, checking in", far, 10);
         check(m1 == "Marshal: Enfield one one, Marshal, case one recovery, expected BRC three five four, altimeter two niner niner two, hold angels 2, expected Charlie zero eight, report see me. | : Träger: Holding über dem Schiff in Angels 2, Linkskreise (ca. 5 NM Ø). Warten auf „signal Charlie“."
               && m2.Contains("hold angels 3, expected Charlie one zero") && c1.Wants(Normalize("Enfield 1-1, see you at 2")), $"Träger: Marshal -> {m1} | {m2}");
+        // #12/#13 (issues): board number instead of the call sign; check-in as in the CV NATOPS ("marking mom's 345 for 55, angels 17, low state 11.6")
+        var c12 = new Carrier();
+        var m12 = string.Join(" | ", c12.OnTranscript("Marshal, 103, marking mom's 345 for 55, angels 17, low state 11.6", M("Enfield 1-4", far) with { Modex = "103" }, 15).Select(x => $"{x.Station}: {x.Text}"));
+        check(m12.StartsWith("Marshal: one zero three, Marshal, case one recovery") && CvCs(M("Enfield 1-4", far)) == "Enfield one four", $"Träger Modex: {m12}");
+        c12.Leave();
+        // #13: own station frequency: Marshal answers on it, handover names the frequency, without one as before
+        StationFreqs = new(StringComparer.OrdinalIgnoreCase) { ["Marshal"] = 285.0, ["Tower"] = 308.0 };
+        var c13 = new Carrier();
+        var r13 = c13.OnTranscript("Marshal, 105, checking in", M("Enfield 1-5", far) with { Modex = "105" }, 16);
+        var (sw13, swA) = (Sw("Tower"), Sw("Approach"));
+        c13.Leave();
+        StationFreqs = new(StringComparer.OrdinalIgnoreCase);
+        check(r13.Count > 0 && r13[0].Station == "Marshal" && r13[0].Freq == 285.0 && sw13 == "switch Tower three zero eight decimal zero" && swA == "switch Approach",
+              $"Träger Stationsfrequenz: {r13.FirstOrDefault()} | {sw13} | {swA}");
         // Into the wind: west wind 10 m/s (19.4 kt) -> heading 270 + 9.1 (angled deck), 7.6 kt speed; Marshal gives the BRC into the wind
         var bw = b with { Wz = 10, Pa = 100000 };
         Boats = new() { bw };

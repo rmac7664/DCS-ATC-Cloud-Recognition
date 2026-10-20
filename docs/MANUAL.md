@@ -45,7 +45,8 @@ The examples use the callsign Enfield 1-1 and write many numbers as digits. On t
    - **Push-to-talk.** You only need this if you don't talk through SRS. Press a key or a HOTAS button.
 
    Press **Esc** at either prompt to keep the current value. The new keys apply the next time DCS-ATC starts. You can run this again at any time from **Start menu → DCS-ATC → Set keys** or from the settings window.
-5. **Done.** From now on DCS-ATC starts by itself with every mission and appears in the taskbar as a small console window. It closes when you leave the mission or quit DCS. Keep that window open while you fly.
+5. **Settings.** A second ticked box, "Open settings (see the new options)", opens the settings window when setup finishes, so you see new options after an update. Untick it if you don't need it.
+6. **Done.** From now on DCS-ATC starts by itself with every mission and appears in the taskbar as a small console window. It closes when you leave the mission or quit DCS. Keep that window open while you fly.
 
 Setup installs to `%LOCALAPPDATA%\Programs\DCS-ATC` and creates these Start-menu entries:
 
@@ -1256,7 +1257,9 @@ Normandy, The Channel and the WWII maps have no Center; an unknown map uses "Cen
 - **Sector change:** with several sectors you hear "contact Nellis Control two seven zero decimal zero" as soon as you fly into another one.
 - **Own AWACS in range:** see above.
 
-**Several sectors** (`CenterSectors`): each entry has a name, frequency, centre point (`Lat`/`Lon`, Caucasus only, otherwise `X`/`Z` in metres), `RadiusNm` and optionally `Side` ("blue" or "red"). The nearest centre point whose radius you are inside applies. Without a matching sector the map's Center applies.
+**Several sectors** (`CenterSectors`): each entry has a name, frequency, centre point (`Lat`/`Lon` on every map, or `X`/`Z` in metres), `RadiusNm` and optionally `Side` ("blue" or "red"). The nearest centre point whose radius you are inside applies. Without a matching sector the map's Center applies. `Lat`/`Lon` are exact on Caucasus; on other maps DCS-ATC converts them with the mission's own coordinates (about 100 m off), so they work from the first mission data on.
+
+**Own GCI or CRC** (`"Gci": true` in a `CenterSectors` entry): the entry is a ground radar controller instead of a Center, for example a CRC on Cold War Germany: `{ "Name": "Backlight", "Freq": 262.1, "Lat": 50.1, "Lon": 8.4, "RadiusNm": 120, "Side": "blue", "Gci": true }`. Inside its radius it works like the AWACS under its own name and frequency: check-in, picture, BOGEY DOPE, vectors, handover after departure. It answers when no AWACS of your side is up, or when you call it on its own frequency while an AWACS is up. It sees what your side's radars see (AWACS, early-warning radars of the mission).
 
 The Center is a module of its own ("Center" in setup and in the settings window, on by default). Deselected, it stays silent and is missing from the radio wheel and the F10 menu; Departure then hands you over as before.
 
@@ -1508,7 +1511,7 @@ The **Carrier** page of the radio wheel appears only if the mission contains a c
 
 ### Frequencies
 
-All carrier stations share one frequency: Marshal, Tower, Approach, Departure and Paddles.
+By default all carrier stations share one frequency: Marshal, Tower, Approach, Departure, Paddles and Strike.
 
 | Source | Frequency |
 |---|---|
@@ -1521,6 +1524,16 @@ The `"Carrier"` key is not in the installed `config.jsonc` template, but DCS-ATC
 "Frequencies": { "ATIS": 263.5, "Ground": 264.5, "Tower": 265.0, "Approach": 266.5,
                  "Range": 267.5, "AWACS": 251.5, "Tanker": 255.5, "Carrier": 127.5 },
 ```
+
+**Own frequency per station.** In `frequencies.jsonc` (see [Custom frequencies per airfield](#custom-frequencies-per-airfield)) a `"Carrier"` entry gives each station its own frequency, for all carriers on every map:
+
+```jsonc
+"Carrier": { "Marshal": 285.0, "Approach": 282.0, "Paddles": 282.0, "Tower": 308.0, "Departure": 297.6, "Strike": 271.0 },
+```
+
+Stations without an entry stay on the carrier frequency. Each station then transmits on its own frequency, DCS-ATC listens on all of them, and the handovers name the frequency ("switch Approach two eight two decimal zero"). Switch your radio when you are handed over. The radio wheel still shows the carrier frequency. Red Crown keeps its own frequency (`"RedCrown"`, or the cruiser's frequency from the mission).
+
+**Board number (modex).** If your aircraft has a board number in the Mission Editor, the carrier stations call you by it instead of the call sign: "one zero three, Marshal, case one recovery ...". Check in the same way: "Marshal, 103, marking mom's 345 for 55, angels 17, low state 11.6". Aircraft from dynamic slots have no board number and keep the call sign.
 
 With SRS, everything you transmit on a carrier frequency goes to the carrier. Without SRS (push-to-talk key only), DCS-ATC sends a call to the carrier if:
 
@@ -2724,7 +2737,7 @@ The file is in the installation folder: `%LOCALAPPDATA%\Programs\DCS-ATC\config.
 | `Frequencies` | `{ "ATIS": 263.5, "Ground": 264.5, "Tower": 265.0, "Approach": 266.5, "Range": 267.5, "Center": 268.5, "RedCrown": 252.5, "AWACS": 251.5, "Tanker": 255.5, "Carrier": 127.5, "JTAC": 133.5 }` | Station frequencies in MHz. **ATIS** is the shared ATIS frequency. **Range** is the range controller. **JTAC** is the frequency of a JTAC or FAC(A) that has none of its own in the mission. **Tanker** is DCS-ATC's tanker radio. **AWACS**, **Carrier** and **RedCrown** are used only when the mission unit has no frequency of its own. **Ground / Tower / Approach** are fallbacks for airfields without DCS frequency data; normally every airfield uses its own map frequency. DCS-ATC warns in its window if a station frequency is the same as an airfield frequency. |
 | `AtisFreqs` | `{}` | Own ATIS frequency per airfield, e.g. `{ "Kutaisi": 262.0 }`. Airfields not listed use `Frequencies.ATIS`. Applies after a restart. |
 | `CenterNames` | `{}` | Center name per map, e.g. `{ "Nevada": "Seattle Center", "Caucasus:red": "Rostov Control" }`. Empty = built-in names (see [Center](#center)). |
-| `CenterSectors` | `[]` | Several Center sectors per map, e.g. `[{ "Name": "Rostov Control", "Freq": 269.0, "Lat": 47.2, "Lon": 39.7, "RadiusNm": 120, "Side": "red" }]`. `Lat`/`Lon` for Caucasus only, otherwise `X`/`Z` in metres. The nearest centre point whose radius you are inside wins. |
+| `CenterSectors` | `[]` | Several Center sectors per map, e.g. `[{ "Name": "Rostov Control", "Freq": 269.0, "Lat": 47.2, "Lon": 39.7, "RadiusNm": 120, "Side": "red" }]`. `Lat`/`Lon` on every map, or `X`/`Z` in metres. `"Gci": true` makes the entry a GCI/CRC (radar controller like the AWACS) instead of a Center. The nearest centre point whose radius you are inside wins. |
 | `Modulation` | `"AM"` | Modulation of all DCS-ATC transmissions. |
 | `Coalition` | `2` | SRS side (1 red, 2 blue) for stations without a side of their own. Airfields, AWACS, tankers and AI use their own side. |
 | `SrsPath` | `"C:\\Program Files\\DCS-SimpleRadio-Standalone"` | SRS folder. If it is wrong, DCS-ATC uses the registry entry or the running SRS. |
@@ -2775,6 +2788,9 @@ Own frequencies per airfield and controller are not in `config.jsonc` but in the
 | `RunwayLights` | `"silent"` | Runway lighting at dusk, at night or in poor visibility, through DCS's own ATC menu: `"silent"` (DCS controller stays muted), `"dcs"` (DCS controller audible for 15 s), `"off"`. |
 | `AltimeterUnit` | `"auto"` | Altimeter setting in calls. `"auto"`: western types get "altimeter two niner niner two" (inHg), others "QNH one zero one three" (hPa); ATIS gives both. Or `"hpa"`, `"inhg"`. |
 | `DebugLog` | `true` | Write `atc-debug.txt`. |
+| `AsrApiUrl` | `""` | Speech recognition over an OpenAI-compatible service instead of the local whisper, e.g. `"https://api.openai.com/v1/audio/transcriptions"` or a whisper server on another PC with a graphics card. `""` = local. If the service fails, that call is recognised locally; after three failures in a row the rest of the session runs locally. Everything said on the monitored frequencies goes to that service. |
+| `AsrApiKey` | `""` | Key for `AsrApiUrl` (sent as `Bearer`). Empty for a server without a key. |
+| `AsrApiModel` | `"whisper-1"` | Model name at `AsrApiUrl`, e.g. `"whisper-1"` or `"gpt-4o-mini-transcribe"`. |
 | `KneeboardPages` | `true` | Kneeboard pages into `Saved Games\DCS\Kneeboard` at mission start (Caucasus only, German), see [Kneeboard pages](#kneeboard-pages). |
 
 **Per-mission options.** Ground crew (fuel/ammo trucks, fire service) is a mission option, not part of `config.jsonc`:
@@ -2853,3 +2869,5 @@ When you report a bug, include the time, the airfield, a short description, `atc
 
 **Answers are slow**
 - Speech recognition runs on the CPU and needs a few seconds per call. The radio wheel is instant.
+- Several calls at once are recognised one after the other, not all together. `atc-debug.txt` shows the waiting time per call (`WHISPER … ms (davon … ms gewartet)`).
+- On a server without a graphics card, `AsrApiUrl` sends the recognition to a service or to a whisper server on another PC (see the settings table).

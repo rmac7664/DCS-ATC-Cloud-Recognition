@@ -1,5 +1,5 @@
 ﻿; DCS-ATC Installer (Inno Setup 6). Bauen: installer\build.cmd -> dist\DCS-ATC-Setup.exe
-#define AppVer "0.17.0-alpha"
+#define AppVer "0.18.0-alpha"
 #define Src ".."
 
 [Setup]
@@ -46,6 +46,8 @@ de.RunPatch=DCS: MissionScripting.lua anpassen (Admin-Abfrage) ...
 en.RunPatch=DCS: patching MissionScripting.lua (admin prompt) ...
 de.RunKeys=Tasten festlegen (Funkrad, Push-to-Talk – Tastatur oder HOTAS)
 en.RunKeys=Set keys (radio wheel, push-to-talk – keyboard or HOTAS)
+de.RunSettings=Einstellungen öffnen (neue Optionen ansehen)
+en.RunSettings=Open settings (see the new options)
 de.RunSettings=Einstellungen öffnen (Rufzeichen, Stimmen, Funk, VR, Höhenmesser)
 en.RunSettings=Open settings (callsign, voices, radio, VR, altimeter)
 de.NoDcs=Saved Games\DCS wurde nicht gefunden. Bitte deinen DCS-Ordner in Saved Games wählen (enthält Config und Scripts):
@@ -155,6 +157,7 @@ Type: files; Name: "{group}\*.lnk"
 [Run]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\DcsAtc-Patch.ps1"""; Verb: "runas"; Flags: shellexec waituntilterminated runhidden; StatusMsg: "{cm:RunPatch}"
 Filename: "{app}\DcsAtc.exe"; Parameters: "--keys"; WorkingDir: "{app}"; Description: "{cm:RunKeys}"; Check: HasClient; Flags: postinstall waituntilterminated skipifsilent
+Filename: "{app}\DcsAtc.exe"; Parameters: "--settings"; WorkingDir: "{app}"; Description: "{cm:RunSettings}"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\DcsAtc-Patch.ps1"" -Remove"; Verb: "runas"; Flags: shellexec waituntilterminated runhidden; RunOnceId: "DcsAtcUnpatch"

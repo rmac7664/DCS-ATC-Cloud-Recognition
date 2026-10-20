@@ -67,6 +67,18 @@ local function start()
   lfs.mkdir(dir)
   local function log(s) env.info("DCS-ATC: " .. s) end
   local function clean(s) return (tostring(s or ""):gsub("[;|\r\n]", " ")) end
+  local modex   -- #12: unit name -> board number (onboard_num) from the mission editor, built once; dynamic slots have none
+  local function modexOf(name)
+    if not modex then
+      modex = {}
+      for _, c in pairs((env.mission or {}).coalition or {}) do for _, cn in ipairs(c.country or {}) do for _, cat in ipairs({ "plane", "helicopter" }) do
+        for _, g in ipairs((cn[cat] or {}).group or {}) do for _, un in ipairs(g.units or {}) do
+          if un.name and un.onboard_num then modex[un.name] = tostring(un.onboard_num) end
+        end end
+      end end end
+    end
+    return modex[name] or ""
+  end
   local function d2(a, b) return (a.x - b.x) ^ 2 + (a.z - b.z) ^ 2 end
   local NM = 1852
 
@@ -1522,6 +1534,7 @@ local function start()
                   clean(u:getName()), g:getID(), clean(u:getCallsign()), clean(player), clean(u:getTypeName()),
                   p.x, p.z, p.y, p.y - land.getHeight({ x = p.x, y = p.z }), spd, hdg, w.x, w.z, pr, v.y, air,
                   tostring(u.id_ or u:getID()), u:getCoalition(), u.getFuel and u:getFuel() or 1, gok and tonumber(gear) or -1, kind)   -- id_ = runtime ID as in SRS; tank 0–1; gear (-1 unknown); h/a
+                  .. ";" .. clean(modexOf(u:getName()))   -- #12: board number
               else
                 local un = clean(u:getName())
                 if not ammo[un] then local ok, a = pcall(ammoOf, u) ammo[un] = ok and a or "" end
