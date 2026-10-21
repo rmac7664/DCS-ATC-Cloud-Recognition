@@ -30,4 +30,4 @@ git remote add upstream https://github.com/Iceman1991/DCS-ATC-Release
 git fetch upstream && git merge upstream/main
 ```
 
-The earlier fork based on 0.17.0 (its own cloud-recognition code) is kept under the tag `fork-0.17-final`.
+The earlier fork based on 0.17.0 (its own cloud-recognition code) is kept on the branch `fork-0.17`.
