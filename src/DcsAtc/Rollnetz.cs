@@ -109,7 +109,7 @@ public sealed class Rollnetz
     public static void LoadAll(IEnumerable<Airfield> fields, string dcsDir)
     {
         var charted = fields.Where(f => f.Charted).ToList();
-        var dir = Path.Combine(dcsDir, "Mods", "terrains", Airfield.Theatre, "AirfieldsTaxiways");
+        var dir = Path.Combine(Airfield.TerrainDir(dcsDir, Airfield.Theatre), "AirfieldsTaxiways");
         if (charted.Count == 0 || !Directory.Exists(dir)) return;
         var nets = new List<Rollnetz>();
         try { foreach (var file in Directory.EnumerateFiles(dir, "*.rn4")) if (Read(file) is { } n) nets.Add(n); }

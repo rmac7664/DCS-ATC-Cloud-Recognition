@@ -426,10 +426,19 @@ public class Airfield
     /// Name from Radio.lua/Beacons.lua (frequencies.jsonc without mission data): DCS comment before radioId, otherwise display_name of the airfield beacons, otherwise call name; "_" -> " ".
     public string RadioName = "";
 
+    /// #19: folder of a map in Mods\terrains: the mission names the map as its entry.lua does (SinaiMap is in Sinai, GermanyCW in GermanyColdWar), otherwise the folder of the same name.
+    public static string TerrainDir(string dcsDir, string map)
+    {
+        var root = Path.Combine(dcsDir, "Mods", "terrains");
+        if (map == "" || Directory.Exists(Path.Combine(root, map)) || !Directory.Exists(root)) return Path.Combine(root, map);
+        bool Is(string d) => File.Exists(Path.Combine(d, "entry.lua")) && Regex.IsMatch(File.ReadAllText(Path.Combine(d, "entry.lua")), $@"(self_ID|\['id'\])\s*=\s*""{Regex.Escape(map)}""");
+        return Directory.GetDirectories(root).FirstOrDefault(Is) ?? Path.Combine(root, map);
+    }
+
     /// Radio.lua of a map: airfields by Id with UHF, VHF_HI, call name (words) and name (RadioName). Empty without file.
     public static Dictionary<int, (double Uhf, double Vhf, string Cs, string Name)> RadioTable(string dcsDir, string map)
     {
-        var dir = Path.Combine(dcsDir, "Mods", "terrains", map);
+        var dir = TerrainDir(dcsDir, map);
         var byId = new Dictionary<int, (double Uhf, double Vhf, string Cs, string Name)>();
         if (!File.Exists(Path.Combine(dir, "Radio.lua"))) return byId;
         var beacons = File.Exists(Path.Combine(dir, "Beacons.lua")) ? File.ReadAllText(Path.Combine(dir, "Beacons.lua")) : "";
@@ -455,7 +464,7 @@ public class Airfield
     /// Localizer stands beyond the runway end, direction points toward the approach: landing heading = direction + 180, runway with the smallest lateral distance (parallel runways).
     public static void LoadBeacons(IEnumerable<Airfield> fields, string dcsDir)
     {
-        var file = Path.Combine(dcsDir, "Mods", "terrains", Theatre, "Beacons.lua");
+        var file = Path.Combine(TerrainDir(dcsDir, Theatre), "Beacons.lua");
         if (!File.Exists(file)) return;
         var byId = fields.Where(f => f.Id > 0).ToDictionary(f => f.Id);
         foreach (var block in File.ReadAllText(file).Split("beaconId").Skip(1))

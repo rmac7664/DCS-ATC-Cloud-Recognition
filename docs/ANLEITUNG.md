@@ -1259,7 +1259,7 @@ Auf Normandie, Ärmelkanal und den Weltkrieg-II-Karten gibt es kein Center, auf 
 - **Sektorwechsel:** Gibt es mehrere Sektoren, kommt „contact Nellis Control two seven zero decimal zero“, sobald du in einen anderen fliegst.
 - **Eigener AWACS in Reichweite:** siehe oben.
 
-**Mehrere Sektoren** (`CenterSectors`): Jeder Eintrag hat Name, Frequenz, Mittelpunkt (`Lat`/`Lon` auf jeder Karte, oder `X`/`Z` in Metern), `RadiusNm` und wahlweise `Side` („blue“ oder „red“). Es gilt der nächste Mittelpunkt, in dessen Radius du bist. Ohne passenden Sektor gilt das Center der Karte. `Lat`/`Lon` sind im Kaukasus exakt; auf anderen Karten rechnet DCS-ATC sie mit den Koordinaten der Mission um (etwa 100 m genau), sie gelten also ab den ersten Missionsdaten.
+**Mehrere Sektoren** (`CenterSectors`): Jeder Eintrag hat Name, Frequenz, Mittelpunkt (`Lat`/`Lon` auf jeder Karte, oder `X`/`Z` in Metern), `RadiusNm` und wahlweise `Side` („blue“ oder „red“). Es gilt der nächste Mittelpunkt, in dessen Radius du bist. Ohne passenden Sektor gilt das Center der Karte. `Lat`/`Lon` sind im Kaukasus exakt; auf anderen Karten rechnet DCS-ATC sie mit den Koordinaten der Mission um (etwa 100 m genau), sie gelten also ab den ersten Missionsdaten. Sektoren können auch in `frequencies.jsonc` stehen, als `"CenterSectors": [ … ]` (Beispiele oben in der Datei), über den Karten-Überschriften für jede Karte oder unter einer Karten-Überschrift nur für diese. Sie kommen zu denen aus config.jsonc dazu.
 
 **Eigener GCI oder CRC** (`"Gci": true` in einem `CenterSectors`-Eintrag): Der Eintrag ist dann ein Radarlotse am Boden statt eines Centers, zum Beispiel ein CRC auf Cold War Germany: `{ "Name": "Backlight", "Freq": 262.1, "Lat": 50.1, "Lon": 8.4, "RadiusNm": 120, "Side": "blue", "Gci": true }`. In seinem Radius arbeitet er wie das AWACS unter eigenem Namen und eigener Frequenz: Check-in, Picture, BOGEY DOPE, Vektoren, Übergabe nach dem Abflug. Er antwortet, wenn kein AWACS deiner Seite in der Luft ist, oder wenn du ihn bei laufendem AWACS auf seiner eigenen Frequenz rufst. Er sieht, was die Radare deiner Seite sehen (AWACS, Frühwarnradare der Mission).
 
@@ -1533,7 +1533,7 @@ Der Schlüssel `"Carrier"` steht nicht in der installierten `config.jsonc`-Vorla
 "Carrier": { "Marshal": 285.0, "Approach": 282.0, "Paddles": 282.0, "Tower": 308.0, "Departure": 297.6, "Strike": 271.0 },
 ```
 
-Stationen ohne Eintrag bleiben auf der Trägerfrequenz. Jede Station sendet dann auf ihrer eigenen Frequenz, DCS-ATC hört alle ab, und die Übergaben nennen die Frequenz („switch Approach two eight two decimal zero“). Bei der Übergabe das Funkgerät umschalten. Das Funkrad zeigt weiter die Trägerfrequenz. Red Crown behält seine eigene Frequenz (`"RedCrown"` oder die Frequenz des Kreuzers aus der Mission).
+Stationen ohne Eintrag bleiben auf der Trägerfrequenz. Jede Station sendet dann auf ihrer eigenen Frequenz, DCS-ATC hört alle ab, und die Übergaben nennen die Frequenz („switch Approach two eight two decimal zero“). Bei der Übergabe das Funkgerät umschalten. Das Funkrad zeigt weiter die Trägerfrequenz. Red Crown nimmt die Frequenz aus `"RedCrown"` in diesem Eintrag, sonst die des Kreuzers aus der Mission, sonst `"RedCrown"` aus config.jsonc. Der Eintrag gilt unter jeder Überschrift der Datei.
 
 **Bordnummer (Modex).** Hat dein Flugzeug im Missionseditor eine Bordnummer, rufen dich die Trägerstationen damit statt mit dem Rufzeichen: „one zero three, Marshal, case one recovery …“. Genauso meldest du dich: „Marshal, 103, marking mom's 345 for 55, angels 17, low state 11.6“. Flugzeuge aus dynamischen Slots haben keine Bordnummer und behalten das Rufzeichen.
 
@@ -2536,13 +2536,14 @@ Standardmäßig nutzt jeder Platz die Frequenz, die DCS ihm auf der Karte gibt, 
   Für eigene Frequenzen die `//` vor einer Platzzeile entfernen und die Zahlen ändern, wie oben bei Nellis. Den Kommentar `// id …` am Zeilenende stehen lassen; daran erkennt DCS-ATC den Platz, wenn es neue ergänzt.
 - **Plätze mit nur einer VHF-Frequenz** in DCS (fast die ganze Karte Persischer Golf) stehen mit einer Liste aus einem Wert da, etwa `"Tower": [119.2]`. Plätze ganz ohne DCS-Frequenz zeigen die Frequenzen aus `config.jsonc` (Standard `"Ground": 264.5, "Tower": 265.0, "Departure": 266.5, "Approach": 266.5`).
 - **Neue Karten und Plätze** werden als auskommentierte Zeilen ergänzt. Deine eigenen Zeilen bleiben unverändert.
+- **Beispiele oben** in der Datei zeigen einen Eintrag `"Carrier"` mit Red Crown und eine Liste `"CenterSectors"` mit Center und GCI. `//` entfernen und die Werte ändern. Ältere Dateien bekommen die Beispiele ergänzt.
 
 **Regeln**
 
 - **Lotsen:** `ATIS`, `Ground`, `Tower`, `Departure`, `Approach`. Groß-/Kleinschreibung egal.
 - **Werte:** eine Frequenz in MHz oder eine Liste wie `"Ground": [275.8, 121.8]` (UHF und VHF). Jeder Wert muss zwischen 30 und 400 MHz liegen.
 - **Platzname:** wie in DCS. Groß-/Kleinschreibung, Bindestriche, Leerzeichen und Satzzeichen sind egal, `"senaki kolkhi"` passt also zu `Senaki-Kolkhi`. Ein eindeutiger Teil des Namens reicht. Passt der Teil zu mehreren Plätzen, wird der Eintrag ignoriert.
-- **Kartenabschnitte:** Zeilen unter `// ===== <Karte> =====` gelten nur auf dieser Karte. Zeilen vor dem ersten Abschnitt gelten auf jeder Karte.
+- **Kartenabschnitte:** Zeilen unter `// ===== <Karte> =====` gelten nur auf dieser Karte, benannt nach ihrem Ordner in `Mods\terrains`, wie die Datei ihn aufführt (`Sinai`, `GermanyColdWar`). Zeilen vor dem ersten Abschnitt gelten auf jeder Karte.
 - **Nicht genannte Lotsen bleiben auf der Kartenfrequenz.** Ohne Departure übernimmt Approach die Abflüge wie bisher.
 - **Änderungen gelten sofort nach dem Speichern** der Datei, ohne Neustart.
 - **Ungültige Einträge werden ignoriert**, jeder mit einer Zeile in `atc-log.txt`, zum Beispiel:

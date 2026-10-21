@@ -39,9 +39,9 @@ class Carrier
     public record RadarShip(string Unit, string Group, string Type, double X, double Z, int Coalition, double Freq);
     public static List<RadarShip> RadarShips = new();
     public const double RedCrownDefault = 252.5;
-    /// Own Red Crown: the nearest own radar ship and its frequency; null = none in the mission (then no Red Crown).
+    /// Own Red Crown: the nearest own radar ship and its frequency (#18 frequencies.jsonc, mission, config); null = none in the mission (then no Red Crown).
     public static (RadarShip Ship, double Freq)? RedCrownFor(int side, Telemetry? t) =>
-        RadarShips.Where(s => s.Coalition == side).MinBy(s => t == null ? 0 : Dist(t.X, t.Z, s.X, s.Z)) is { } r ? (r, r.Freq > 0 ? r.Freq : Freqs.GetValueOrDefault("RedCrown", RedCrownDefault)) : null;
+        RadarShips.Where(s => s.Coalition == side).MinBy(s => t == null ? 0 : Dist(t.X, t.Z, s.X, s.Z)) is { } r ? (r, StationFreqs.TryGetValue("RedCrown", out var own) ? own : r.Freq > 0 ? r.Freq : Freqs.GetValueOrDefault("RedCrown", RedCrownDefault)) : null;
     public static double Clock = -1;   // Mission clock in s since midnight, -1 = unknown
     public static double Skew;   // R366: mission clock minus real time at the last Y line (Program); Charlie/EAT run in mission time
     public static double Sun = double.NaN;   // Sun elevation in degrees at the carrier (Y line), NaN = unknown
@@ -99,7 +99,7 @@ class Carrier
     static Ops.Call Say(string station, string text, Boat b) => new("Carrier", station, text, StationFreqs.TryGetValue(station, out var f) ? f : b.Freq);
     /// #13 (issue): own frequency per carrier station from frequencies.jsonc ("Carrier": { "Marshal": 285.0, "Tower": 308.0, ... }), for all carriers; empty = all on the carrier frequency.
     /// ponytail: one set for every carrier, per-carrier sets when a mission with two decks asks for it.
-    public static readonly string[] Stations = { "Marshal", "Approach", "Tower", "Paddles", "Departure", "Strike" };
+    public static readonly string[] Stations = { "Marshal", "Approach", "Tower", "Paddles", "Departure", "Strike", "RedCrown" };   // #18: RedCrown = own Red Crown frequency (before the mission one)
     public static Dictionary<string, double> StationFreqs = new(StringComparer.OrdinalIgnoreCase);
     /// Handover "switch Tower", with an own station frequency "switch Tower three zero eight decimal zero".
     static string Sw(string station) => StationFreqs.TryGetValue(station, out var f) ? $"switch {station} {FreqSay(f)}" : $"switch {station}";
