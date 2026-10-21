@@ -173,7 +173,7 @@ static partial class Program
 
         TraceOn = Cfg.DebugLog;   // live from here: debug log (tests above without file)
         Dedicated = DedicatedNow();
-        Trace("START", $"{DateTime.Now:yyyy-MM-dd} DCS-ATC {System.Windows.Forms.Application.ProductVersion} {string.Join(" ", args)} | {JsonSerializer.Serialize(Cfg)}");
+        Trace("START", $"{DateTime.Now:yyyy-MM-dd} DCS-ATC {System.Windows.Forms.Application.ProductVersion} {string.Join(" ", args)} | {ConfigForLog()}");   // fork: API key masked
         bool auto = args.Contains("--auto");   // started by the DCS hook at mission start
         using var single = new Mutex(true, "DcsAtc", out bool first);
         if (!first && !args.Contains("--say") && !args.Contains("--srs-test"))
@@ -3027,6 +3027,14 @@ static partial class Program
 
     /// GPU1: whisper device: -2 = not yet known (the first call lists the devices), -1 = CPU, otherwise Vulkan device of the dedicated GPU.
     static volatile int asrDev = -2;
+    /// Fork: settings for the START line of atc-debug.txt with AsrApiKey masked ("sk-…abcd"), so the log can be shared in bug reports.
+    internal static string ConfigForLog()
+    {
+        var n = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(Cfg))!;
+        var k = Cfg.AsrApiKey.Trim();
+        if (k != "") n["AsrApiKey"] = k.Length > 12 ? $"{k[..3]}…{k[^4..]}" : "***";
+        return n.ToJsonString();
+    }
     static readonly SemaphoreSlim AsrGate = new(1);   // #11: whisper processes one after the other
 
     /// GPU1: whisper's Vulkan list ("ggml_vulkan: 0 = NVIDIA GeForce RTX 5070 Ti (NVIDIA) | uma: 0 | …") -> first dedicated GPU, -1 = none (no Vulkan or iGPU only:

@@ -36,7 +36,7 @@ static class AsrApi
             using var d = JsonDocument.Parse(body);
             var text = d.RootElement.GetProperty("text").GetString() ?? "";
             double conf = d.RootElement.TryGetProperty("segments", out var segs) && segs.ValueKind == JsonValueKind.Array && segs.GetArrayLength() > 0
-                ? Math.Exp(segs.EnumerateArray().Average(s => s.GetProperty("avg_logprob").GetDouble())) : 1;
+                ? Calibrate(segs.EnumerateArray().Average(s => s.GetProperty("avg_logprob").GetDouble())) : 1;
             fails = 0;
             return (text.Trim(), Math.Round(conf, 2));
         }
@@ -47,6 +47,10 @@ static class AsrApi
             return null;
         }
     }
+
+    /// Fork: whisper-1's avg_logprob on clean radio calls is about -0.2 to -0.7, so exp() gives 0.50-0.82 and most correct calls fall below
+    /// MinConf 0.65 ("say again"). Linear scale: on 35 recorded calls 0.70-0.87 instead of 0.43-0.69; avg_logprob below -1.0 (really unsure) stays under 0.65.
+    internal static double Calibrate(double avgLogprob) => Math.Clamp(1 + 0.35 * avgLogprob, 0, 1);
 
     /// Self-test: fake endpoint (TcpListener) checks the request, answers verbose_json; text and confidence; error -> null; three errors -> off.
     internal static void SelfTest()
@@ -92,10 +96,15 @@ static class AsrApi
             srv.Join();
             l.Stop();
             bool off = Transcribe(wav, "x") == null && Transcribe(wav, "x") == null && fails >= 3;   // fake stopped (refused): two more errors -> off
-            if (ok is not { Text: "Kutaisi Tower, Enfield 1-1, ready for departure.", Conf: 0.82 } || bad != null || !off
+            if (ok is not { Text: "Kutaisi Tower, Enfield 1-1, ready for departure.", Conf: 0.93 } || bad != null || !off
+                || Calibrate(-0.5) is < 0.82 or > 0.83 || Calibrate(-1.2) >= 0.65 || Calibrate(-5) != 0 || Calibrate(0.1) != 1
                 || !req1.StartsWith("POST /v1/audio/transcriptions") || !req1.Contains("Bearer sk-test") || !req1.Contains("name=model") || !req1.Contains("whisper-1")
                 || !req1.Contains("name=prompt") || !req1.Contains("Kutaisi Tower, Enfield 1-1") || !req1.Contains("verbose_json") || !req1.Contains("name=file"))
                 throw new Exception($"AsrApi: {ok} | {bad} | off {off} | {req1[..Math.Min(300, req1.Length)]}");
+            Program.Cfg.AsrApiKey = "sk-proj-SECRETabcdefgh1234wxyz";   // fork: key masked in the START line
+            var log = Program.ConfigForLog();
+            if (log.Contains("SECRET") || !log.Contains("wxyz") || !log.Contains("AsrApiUrl"))
+                throw new Exception($"AsrApi: key not masked in the log: {log[..Math.Min(300, log.Length)]}");
         }
         finally
         {

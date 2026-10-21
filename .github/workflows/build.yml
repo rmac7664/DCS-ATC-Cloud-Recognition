@@ -1,0 +1,65 @@
+name: Build DcsAtc.exe
+
+# Fork (cloud-asr): builds the self-contained DcsAtc.exe on GitHub's Windows runners,
+# runs the app's own test suites first (tests\alle.cmd), and uploads the exe as an artifact.
+# Install: replace DcsAtc.exe in an existing DCS-ATC installation (%LOCALAPPDATA%\Programs\DCS-ATC).
+
+on:
+  push:
+    branches: [cloud-asr, main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Mark repo root for the app (it looks for a "models" folder to find airfields.txt)
+        shell: cmd
+        run: if not exist models mkdir models
+
+      - name: Test suites (selftest, approach test, multiplayer test)
+        id: tests
+        continue-on-error: true
+        shell: cmd
+        run: call tests\alle.cmd
+
+      - name: Report test failures as annotations
+        if: steps.tests.outcome == 'failure'
+        shell: pwsh
+        run: |
+          foreach ($f in Get-ChildItem tmp\*.log -ErrorAction SilentlyContinue) {
+            $lines = Get-Content $f | Where-Object { $_ -match 'FAIL|FEHL|Unhandled|Exception|error' } | Select-Object -First 15
+            if (-not $lines) { $lines = Get-Content $f | Select-Object -Last 10 }
+            foreach ($l in $lines) { Write-Output "::warning title=$($f.Name)::$($l -replace '[\r\n]',' ')" }
+          }
+
+      - name: Publish self-contained single-file exe
+        shell: cmd
+        run: dotnet publish src\DcsAtc -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o out
+
+      - name: Upload DcsAtc.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: DcsAtc-cloud-asr-${{ github.sha }}
+          path: |
+            out/DcsAtc.exe
+            installer/config.jsonc
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-${{ github.sha }}
+          path: tmp/*.log
+          if-no-files-found: ignore
+
+      - name: Fail the run if a test suite failed (the exe is still uploaded above)
+        if: steps.tests.outcome == 'failure'
+        shell: cmd
+        run: echo Test suites failed - see the annotations & exit /b 1
