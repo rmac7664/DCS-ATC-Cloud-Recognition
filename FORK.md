@@ -1,6 +1,6 @@
 # DCS-ATC: cloud speech recognition fixes
 
-Fork of [Iceman1991/DCS-ATC-Release](https://github.com/Iceman1991/DCS-ATC-Release) (GPL-3.0), based on **0.18.0-alpha**.
+Fork of [Iceman1991/DCS-ATC-Release](https://github.com/Iceman1991/DCS-ATC-Release) (GPL-3.0), based on **0.18.1-alpha**.
 0.18.0 has speech recognition over an OpenAI-compatible API built in (`AsrApiUrl`, `AsrApiKey`, `AsrApiModel`).
 This fork changes only two things:
 
@@ -14,7 +14,7 @@ Both are covered by the self-test (`DcsAtc.exe --selftest`).
 
 ## Install
 
-Install DCS-ATC 0.18.0 with its normal setup, then replace `DcsAtc.exe` in the DCS-ATC folder with the one from the latest
+Install DCS-ATC 0.18.1 with its normal setup, then replace `DcsAtc.exe` in the DCS-ATC folder with the one from the latest
 successful **Build DcsAtc.exe** run (Actions tab, Artifacts). Settings are 0.18.0's, e.g.:
 
 ```jsonc
