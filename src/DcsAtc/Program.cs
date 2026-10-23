@@ -481,7 +481,7 @@ static partial class Program
             // A26: sender unknown -> match the spoken call sign to a player (otherwise Request(null): "say again your callsign")
             p ??= ByCallsign(text);
             if (p != null) p.CalledOn = tx.FreqMHz;   // K2: reply names this frequency
-            if (p != null && role is "AWACS" or "Tanker") role = OpsPick(p, tx.FreqMHz, text, role);
+            if (p != null && role is "AWACS" or "Tanker" or "Carrier") role = OpsPick(p, tx.FreqMHz, text, role);   // #3, #17: shared AWACS/tanker/carrier frequency
             if (p != null && shared.Via is { } sv)
             {
                 if (SharedChoice(p, tx.FreqMHz, text, sv, role!) is not { } toField) return;   // unclear: asked back
@@ -509,8 +509,10 @@ static partial class Program
     internal static string OpsPick(Pilot p, double mhz, string text, string role)
     {
         bool On(IEnumerable<double> fs) => fs.Any(f => Math.Abs(f - mhz) < 0.01);
-        if (!On(Ops.AwacsFreq.Values.Append(Cfg.Frequencies.GetValueOrDefault("AWACS"))) || !On(Ops.TankerFreq.Values.Append(Cfg.Frequencies.GetValueOrDefault("Tanker")).Append(p.TankFq))) return role;
-        if (Ops.RoleOf(Tower.Normalize(text), p.Callsign) is ("AWACS" or "Tanker") and var r) p.OpsPick = (mhz, r);
+        bool cv = Carrier.Boats.Count > 0 && On(Carrier.Boats.Select(b => b.Freq).Concat(Carrier.StationFreqs.Values).Append(Cfg.Frequencies.GetValueOrDefault("Carrier")));   // #17: recovery tanker on the carrier frequency (Instant Action)
+        if ((On(Ops.AwacsFreq.Values.Append(Cfg.Frequencies.GetValueOrDefault("AWACS"))) ? 1 : 0) + (On(Ops.TankerFreq.Values.Append(Cfg.Frequencies.GetValueOrDefault("Tanker")).Append(p.TankFq)) ? 1 : 0) + (cv ? 1 : 0) < 2) return role;
+        var n = Tower.Normalize(text);
+        if ((Ops.RoleOf(n, p.Callsign) is ("AWACS" or "Tanker") and var r0 ? r0 : cv && p.Boat.Wants(n) ? "Carrier" : null) is { } r) p.OpsPick = (mhz, r);
         return p.OpsPick is { } op && Math.Abs(op.Mhz - mhz) < 0.01 ? op.Role : role;
     }
 
@@ -524,7 +526,7 @@ static partial class Program
         ?? (Ops.TankerFreq.Values.Any(f => Math.Abs(f - mhz) < 0.01) ? "Tanker" : null)   // TP7: mission tanker
         ?? (Ops.Leaders.Any(l => l.Freq > 0 && Math.Abs(l.Freq - mhz) < 0.01) ? "JTAC" : null)   // J5: mission JTAC / FAC(A)
         ?? (Carrier.Boats.Any(b => b.Freq > 0 && Math.Abs(b.Freq - mhz) < 0.01) ? "Carrier" : null)   // mission carrier
-        ?? (Carrier.Boats.Count > 0 && Carrier.StationFreqs.Values.Any(f => Math.Abs(f - mhz) < 0.01) ? "Carrier" : null);   // #13: own carrier station frequency
+        ?? (Carrier.Boats.Count + Carrier.RadarShips.Count > 0 && Carrier.StationFreqs.Values.Any(f => Math.Abs(f - mhz) < 0.01) ? "Carrier" : null);   // #13: own carrier station frequency, #18 Red Crown
 
     /// Sender of an SRS call (under TowerLock). R358: the only player only for an SRS client without unit (otherwise slot change, spectator, second client: call sign, A26)
     static Pilot? PilotFor(SrsListener.Transmission tx) =>
@@ -1065,7 +1067,7 @@ static partial class Program
                                                || (f.Key == "RedCrown" && Carrier.RadarShips.Count > 0)
                                                || (!known && f.Key is "Ground" or "Tower" or "Approach")).Select(f => f.Value)
                         .Concat(Carrier.Boats.Where(b => b.Freq > 0 && On("carrier")).Select(b => b.Freq))
-                        .Concat(Carrier.StationFreqs.Values.Where(_ => Carrier.Boats.Count > 0 && On("carrier")))   // #13: own carrier station frequencies
+                        .Concat(Carrier.StationFreqs.Values.Where(_ => Carrier.Boats.Count + Carrier.RadarShips.Count > 0 && On("carrier")))   // #13: own carrier station frequencies, #18 Red Crown
                         .Concat(Carrier.RadarShips.Where(s => s.Freq > 0 && On("carrier")).Select(s => s.Freq))   // Red Crown (cruiser frequency from the mission)
                         .Concat(pilots.Where(p => p.TankFq > 0 && RoleOn("Tanker")).Select(p => p.TankFq))   // R387: tanker frequency tuned by DCS
                         .Concat(Ops.TankerFreq.Values.Where(_ => RoleOn("Tanker")))   // TP7: mission tanker
@@ -1550,8 +1552,20 @@ static partial class Program
         static string N(string s) => Regex.Replace(s.ToLowerInvariant(), "[^a-z0-9]", "");
         foreach (var f in fields) f.Own.Clear();
         Carrier.StationFreqs.Clear();
+        OwnSectors = new();
         foreach (var (name, roles) in cfg ?? new())
         {
+            if (N(name) == "centersectors")   // #18: Center/GCI sectors as in config.jsonc, in addition to those
+            {
+                List<CenterSector>? cs = null;
+                try { cs = roles.Deserialize<List<CenterSector>>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true }); } catch (JsonException) { }
+                foreach (var s in cs ?? new())
+                    if (s.Name.Trim() != "" && s.Freq is >= 30 and <= 400) OwnSectors.Add(s);
+                    else bad.Add(L($"[ATC] frequencies.jsonc: CenterSectors \"{s.Name}\" – {(s.Name.Trim() == "" ? "ohne \"Name\"" : "keine Frequenz 30–400 MHz")}, ignoriert",
+                                   $"[ATC] frequencies.jsonc: CenterSectors \"{s.Name}\" – {(s.Name.Trim() == "" ? "without \"Name\"" : "no frequency 30–400 MHz")}, ignored"));
+                if (cs == null) bad.Add(L("[ATC] frequencies.jsonc: CenterSectors ist keine Liste [ { \"Name\": …, \"Freq\": … } ] – ignoriert", "[ATC] frequencies.jsonc: CenterSectors is not a list [ { \"Name\": …, \"Freq\": … } ] – ignored"));
+                continue;
+            }
             if (N(name) == "carrier" && roles.ValueKind == JsonValueKind.Object)   // #13: own frequency per carrier station (all carriers)
             {
                 foreach (var x in roles.EnumerateObject())
@@ -1582,6 +1596,7 @@ static partial class Program
                           $"[ATC] frequencies.jsonc: {hit[0].Name} \"{role}\": {v} – {(r == null ? "unknown controller (ATIS, Ground, Tower, Departure, Approach)" : "no frequency 30–400 MHz")}, ignored"));
             }
         }
+        Tower.CenterSectors = Cfg.CenterSectors.Concat(OwnSectors).ToList();
         // Own controller frequency at two airfields or = map frequency of another: FreqRoute takes the first airfield with own frequencies, the others cannot be reached on it (warning only)
         var order = fields.OrderBy(f => f.Own.Count == 0).ToList();
         foreach (var x in fields.SelectMany(f => f.Own.Where(o => o.Key != "ATIS").SelectMany(o => o.Value)).Distinct())
@@ -1597,6 +1612,7 @@ static partial class Program
     // ------------------------------------------------------------ frequencies.jsonc: own airfield frequencies (server setting, separate from config.jsonc)
     internal static string FreqPath => Path.Combine(Root, "frequencies.jsonc");
     static DateTime freqAt;   // State of frequencies.jsonc (live reload)
+    static List<CenterSector> OwnSectors = new();   // #18: "CenterSectors" from frequencies.jsonc (this map), added to config.jsonc
 
     /// Read frequencies.jsonc and apply to the map's airfields (under TowerLock or when loading the airfields), update ATIS transmitters. File currently locked: next second.
     static void ApplyOwnFreqs()
@@ -1605,14 +1621,14 @@ static partial class Program
         try { text = File.Exists(FreqPath) ? File.ReadAllText(FreqPath) : ""; }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return; }
         freqAt = File.GetLastWriteTimeUtc(FreqPath);
-        var (own, err) = OwnFreqs(text, Airfield.Theatre);
+        var (own, err) = OwnFreqs(text, Airfield.Theatre, Path.GetFileName(Airfield.TerrainDir(DcsDir(), Airfield.Theatre)));   // #19: heading = folder of the map (Sinai for SinaiMap)
         if (err != null) Log(err);
         foreach (var w in ApplyFreqs(Fields, own)) Log(w);
         if (atisOn.Count > 0) StartAtis();
     }
 
     /// Entries of frequencies.jsonc (comments, trailing comma allowed): under "// ===== Karte =====" only for this map, without a section for all. Invalid: none, with message.
-    internal static (Dictionary<string, JsonElement> Own, string? Error) OwnFreqs(string text, string map)
+    internal static (Dictionary<string, JsonElement> Own, string? Error) OwnFreqs(string text, params string[] map)
     {
         var own = new Dictionary<string, JsonElement>();
         if (text.Trim() == "") return (own, null);
@@ -1628,12 +1644,13 @@ static partial class Program
                 r.Read();
                 var v = JsonElement.ParseValue(ref r);
                 var sec = heads.LastOrDefault(h => h.At < at).Map;
-                if (sec == null || sec.Equals(map, StringComparison.OrdinalIgnoreCase)) own[name] = v;
+                if (sec == null || map.Contains(sec, StringComparer.OrdinalIgnoreCase)) own[name] = v;
+                else if (name.Equals("Carrier", StringComparison.OrdinalIgnoreCase)) own.TryAdd(name, v);   // #18: carrier stations on every map, also under an own heading
             }
         }
         catch (JsonException e)
         {
-            return (new(), L($"[ATC] frequencies.jsonc: Fehler ({e.Message}) – keine eigenen Frequenzen", $"[ATC] frequencies.jsonc: error ({e.Message}) – no own frequencies"));
+            return (new(), L($"[ATC] frequencies.jsonc: Fehler ({e.Message}) – keine eigenen Frequenzen, Beispiele oben in der Datei", $"[ATC] frequencies.jsonc: error ({e.Message}) – no own frequencies, see the examples at the top of the file"));
         }
         return (own, null);
     }
@@ -1648,7 +1665,7 @@ static partial class Program
                 foreach (var m in Directory.GetDirectories(Path.Combine(d, "Mods", "terrains")).Select(x => Path.GetFileName(x)))
                     if (!maps.ContainsKey(m) && Airfield.RadioTable(d, m) is { Count: > 0 } t) maps[m] = t;
             var old = File.Exists(path) ? File.ReadAllText(path) : null;
-            var text = FreqFile(old, maps, Airfield.Theatre, Fields.Where(f => f.Id > 0).GroupBy(f => f.Id).ToDictionary(g => g.Key, g => g.First().Name));
+            var text = FreqFile(old, maps, Path.GetFileName(Airfield.TerrainDir(DcsDir(), Airfield.Theatre)), Fields.Where(f => f.Id > 0).GroupBy(f => f.Id).ToDictionary(g => g.Key, g => g.First().Name));
             if (text != old) File.WriteAllText(path, text);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log($"[ATC] frequencies.jsonc: {e.Message}"); }
@@ -1668,6 +1685,21 @@ static partial class Program
         }
         """;
 
+    /// #18: commented examples for carrier stations, Red Crown and Center/GCI sectors, after the opening {
+    static readonly string[] FreqExamples =
+    {
+        "  // EN: Carrier stations (all carriers) and Red Crown: remove the // and keep only the stations you need. Works under any heading.",
+        "  // DE: Trägerstationen (alle Träger) und Red Crown: // entfernen, nur die gewünschten Stationen behalten. Gilt unter jeder Überschrift.",
+        "  // \"Carrier\": { \"Marshal\": 264.0, \"Approach\": 265.0, \"Tower\": 266.0, \"Paddles\": 267.0, \"Departure\": 268.0, \"Strike\": 269.0, \"RedCrown\": 252.5 },",
+        "  // EN: Own Center and GCI/CRC (same as config.jsonc CenterSectors): Lat/Lon of the centre, nearest centre within RadiusNm wins, Side blue/red/empty,",
+        "  //     \"Gci\": true = radar controller like the AWACS instead of a Center. Above all map headings it applies on every map, under \"// ===== Map =====\" on that map only.",
+        "  // DE: Eigenes Center und GCI/CRC (wie CenterSectors in config.jsonc): Lat/Lon der Mitte, die nächste Mitte im RadiusNm gewinnt, Side blue/red/leer,",
+        "  //     \"Gci\": true = Radarlotse wie das AWACS statt Center. Über allen Karten-Überschriften gilt es auf jeder Karte, unter \"// ===== Karte =====\" nur dort.",
+        "  // \"CenterSectors\": [ { \"Name\": \"Langen Radar\", \"Freq\": 270.0, \"Lat\": 50.03, \"Lon\": 8.57, \"RadiusNm\": 120, \"Side\": \"blue\" },",
+        "  //                    { \"Name\": \"Loneship\", \"Freq\": 276.75, \"Lat\": 50.58, \"Lon\": 8.16, \"RadiusNm\": 150, \"Side\": \"blue\", \"Gci\": true } ],",
+        "",
+    };
+
     /// Content of frequencies.jsonc: add missing maps (section) and airfields (line with "// id N"), change nothing else; only an unchanged generated line
     /// of the running map gets the exact DCS name from the mission (exact), Radio.lua does not always know it.
     internal static string FreqFile(string? old, IDictionary<string, Dictionary<int, (double Uhf, double Vhf, string Cs, string Name)>> maps, string theatre, Dictionary<int, string> exact)
@@ -1681,6 +1713,7 @@ static partial class Program
             return $"  // \"{name}\": {{ \"ATIS\": {F(AtisFreq(name))}, \"Ground\": {Lf("Ground")}, \"Tower\": {Lf("Tower")}, \"Departure\": {Lf("Approach")}, \"Approach\": {Lf("Approach")} }},   // id {id}";
         }
         var lines = (old ?? FreqHeader).Replace("\r\n", "\n").TrimEnd('\n').Split('\n').ToList();
+        if (!lines.Any(l => l.Contains("\"CenterSectors\"")) && lines.FindIndex(l => l.Trim() == "{") is >= 0 and var o) lines.InsertRange(o + 1, FreqExamples);   // #18: also into older files
         bool Head(string l) => Regex.IsMatch(l, @"^\s*// ===== .+ =====");
         int Close() => lines.FindLastIndex(l => l.TrimStart().StartsWith('}')) is >= 0 and var c ? c : lines.Count;
         foreach (var (map, ids) in maps)
@@ -4311,6 +4344,26 @@ static partial class Program
             if (cvSf.Count != 2 || cvSf["Marshal"] != 285.0 || cvSf["Tower"] != 308.0 || cvBad.Count != 2 || !cvBad[0].Contains("\"CATCC\"") || !cvBad[1].Contains("900") || cvRole != "Carrier" || !cvListen || Carrier.StationFreqs.Count != 0)
                 throw new Exception($"#13 Trägerfrequenzen: {string.Join(",", cvSf)} | {string.Join(" | ", cvBad)} | {cvRole} {cvListen}");
             Console.WriteLine("OK   #13: frequencies.jsonc \"Carrier\" je Station, Fehler je Zeile, abgehört und als Träger erkannt");
+            // #18: the examples work uncommented (above all headings = every map), "Carrier" also under an own heading, Red Crown before the mission frequency,
+            // CenterSectors added to config.jsonc and errors per entry, invalid file points to the examples
+            var ex = Regex.Replace(FreqFile(null, new SortedDictionary<string, Dictionary<int, (double Uhf, double Vhf, string Cs, string Name)>>(), "Nevada", new()), @"(?m)^(\s*)// (?=\s*(\{ ""Name""|""Carrier""|""CenterSectors""))", "$1");
+            var (exOwn, exErr) = OwnFreqs(ex, "Nevada");
+            var exBad = ApplyFreqs(Fields, exOwn);
+            var (exSf, exCs, rs0) = (new Dictionary<string, double>(Carrier.StationFreqs), Tower.CenterSectors.ToList(), Carrier.RadarShips);
+            Carrier.RadarShips = new() { new("CG-60", "CVN", "TICONDEROG", 0, 0, 2, 300.0) };
+            var (exRc, exRole) = (Carrier.RedCrownFor(2, null)?.Freq, SrsRole(null, 252.5));
+            Carrier.RadarShips = rs0;
+            var hd = OwnFreqs("{\n  // ===== Nevada =====\n  \"Nellis\": { \"Tower\": 327.0 },\n  // ===== Carrier CVN =====\n  \"Carrier\": { \"Marshal\": 285.0 },\n  // ===== Sinai =====\n  \"Ramon\": { \"Tower\": 251.0 },\n}", "Nevada").Own;
+            var csBad = ApplyFreqs(Fields, OwnFreqs("""{ "CenterSectors": [ { "Erndtebrück": "Loneship", "Freq": 276.75 }, { "Name": "X", "Freq": 1000 }, { "name": "Y", "freq": 270.0, "x": 1000, "z": 2000 } ] }""", "Nevada").Own);
+            var csY = Tower.CenterSectors.LastOrDefault();
+            var csBad2 = ApplyFreqs(Fields, OwnFreqs("""{ "CenterSectors": { "Name": "X" } }""", "Nevada").Own);
+            var bad18 = OwnFreqs("{\n  \"Nellis\": { \"Tower\": 327.0 },\n  {\"Erndtebrück\": \"Loneship\", \"Freq\": 276.75 }\n}", "Nevada");
+            ApplyFreqs(Fields, new());
+            if (exErr != null || exBad.Count != 0 || exSf.Count != 7 || exSf["RedCrown"] != 252.5 || exCs.Count != Cfg.CenterSectors.Count + 2 || !exCs[^1].Gci || exCs[^1].Lat != 50.58 || exRc != 252.5 || exRole != "Carrier"
+                || hd.Count != 2 || !hd.ContainsKey("Nellis") || !hd.ContainsKey("Carrier") || csBad.Count != 2 || !csBad[0].Contains("\"Name\"") || !csBad[1].Contains("30–400") || csY is not { Name: "Y", Freq: 270.0, X: 1000, Z: 2000 }
+                || csBad2.Count != 1 || bad18.Error == null || bad18.Own.Count != 0 || Tower.CenterSectors.Count != Cfg.CenterSectors.Count || Carrier.StationFreqs.Count != 0)
+                throw new Exception($"#18 Beispiele: {exErr} | {string.Join(" | ", exBad)} | {string.Join(",", exSf)} | {exCs.Count} {exRc} {exRole} | {string.Join(",", hd.Keys)} | {string.Join(" | ", csBad.Concat(csBad2))}\r\n{ex}");
+            Console.WriteLine("OK   #18: Beispiele in frequencies.jsonc gehen ohne // (7 Trägerstationen mit Red Crown, Center und GCI), \"Carrier\" unter eigener Überschrift, CenterSectors-Fehler je Eintrag, kaputte Datei nennt die Beispiele");
             // create frequencies.jsonc (test Radio.lua: name from comment or beacon, config without UHF), uncomment a line, add without changing user lines
             var dir = Path.Combine(Path.GetTempPath(), "DcsAtc-FreqTest");
             Directory.CreateDirectory(Path.Combine(dir, "Mods", "terrains", "TestMap"));
@@ -4319,6 +4372,8 @@ static partial class Program
                 "\t{\r\n\t\tradioId = 'airfield2_0';\r\n\t\tcallsign = {{[\"common\"] = {_(\"OMXX\"), \"OMXX\"}}};\r\n\t\tfrequency = {[VHF_HI] = {MODULATIONTYPE_AM, 118750000.000000}};\r\n\t};\r\n};\r\n");
             File.WriteAllText(Path.Combine(dir, "Mods", "terrains", "TestMap", "Beacons.lua"), "beacons = {\r\n\t{\r\n\t\tdisplay_name = _('Bravo-Intl');\r\n\t\tbeaconId = 'airfield2_0';\r\n\t};\r\n};\r\n");
             var tab = Airfield.RadioTable(dir, "TestMap");
+            File.WriteAllText(Path.Combine(dir, "Mods", "terrains", "TestMap", "entry.lua"), "local self_ID = \"TestMapTheatre\";\r\ndeclare_plugin(self_ID, theatre);\r\n");   // #19: mission SinaiMap, folder Sinai
+            var (tabTh, dirTh) = (Airfield.RadioTable(dir, "TestMapTheatre").Count, Path.GetFileName(Airfield.TerrainDir(dir, "TestMapTheatre")));
             Directory.Delete(dir, true);
             var maps = new SortedDictionary<string, Dictionary<int, (double Uhf, double Vhf, string Cs, string Name)>> { ["TestMap"] = tab };
             var gen = FreqFile(null, maps, "Caucasus", new());
@@ -4330,8 +4385,8 @@ static partial class Program
             maps["NewMap"] = new() { [5] = (270.0, 0, "", "Delta") };
             var upd = FreqFile(user, maps, "TestMap", new() { [2] = "Bravo International" });
             var ul = upd.Split("\r\n").ToList();
-            if (tab.Count != 2 || tab[1] != (250.0, 121.0, "Alpha", "Alpha Field") || tab[2] != (0, 118.75, "", "Bravo-Intl")
-                || !gen.StartsWith("// DCS-ATC") || !gen.Contains("\r\n{\r\n  // ===== TestMap =====\r\n" + alpha + "\r\n  // \"Bravo-Intl\": { \"ATIS\": " + atisMhz + ", \"Ground\": [118.75], \"Tower\": [118.75],") || !gen.EndsWith("\r\n}\r\n")
+            if (tab.Count != 2 || tabTh != 2 || dirTh != "TestMap" || OwnFreqs(user, "TestMapTheatre", dirTh).Own.Count != 1 || tab[1] != (250.0, 121.0, "Alpha", "Alpha Field") || tab[2] != (0, 118.75, "", "Bravo-Intl")
+                || !gen.StartsWith("// DCS-ATC") || !gen.Contains("\r\n{\r\n" + string.Join("\r\n", FreqExamples) + "\r\n  // ===== TestMap =====\r\n" + alpha + "\r\n  // \"Bravo-Intl\": { \"ATIS\": " + atisMhz + ", \"Ground\": [118.75], \"Tower\": [118.75],") || !gen.EndsWith("\r\n}\r\n")
                 || rdErr != null || rd.Count != 1 || rd["Alpha Field"].GetProperty("Tower").GetDouble() != 255.5 || OwnFreqs(user, "NewMap").Own.Count != 0
                 || !ul.Contains(user.Split("\r\n").First(l => l.Contains("255.5"))) || !upd.Contains("  // \"Bravo International\": ") || upd.Contains("Bravo-Intl")
                 || ul.FindIndex(l => l.Contains("// id 3")) is not (> 0 and var i3) || i3 > ul.FindIndex(l => l.Contains("===== NewMap")) || ul.FindIndex(l => l.Contains("// id 5")) < 0
@@ -4347,7 +4402,7 @@ static partial class Program
                 || !vAtis.Contains("Tower one one niner decimal two. ") || SpokenFreq(vhf, vp) != 119.2)
                 throw new Exception($"VHF-Platz: {Fq(vhf.FreqsOf("*"))} / {FreqRoute(119.2, null)} / {string.Join(",", ListenFreqs(new() { vp }))} / {vAtis}");
             Console.WriteLine("OK   Platz nur mit VHF (Abu Dhabi 119.2): Lotsen auf 119.2, Ruf darauf erreicht ihn, SRS hört mit, ATIS nennt Tower 119.2");
-            Console.WriteLine("OK   frequencies.jsonc: aus Radio.lua erzeugt (Name aus Kommentar/Funkfeuer, nur VHF als [VHF]), entkommentierte Zeile mit Komma am Ende gelesen, Ergänzen: neue Karte und neuer Platz, Nutzerzeile unverändert, unveränderte Zeile bekommt den Missionsnamen");        }
+            Console.WriteLine("OK   frequencies.jsonc: aus Radio.lua erzeugt (Name aus Kommentar/Funkfeuer, nur VHF als [VHF]), entkommentierte Zeile mit Komma am Ende gelesen, Ergänzen: neue Karte und neuer Platz, Nutzerzeile unverändert, unveränderte Zeile bekommt den Missionsnamen, #19 Missionskarte über entry.lua im Kartenordner (SinaiMap in Sinai)");        }
         finally { (SimLog, Fields, Tower.All) = (log0, fs0, all0); Take(); }
     }
 
@@ -5001,6 +5056,15 @@ static partial class Program
         Ops.AwacsFreq.Remove("I3-AW"); Ops.AwacsFreq.Remove("I3-AW2"); Ops.TankerFreq.Clear(); pr.OpsPick = null;
         if (i3 != "AWACS Tanker Tanker AWACS AWACS AWACS") throw new Exception("Issue #3 AWACS und Tanker auf einer Frequenz: " + i3);
         Console.WriteLine("OK   Issue #3: AWACS und Tanker auf einer Frequenz, der Stationsname entscheidet und gilt für Rufe ohne Namen");
+        // Issue #17 (log): recovery tanker on the carrier frequency (Instant Action) -> the Marshal call went to the tanker ("no tanker airborne"); carrier words decide like station names
+        var boats17 = Carrier.Boats;
+        Carrier.Boats = new() { new Carrier.Boat("CVN-73", "CVN", "CVN_73", 0, 0, 0, 10, 2, 225.0, "73X", "11") };
+        Ops.TankerFreq["I17-TK"] = 225.0;
+        var i17 = string.Join(" ", new[] { "Marshall 103, marking Moms 145 for 32, engines 18, state 9.7.", "103, see you at 2", "Arco, Enfield 1-1, request rejoin", "Enfield 1-1, ready pre-contact", "Marshal, 103, checking in" }
+                                   .Select(s => OpsPick(pr, 225.0, s, SrsRole(pr, 225.0)!)));
+        Carrier.Boats = boats17; Ops.TankerFreq.Clear(); pr.OpsPick = null;
+        if (i17 != "Carrier Carrier Tanker Tanker Carrier") throw new Exception("Issue #17 Träger und Tanker auf einer Frequenz: " + i17);
+        Console.WriteLine("OK   Issue #17: Träger und Tanker auf einer Frequenz, Marshal/Mother/Ball entscheiden für den Träger, Tankername für den Tanker");
         // R393: "say again" without a station goes to the controller who spoke last (ops role within 5 minutes), otherwise to the airfield (which clears it)
         pr.LastOps = ("Tanker", Now());
         Request(pr, "Enfield 1-1, say again", "RAD", false);
@@ -5175,7 +5239,7 @@ static partial class Program
         }
         foreach (var kv in new Config().Frequencies) Cfg.Frequencies.TryAdd(kv.Key, kv.Value);
         foreach (var kv in new Config().Voices) Cfg.Voices.TryAdd(kv.Key, kv.Value);
-        (Tower.CenterNames, Tower.CenterSectors) = (new(Cfg.CenterNames, StringComparer.OrdinalIgnoreCase), Cfg.CenterSectors);
+        (Tower.CenterNames, Tower.CenterSectors) = (new(Cfg.CenterNames, StringComparer.OrdinalIgnoreCase), Cfg.CenterSectors.Concat(OwnSectors).ToList());
         (Tower.CenterOn, Tower.QnhOf) = (() => On("center"), FieldQnhOf);
         Cfg.Voices.TryAdd("Departure", Cfg.Voices["Approach"]);   // AirfieldFrequencies: Departure speaks with the Approach voice
         Cfg.SrsPath = FindSrs(Cfg.SrsPath);

@@ -1257,7 +1257,7 @@ Normandy, The Channel and the WWII maps have no Center; an unknown map uses "Cen
 - **Sector change:** with several sectors you hear "contact Nellis Control two seven zero decimal zero" as soon as you fly into another one.
 - **Own AWACS in range:** see above.
 
-**Several sectors** (`CenterSectors`): each entry has a name, frequency, centre point (`Lat`/`Lon` on every map, or `X`/`Z` in metres), `RadiusNm` and optionally `Side` ("blue" or "red"). The nearest centre point whose radius you are inside applies. Without a matching sector the map's Center applies. `Lat`/`Lon` are exact on Caucasus; on other maps DCS-ATC converts them with the mission's own coordinates (about 100 m off), so they work from the first mission data on.
+**Several sectors** (`CenterSectors`): each entry has a name, frequency, centre point (`Lat`/`Lon` on every map, or `X`/`Z` in metres), `RadiusNm` and optionally `Side` ("blue" or "red"). The nearest centre point whose radius you are inside applies. Without a matching sector the map's Center applies. `Lat`/`Lon` are exact on Caucasus; on other maps DCS-ATC converts them with the mission's own coordinates (about 100 m off), so they work from the first mission data on. Sectors can also go into `frequencies.jsonc` as `"CenterSectors": [ … ]` (examples at the top of that file), above the map headings for every map or under a map heading for that map only. They are added to the ones in config.jsonc.
 
 **Own GCI or CRC** (`"Gci": true` in a `CenterSectors` entry): the entry is a ground radar controller instead of a Center, for example a CRC on Cold War Germany: `{ "Name": "Backlight", "Freq": 262.1, "Lat": 50.1, "Lon": 8.4, "RadiusNm": 120, "Side": "blue", "Gci": true }`. Inside its radius it works like the AWACS under its own name and frequency: check-in, picture, BOGEY DOPE, vectors, handover after departure. It answers when no AWACS of your side is up, or when you call it on its own frequency while an AWACS is up. It sees what your side's radars see (AWACS, early-warning radars of the mission).
 
@@ -1531,7 +1531,7 @@ The `"Carrier"` key is not in the installed `config.jsonc` template, but DCS-ATC
 "Carrier": { "Marshal": 285.0, "Approach": 282.0, "Paddles": 282.0, "Tower": 308.0, "Departure": 297.6, "Strike": 271.0 },
 ```
 
-Stations without an entry stay on the carrier frequency. Each station then transmits on its own frequency, DCS-ATC listens on all of them, and the handovers name the frequency ("switch Approach two eight two decimal zero"). Switch your radio when you are handed over. The radio wheel still shows the carrier frequency. Red Crown keeps its own frequency (`"RedCrown"`, or the cruiser's frequency from the mission).
+Stations without an entry stay on the carrier frequency. Each station then transmits on its own frequency, DCS-ATC listens on all of them, and the handovers name the frequency ("switch Approach two eight two decimal zero"). Switch your radio when you are handed over. The radio wheel still shows the carrier frequency. Red Crown gets its frequency from `"RedCrown"` in this entry, otherwise from the cruiser in the mission, otherwise from `"RedCrown"` in config.jsonc. The entry works under any heading in the file.
 
 **Board number (modex).** If your aircraft has a board number in the Mission Editor, the carrier stations call you by it instead of the call sign: "one zero three, Marshal, case one recovery ...". Check in the same way: "Marshal, 103, marking mom's 345 for 55, angels 17, low state 11.6". Aircraft from dynamic slots have no board number and keep the call sign.
 
@@ -2534,13 +2534,14 @@ By default each airfield uses the frequency that DCS gives it on the map, the on
   To set your own frequencies, remove the `//` in front of an airfield line and change the numbers, as for Nellis above. The `// id …` comment at the end of a line is how DCS-ATC recognises the airfield when it adds new ones; leave it in place.
 - **Airfields with only a VHF frequency** in DCS (most of the Persian Gulf map) show a list with one value, for example `"Tower": [119.2]`. Airfields without any DCS frequency show the `config.jsonc` frequencies (`"Ground": 264.5, "Tower": 265.0, "Departure": 266.5, "Approach": 266.5` by default).
 - **New maps and airfields** are added as commented lines when they appear. Your own lines are never changed.
+- **Examples at the top** of the file show a `"Carrier"` entry with Red Crown and a `"CenterSectors"` list with a Center and a GCI. Remove the `//` and change the values. Older files get the examples added.
 
 **Rules**
 
 - **Controllers:** `ATIS`, `Ground`, `Tower`, `Departure`, `Approach`. Upper or lower case doesn't matter.
 - **Values:** one frequency in MHz, or a list such as `"Ground": [275.8, 121.8]` (UHF and VHF). Every value must be between 30 and 400 MHz.
 - **Airfield name:** as DCS names it. Case, hyphens, spaces and punctuation are ignored, so `"senaki kolkhi"` matches `Senaki-Kolkhi`. A unique part of the name is enough. If the part matches more than one airfield, the entry is ignored.
-- **Map sections:** lines under `// ===== <map> =====` apply only on that map. Lines above the first section apply on every map.
+- **Map sections:** lines under `// ===== <map> =====` apply only on that map, named after its folder in `Mods\terrains` as the file lists it (`Sinai`, `GermanyColdWar`). Lines above the first section apply on every map.
 - **Controllers you don't list stay on the map frequency.** If you don't list Departure, Approach handles departures as before.
 - **Changes apply as soon as you save** the file. No restart is needed.
 - **Invalid entries are ignored**, and each one gets a line in `atc-log.txt`, for example:
