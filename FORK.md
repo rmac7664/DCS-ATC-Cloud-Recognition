@@ -15,7 +15,7 @@ Both are covered by the self-test (`DcsAtc.exe --selftest`).
 ## Install
 
 Install DCS-ATC 0.19.0 with its normal setup, then replace `DcsAtc.exe` in the DCS-ATC folder with the one from the latest
-successful **Build DcsAtc.exe** run (Actions tab, Artifacts). Settings are 0.18.0's, e.g.:
+successful **Build DcsAtc.exe** run: the newest `fork-<sha>` release (Releases page), or the run's Artifacts. Settings are 0.18.0's, e.g.:
 
 ```jsonc
 "AsrApiUrl": "https://api.openai.com/v1/audio/transcriptions",

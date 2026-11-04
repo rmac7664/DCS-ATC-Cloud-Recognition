@@ -2,7 +2,7 @@ name: Build DcsAtc.exe
 
 # Fork (cloud-asr): builds the self-contained DcsAtc.exe on GitHub's Windows runners,
 # runs the app's own test suites first (tests\alle.cmd), and uploads the exe as an artifact.
-# Install: replace DcsAtc.exe in an existing DCS-ATC installation (%LOCALAPPDATA%\Programs\DCS-ATC).
+# Install: replace DcsAtc.exe in an existing DCS-ATC installation (%LOCALAPPDATA%\Programs\DCS-ATC). On cloud-asr a passing build is also published as a release (fork-<sha>).
 
 on:
   push:
@@ -12,6 +12,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write   # the release step below
     steps:
       - uses: actions/checkout@v4
 
@@ -50,6 +52,16 @@ jobs:
           path: |
             out/DcsAtc.exe
             installer/config.jsonc
+
+      - name: Publish the exe as a release (only when every test suite passed)
+        if: steps.tests.outcome == 'success' && github.ref == 'refs/heads/cloud-asr'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "fork-" + $env:GITHUB_SHA.Substring(0, 7)
+          $ver = (Get-Item out\DcsAtc.exe).VersionInfo.ProductVersion
+          gh release create $tag out\DcsAtc.exe --target $env:GITHUB_SHA --prerelease --title "DcsAtc.exe $ver fork build $tag" --notes "Fork build of commit $env:GITHUB_SHA (upstream $ver plus the fork's fixes, see FORK.md). All test suites passed. Install: run the upstream setup of the same version, then replace DcsAtc.exe."
 
       - name: Upload test logs
         if: always()
