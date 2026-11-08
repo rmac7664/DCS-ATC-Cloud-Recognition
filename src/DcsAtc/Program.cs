@@ -4254,7 +4254,8 @@ static partial class Program
         Console.WriteLine("OK   Eigene charts.jsonc ersetzt den Platz, fehlerhafte wird ignoriert");
         // Forum 0.20 (Lt_Jaeger): charts.jsonc on another map, lat/lon over the fitted projection; the built-in Caucasus data stay off there
         var th = Airfield.Theatre;
-        try
+        if (!Directory.Exists(Path.Combine(DcsDir(), "Mods", "terrains", "Syria"))) Console.WriteLine("--   charts.jsonc auf Syrien: DCS fehlt");   // fork: CI has no DCS for lat/lon
+        else try
         {
             Airfield.Theatre = "Syria";
             File.WriteAllText(ownF, "{ \"Banias\": { \"ctr_top_ft\": 3500, \"crp\": { \"north\": \"35°18.000'N 035°57.475'E\" } } }");
