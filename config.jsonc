@@ -15,6 +15,8 @@
   "WheelButton": 1,
   // Funkradgröße: Anteil der DCS-Fensterhöhe; im offenen Rad mit + / - verstellen (wird hier gespeichert)
   "WheelSize": 0.45,
+  // Feste Nummern im Funkrad (z. B. für VoiceAttack): oberste Ebene immer mit allen Einträgen der gewählten Module, ohne Filter nach Flugphase oder Anwesenheit (AWACS, Tanker, JTAC ...). Mehr als 9 Einträge: Notfall und Allgemein bleiben hinten, unbenutzte Module abwählen
+  "WheelFixed": false,
   // Funkrad zusätzlich als Text im Spiel (VR-Headset zeigt das Desktop-Rad nicht): "auto" = wenn DCS im VR-Modus (Option VR oder Startparameter --force_enable_VR), "on", "off"
   "WheelInGame": "auto",
 
@@ -27,12 +29,16 @@
   "MyCallsign": "",
   // Rufzeichen aus dem Unitnamen der Mission ("VICTORY 9-1", "WOLF-2-1") statt aus dem DCS-Slot; andere Unitnamen bleiben beim DCS-Rufzeichen
   "CallsignFromUnit": false,
+  // Rufzeichen aus dem DCS-Spielernamen, Teil vor "|" ("GUARDIAN 1-1 | Christian", "Guardian 9-1"), z. B. Dedicated Server mit dynamischen Slots; Vorrang vor CallsignFromUnit, ohne passenden Namen gilt Unitname/Slot
+  "CallsignFromPlayer": false,
 
   // Lotsen-Frequenzen (MHz) – alle gleich setzen = alles auf einer Frequenz
   "Frequencies": { "ATIS": 263.5, "Ground": 264.5, "Tower": 265.0, "Approach": 266.5,
                    "Range": 267.5, "Center": 268.5, "RedCrown": 252.5, "AWACS": 251.5, "Tanker": 255.5, "JTAC": 133.5 },
   "AwacsBullseye": true,     // AWACS-Picture und Lage-Updates an alle als Bullseye (Mission mit Bullseye); false = alles BRAA vom Spieler
   "AwacsNewGroupNm": 200,    // AWACS meldet neue Gruppen von selbst bis zu dieser Entfernung (40-200 NM), auch Umkreis für "picture clean"
+  "AwacsMissionFreq": true,  // false = DCS-ATC-AWACS bleibt auf "AWACS" unter Frequencies, egal welche Frequenz die AWACS-Gruppe in der Mission hat (DCS-eigene AWACS-Rufe bleiben auf der Missionsfrequenz)
+  "Pronunciation": {},    // Aussprache einzelner Wörter nur für die Stimme, z. B. { "Ramstein": "Rahm-shtine", "Büchel": "Bue-shel" }; der Funktext bleibt wie geschrieben
   "CenterNames": {},      // Center-Name je Karte, z. B. { "Nevada": "Seattle Center", "Caucasus:red": "Rostov Control" }; leer = eingebaute Namen (Caucasus: Tbilisi Control)
   "CenterSectors": [],    // mehrere Sektoren je Karte, z. B. [{ "Name": "Rostov Control", "Freq": 269.0, "Lat": 47.2, "Lon": 39.7, "RadiusNm": 120, "Side": "red" }]; Lat/Lon nur Caucasus, sonst "X"/"Z" in Metern; nächster Mittelpunkt im Radius gewinnt, Side blue/red/leer
   "Modulation": "AM",
@@ -40,7 +46,7 @@
 
   // Piper-Stimmen aus dem Ordner models, "@0.88" = tiefer (weitere: huggingface.co/rhasspy/piper-voices)
   "Voices": {
-    "Tower": "en_US-ryan-medium|en_US-ljspeech-medium",   // mit | mehrere: je Platz/Station fest eine, abwechselnd
+    "Tower": "en_US-ryan-medium|en_US-ljspeech-medium",   // mit | mehrere: je Platz/Station fest eine, abwechselnd; "random": je Start eine zufällige der installierten
     "Ground": "en_US-bryce-medium",
     "Approach": "en_US-ryan-medium@1.05",
     "ATIS": "en_US-ryan-medium@0.94",
@@ -52,26 +58,37 @@
     "Crew": "en_US-ryan-medium"   // Crew Chief am Parkplatz, spricht auf deinem Intercom
   },
   "PilotVoice": "en_US-joe-medium",   // spricht deine Menü-/Rad-Anfragen vor der Antwort, "" = aus
+  "ElevenLabsKey": "",   // optional: eigener ElevenLabs-API-Schlüssel (Rechte Text to Speech, Voices lesen, User lesen), "" = nur Piper; ElevenLabs rechnet nach Zeichen ab
+  "ElevenVoices": {},    // Rolle -> ElevenLabs voice_id, z. B. {"Tower": "id1|id2"} (mit | je Station fest eine), "id@1.3" = eigenes Tempo; fehlt die Rolle: Piper-Stimme von oben. Ohne Netz/Kontingent spricht Piper
+  "ElevenLabsSpeed": 1.1,   // Standard-Tempo der ElevenLabs-Stimmen ohne eigenes @Tempo, unabhängig von SpeechRate: 1 = normal, größer = schneller (über 1,2 hilft DCS-ATC per ffmpeg nach)
 
   "RadioFx": true,   // Funkklang: Bandpass, leises Rauschen, Squelch am Ende
+  "RadioFxBand": [300, 2700],   // Funkklang-Band in Hz [untere, obere Grenze], je zweistufig (24 dB/Oktave); untere 100-1000, obere 1500-5000, sonst Standard. Breiter = klarer, schmaler = mehr Funkgerät
+  "RadioFxRatio": 6,   // Funkklang: Kompressor-Verhältnis (1 = aus, höher = härter, 1:6 ist Standard); im Gefecht fest 1:3
   "Volume": 0.6,     // Lautstärke der Lotsen in SRS (0–1), zu laut/schmerzhaft -> kleiner
   "AiFlightComms": "voll",   // KI-Flights im Funk (Fox, Splash, Defending, Bingo …): voll / taktisch / aus
   "AiFollowAwacs": true,   // KI-Jäger fliegen die Gruppe an, die ihnen das AWACS zuweist, das AWACS weicht Bedrohungen aus; false: KI fliegt die Mission, der Funk folgt ihr
   "AiFlightRadiusNm": 60,     // nur KI im Umkreis eigener Spieler
   "AiOwnWingmen": false,      // eigene KI-Wingmen mitfunken lassen (DCS spricht sie schon selbst)
-  "OnSpeedAoa": { "FA-18": 8.1 },   // LSO: On-speed-AoA in Grad je Typ-Anfang (Paddles: You're fast/slow); anderer Typ = keine Speed-Calls, Wert aus dem Log "[LSO] AoA im Mittel" ableiten
+  "OnSpeedAoa": { },   // LSO: On-speed-AoA in Grad je Typ-Anfang (Paddles: You're fast/slow), z. B. { "F-14": 10.6 }; eingebaut: FA-18 8.1, F-14 10.4, T-45 8.5, A-4E 8.75, AV8B 10.0; Wert aus dem Log "[LSO] AoA im Mittel" ableiten
+  "JtacKeypad": false,       // true = JTAC gibt Zeile 6 als 1-km-Gitterquadrat mit Keypad ("grid 37 T, G H, 26, 21, keypad 7") statt MGRS zehnstellig bzw. Breite/Länge
+  "JtacMarkOffsetM": 100,    // Rauch/WP des JTAC landet so viele Meter neben dem Ziel, der JTAC sagt Richtung und Entfernung vom Rauch zum Ziel; 0 = Rauch direkt auf dem Ziel
   "TankerVectors": false,    // true = Tanker führt selbst zum Join mit Steuerkurs/Entfernung/Höhe bis "visual" (false = nur erste Peilung, Vektoren vom AWACS oder auf "request vector")
   "SpeechRate": 0.85,   // Sprechtempo der Lotsen: 1 = Piper-Standard, kleiner = schneller
   "ReplyPause": 1.5,   // Sekunden Pause zwischen zwei Funksprüchen auf einer Frequenz (Pilot -> Lotse -> Rücklesen)
   "AiChatter": true,   // KI-Flüge funken hörbar mit (Anfrage, Antwort, Rücklesen)
   "SrsListen": true,   // alle Spieler sprechen direkt über SRS auf der Lotsen-Frequenz (PTT-Taste oben nur ohne SRS)
+  "SrsStart": true,   // SRS-Server und -Client starten, wenn sie nicht laufen; false = DCS-ATC startet keinen (z. B. Server mit eigener SRS-Instanz)
   "SrsAutoConnect": true,   // SRS-Client nach dem Start automatisch mit dem lokalen SRS-Server verbinden (127.0.0.1, Port aus der server.cfg), nur wenn er noch nicht verbunden ist; false = selbst verbinden
   "Atis": true,      // ATIS-Dauersendung für Plätze mit Spielern im Umkreis von 40 NM
   "RunwayLights": "silent",   // Bahnbefeuerung nachts über das DCS-ATC-Menü: "silent" (Platz bleibt stumm), "dcs" (DCS-Lotse antwortet 15 s hörbar), "off"
+  "AssignParkingSpot": true,   // false = Ground nennt nach der Landung nur die Rampe aus charts.jsonc ("taxi to Ramp West via ..."), keinen Stellplatz; du parkst, wo du willst. Plätze ohne benannte Rampe bekommen weiter einen Stellplatz
   "AirspaceWatch": true,   // Kontrollzonen überwachen (Einflug ohne Kontakt wird angerufen) und Verstöße ansagen ("possible pilot deviation", z. B. Start ohne Freigabe) und ins Debriefing; false = nur Sicherheitswarnungen
   "AltimeterUnit": "auto",   // Höhenmesser-Einstellung im Funk: "auto" (nach eigenem Flugzeugtyp: westliche Typen "altimeter two niner niner two" in inHg, sonst "QNH one zero one three" in hPa; ATIS nennt beides), "hpa", "inhg"
   "DebugLog": true,   // ausführliches Protokoll atc-debug.txt für Fehlerberichte (Spracherkennung, Platzwahl, Phasen, Telemetrie alle 10 s), höchstens 2 × 20 MB; false = aus
-  "KneeboardPages": true,   // Kneeboard-Seiten (Funk, Plätze, Platzrunden, Navigation, AWACS) bei Missionsstart nach Saved Games\DCS\Kneeboard, in jedem Flugzeug sichtbar (nur Kaukasus, deutsch); false = keine
+  "UpdateCheck": true,   // beim Start einmal bei GitHub nach einer neueren Version fragen (nur Hinweis im Log und im Einstellungsfenster, geladen wird erst auf Knopfdruck); false = keine Anfrage (Dedicated Server, PC ohne Internet)
+  "KneeboardPages": true,   // Kneeboard-Seiten (Funk, Plätze, Platzrunden, Routen, Navigation, AWACS) bei Missionsstart nach Saved Games\DCS\Kneeboard, in jedem Flugzeug sichtbar (jede Karte, Sprache der Oberfläche); false = keine
+  "F10Drawings": true,   // Kontrollzonen, Meldepunkte (CRPs) und benannte Routen (charts.jsonc) bei Missionsstart auf die F10-Karte zeichnen, für alle Spieler sichtbar; false = keine
   "AtisFreqs": {},   // eigene ATIS-Frequenz je Platz, z. B. { "Kutaisi": 262.0 } (nicht auf Platz-/Funktionsfrequenzen); leer/fehlend = Frequencies.ATIS, erst nach Neustart
 
   "SrsPath": "C:\\Program Files\\DCS-SimpleRadio-Standalone"   // SRS-Ordner (mit ExternalAudio); stimmt er nicht, nimmt DCS-ATC die SRS-Installation aus der Registry bzw. das laufende SRS. Auch im Einstellungsfenster wählbar

@@ -1,0 +1,73 @@
+name: Bug report
+description: Something in DCS-ATC does not work as it should
+body:
+  - type: input
+    id: version
+    attributes:
+      label: DCS-ATC version
+      description: Shown in the settings window title, or in the first line of atc-log.txt.
+      placeholder: e.g. 0.23.6-alpha
+    validations:
+      required: true
+
+  - type: input
+    id: map
+    attributes:
+      label: Map
+      description: For a problem during a flight, enter the DCS map you were flying on.
+      placeholder: e.g. Caucasus, Nevada, Syria
+
+  - type: input
+    id: aircraft
+    attributes:
+      label: Aircraft
+      description: The module you were flying, if it matters.
+      placeholder: e.g. F-16C, A-10C II
+
+  - type: dropdown
+    id: how-you-fly
+    attributes:
+      label: How you fly
+      description: Your game mode.
+      options:
+        - Single player
+        - Multiplayer, I host
+        - Multiplayer, client
+        - Dedicated server
+        - Installation or startup
+
+  - type: dropdown
+    id: vr
+    attributes:
+      label: VR
+      description: Are you flying in VR?
+      options:
+        - "No"
+        - "Yes"
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, and what DCS-ATC did instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-expected
+    attributes:
+      label: What you expected
+      description: What should have happened.
+
+  - type: input
+    id: when
+    attributes:
+      label: When it happened
+      description: Mission time or clock time, so the spot can be found in the log.
+      placeholder: e.g. mission time 00:42:10, or 20:15 local time
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Installation report or logs
+      description: 'For installation problems, attach the text file from Advanced → Diagnostics → Create installation report. For a problem during a flight, Create diagnostics zip collects logs and configuration. Logs can contain callsigns and radio transcripts. Review the files and attach only what you want to share publicly.'

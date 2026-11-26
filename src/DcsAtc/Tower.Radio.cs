@@ -15,9 +15,21 @@ public partial class Tower
         return new() { new Msg(Dep(role), $"{Cs()}, {Station}, say again.") };
     }
     /// Low confidence on a bare acknowledgement or "say again": the phrase is clear anyway -> process normally instead of asking back ("Copied." -> "say again")
-    public bool Plain(string text) => Normalize(text) is var n && (AckOnly(n) || Ops.BareSayAgain(n, callsign));
+    /// #23 (log 12.11.): also with the station in front ("Nellis Approach, say again." 0.62 was answered with "say again")
+    public bool Plain(string text) => Normalize(text) is var n && (AckOnly(n) || Ops.BareSayAgain(Regex.Replace(n, StationRx, " "), callsign));
+    string StationRx => @"\b(?:ground|tower|approach|departure|radar|" + string.Join("|", $"{F.Name}-{F.Callsign}".ToLowerInvariant().Split('-', ' ', StringSplitOptions.RemoveEmptyEntries).Select(Regex.Escape)) + @")\b";
+    /// #23 (log 12.11.: "Taxi via Alpha, Vulture 1-1." 0.61 after the taxi clearance to parking -> "say again"): a readback of the controller's last
+    /// transmission without a request in it needs no action, so a weak recognition (Program: from 0.50) is not asked back.
+    public bool ReadbackOnly(string text, Telemetry? t) => Normalize(text) is var n && Addressed(n) == null
+        && !Has(n, "request", "requesting", "again", "confirm", "verify", "still", "say") && ReadsBack(n, Intent(n, t == null || OnGround(t)));
     /// Program: the transmission has actually gone out (radio queue) -> nag windows count from its end, not from queueing (vector repeated before the first call aired)
-    public void Aired(double now, string text) => lastVecSaid = Math.Max(lastVecSaid, now + text.Split(' ').Length / 2.5);
+    public void Aired(double now, string text, string role = "Approach", double sec = 0)
+    {
+        double end = now + (sec > 0 ? sec : text.Split(' ').Length / 2.5);   // real audio length; word estimate only without it (tests, text only)
+        if (role != "Tower") { lastVecSaid = Math.Max(lastVecSaid, end); return; }
+        towerEnd = Math.Max(towerEnd, end);   // PAR talk-down waits for it (also for a dropped call: text only, small phantom wait)
+        if (text == last?.Text) awaitAir = false;
+    }
 
     /// Check-in with Departure (Approach) after the handover. LA25 (log: "contact Kandahar Approach." without frequency, pilot confused): on the frequency shared with the Tower
     /// Approach checks in directly at the handover (tick), without "contact … Approach".
@@ -26,8 +38,9 @@ public partial class Tower
         // R7: VFR still in the zone (not at the departure CRP): departure clearance remains valid, sign-off at the zone edge
         zoneReport = !depClr && climbOut == null && Phase is Phase.ClearedTakeoff or Phase.Departing && t != null && Dist(t.X, t.Z, CX, CZ) < CtrM && !AtExit(t);
         dueAt = -1;   // Reporting obligation: checked in; #10 "leaving the control zone" is due from now on
+        var dep = DRt;   // charts.jsonc departure being flown: keeps its next fix
         Phase = Phase.Away;
-        nav = null; handedOff = true;
+        nav = dep != null ? nav : null; handedOff = true;
         if (Squawk == null && t != null && !OnGround(t)) { idFf = false; return Say($"{hdr}, {SqId(now)}.", "Approach"); }   // R128: flight without a prior code (no taxi call): assign first, "radar contact" after observing (tick)
         return Say($"{hdr}, {AirRc(t)}", "Approach");   // R7 (zoneReport) in AirRc
     }
@@ -42,6 +55,27 @@ public partial class Tower
 
     public List<Msg> OnTranscript(string text, Telemetry? t, IReadOnlyList<Traffic> traffic, double now, bool fromMenu = false)
     {
+        var r = Heard(text, t, traffic, now, fromMenu);
+        // #23 (log 12.11.: "request taxi and departure via Dream" was cleared "exit via Flex" without a word): a procedure asked for by name that this airfield does not have is said so
+        if (!fromMenu && r.Count > 0 && !r[0].Text.EndsWith("say again.") && UnknownProc(Normalize(text)) is { } up) r[0] = r[0] with { Text = $"{r[0].Text} Unable {up}, not on file." };
+        return r;
+    }
+    /// Procedure asked for by name ("departure via Dream", "request Dream departure", "request Mintt recovery") that the charts.jsonc of this airfield does not have,
+    /// as spoken ("Dream departure"); null = none asked, known (route, departure, CRP, compass point) or no own procedures here.
+    /// ponytail: only these two phrasings and a stop list of ordinary words before "departure"; widen when logs show other wordings.
+    internal string? UnknownProc(string n)
+    {
+        if (F.Routes.Count + F.Departures.Count == 0) return null;
+        var m = Regex.Match(n, @"\b(?<k>departure|recovery|arrival|inbound) via (?:the )?(?<n>[a-z]{3,})\b");
+        if (!m.Success) m = Regex.Match(n, @"\brequest(?:ing)? (?:the )?(?<n>[a-z]{3,}) (?<k>departure|recovery|arrival)\b");
+        var name = m.Groups["n"].Value;
+        if (!m.Success || Named(F.Routes, name) != null || Named(F.Departures, name) != null || Direction(name) != null
+            || name is "ifr" or "vfr" or "immediate" or "tactical" or "combat" or "unrestricted" or "visual" or "straight" or "closed" or "standard" or "early" or "normal" or "formation"
+                    or "rolling" or "intersection" or "practice" or "radar" or "vectors" or "runway" or "pattern" or "overhead" or "initial" or "taxi" or "and" or "for" or "our" or "any") return null;
+        return $"{Cap(name)} {(m.Groups["k"].Value == "departure" ? "departure" : "recovery")}";
+    }
+    List<Msg> Heard(string text, Telemetry? t, IReadOnlyList<Traffic> traffic, double now, bool fromMenu)
+    {
         callAt = heardAt = now;   // LA19: pilot transmission
         if (t != null) Seen(t, now);
         var n = Normalize(text);
@@ -54,8 +88,9 @@ public partial class Tower
         role = addressed ?? FreqRole() ?? Owner();
         bool ground = t == null || OnGround(t);
         var dir = Direction(n);
+        if (dir != null && DepOf(n) is { } dn && string.Equals(dn.Name, dir, StringComparison.OrdinalIgnoreCase)) dir = null;   // Issue #54: "Dream departure" where DREAM is also a CRP names the departure, not an exit direction
         var rw = Runway;
-        if (Has(n, "say again", "come again", "repeat", "say last", "last transmission", "didn t copy", "did not copy",
+        if (Has(n, "say again", "say that again", "say (?:your|the) last", "say all after", "come again", "repeat", "say last", "last transmission", "didn t copy", "did not copy",
                 "not copy", "unable to copy", "missed", "garbled", "didn t get", "not understand", "pardon") && !Has(n, "going missed", "missed approach"))
         {
             if (Phase is Phase.TaxiIn or Phase.TaxiOut && taxiSaid != null && Has(n, "taxi", "route", "parking")) return Say($"{c}, I say again, {taxiSaid}.", "Ground");   // "say again taxi": only the route
@@ -67,7 +102,7 @@ public partial class Tower
             lastAt = now;   // "Enfield 1-1, I say again, taxi to …" (last is kept, otherwise "I say again" doubles)
             return new() { last with { Text = Regex.Replace(last.Text, $@"^(?:{Regex.Escape(c)}, (?:{Regex.Escape(F.StationOf(last.Role))}, )?)?", $"{c}, I say again, ") } };
         }
-        if (Has(n, "radio check", "how do you read")) return Say($"{c}, {Station}, {OneOf("read you five", "readability five", "loud and clear")}.");   // A108: standard phrase (CAP 413)
+        if (Has(n, "radio check", "comm check", "mic check", "how do you (?:read|hear|copy)", "how copy")) return Say($"{c}, {Station}, {OneOf("read you five", "readability five", "loud and clear")}.");   // A108: standard phrase (CAP 413)
         if (Has(n, "terrain in sight", "low level")) { lowAck = true; return Say($"{c}, roger.", "Approach"); }   // A106: terrain warning acknowledged
         // R129: reply to "say airspeed" (or "unable speed"): within 30 kt "roger", otherwise the speed once, unable -> cancel the restriction
         if (t != null && Phase == Phase.Inbound && vec != null && VecKt(t) is > 0 and var sk && (spdTold == 2 || Has(n, @"unable (?:the )?speed")) && IasSlot(n) is { } rep)
@@ -75,7 +110,7 @@ public partial class Tower
             lastIntent = "speed";
             if (rep < 0) { spdFree = true; return Say($"{c}, roger, resume normal speed.", "Approach"); }
             (spdTold, spdAt, lastVecSaid) = (3, now, now);   // still off after another 90 s: "resume normal speed"
-            return Say(rep == 0 || Math.Abs(rep - sk) <= 30 ? $"{c}, {OneOf("roger", "copy")}." : $"{c}, roger, {(rep > sk ? "reduce" : "increase")} speed {sk} knots.", "Approach");
+            return Say(rep == 0 || Math.Abs(rep - sk) <= 30 ? $"{c}, {OneOf("roger", "copy")}." : $"{c}, roger, {(rep > sk ? "reduce" : "increase")} speed to {sk} knots.", "Approach");
         }
 
         // Readback / acknowledgement -> stay silent. Readbacks contain "report ..."/"cleared ..." or read back the controller's last transmission (ReadsBack),
@@ -86,8 +121,9 @@ public partial class Tower
         var spoken = Normalize(Regex.Replace(text, @"^\s*[A-Za-z]+:", ""));   // "Ground: " (config frequency/menu) is not a call
         // forum 0.15: "Kutaisi Departure, Enfield 1-1" right after a Departure call without readback is the acknowledgement, not a new call-up (after a handover the last call is another station's)
         bool stAck = addressed != null && last != null && Dep(addressed) == last.Role && now - lastAt < 30 + last.Text.Split(' ').Length / 2.5 && AckOnly(spoken, true);
-        bool request = Addressed(spoken) != null && !stAck || Has(n, "request", "requesting", "again", "confirm", "verify", "still", "say");
-        bool readback = intent != "fieldinsight" && (Has(n, "report", "wilco", "roger", "copy", "cleared", "will do", "affirm", "approved") || ReadsBack(n, intent) || AckOnly(spoken) || stAck);   // R115: "field in sight" is a report, not a readback; forum 0.9.7: "start up approved, Enfield 1-1" or just the callsign (AIM 4-2-3) is an acknowledgement
+        bool request = Addressed(spoken) != null && !stAck && !(Has(n, "squawk", "qnh", "altimeter") && ReadsBack(n, intent)) || Has(n, "request", "requesting", "again", "confirm", "verify", "still", "say");   // #27: "Tbilisi Control, squawk 4321, Enfield 1-1" reads back, no new call
+        // #49: before the taxi clearance "cleared runway at Alpha" is the request, not a readback
+        bool readback = intent != "fieldinsight" && !(intent == "taxiin" && Phase == Phase.TaxiIn && !taxiInTold) && (Has(n, "report", "wilco", "roger", "copy", "cleared", "will do", "will comply", "affirm", "approved") || ReadsBack(n, intent) || AckOnly(spoken) || stAck);   // R115: "field in sight" is a report, not a readback; forum 0.9.7: "start up approved, Enfield 1-1" or just the callsign (AIM 4-2-3) is an acknowledgement
         // Readback window from the end of the controller's transmission: lastAt is the call, the transmission lasts ~2.5 words/s (taxi clearance ~15 s)
         bool repeat = intent == lastIntent && now - lastAt < 30 + (last?.Text.Split(' ').Length ?? 0) / 2.5 && !Has(n, "ready") && !(intent == "fieldinsight" && visAsk);   // R115: after "negative field in sight", "field in sight" is the requested report, not a repeat
         // R8: route clearance read back with the assigned code -> "readback correct" (FAA JO 7110.65 4-2-1, ICAO Doc 4444 4.5.7.5)
@@ -96,7 +132,11 @@ public partial class Tower
             lastIntent = "readback";
             return new() { new Msg(Dep(role), $"{c}, readback correct.") };   // last stays the clearance ("say again" repeats it, further readbacks silent)
         }
-        if (!fromMenu && !request && intent is not ("emergency" or "unable") && (readback || repeat)) return new();   // "Unable heading 045" with the controller's heading is not a readback (A28)
+        if (!fromMenu && !request && intent is not ("emergency" or "unable") && (readback || repeat))   // "Unable heading 045" with the controller's heading is not a readback (A28)
+        {
+            if (towerDue && !ground && Phase == Phase.Entering) towerNag = true;   // #49: "Victory 9-1, pushing Tower" acknowledges the handoff, no "contact Tower now" afterwards
+            return new();
+        }
         lastIntent = intent;
         if (intent != "cancelapproach") optedOut = false;
         if (leaveAt >= 0) (minDist, leaveAt) = (-1, -1);   // A13: reply to "say intentions": no sign-off, measure again (heading again)
@@ -143,12 +183,20 @@ public partial class Tower
         var resp = (intent is "transit" or "transitoff" || intent == "crp" && Phase == Phase.Entering) && addressed is "Approach" or "Tower" ? addressed : Responsible(intent, t);   // N3: transit is answered by the station called; K22: C R P report after the early handover to either
         if (addressed == "Center" && intent is "ff" or "ffoff") resp = "Center";   // flight following asked from the Center
         if (addressed != null && resp != null && addressed != resp && !SameFreq(resp))
+        {
+            // #45: "airborne" on the Tower frequency is the handover (below the tick's 500 ft): mark it done, so Contact names Departure (own frequency) and the tick does not hand over a second time
+            if (intent == "airborne" && Phase is Phase.ClearedTakeoff or Phase.Departing && !stayPattern) { Phase = Phase.Departing; wantRw = null; handedOff = true; handedAt = now; dueAt = -1; }
+            // #49 (log Nellis: "Runway vacated at Alpha. Pushing ground." to the Tower was answered "contact Ground" three times): changing to the right controller is the readback
+            if (!fromMenu && Has(n, $"(?:push|pushing|switch|switching|changing|contacting|going) (?:to )?{resp.ToLowerInvariant()}")) { vacRemFor = landedAt; return new(); }   // no A91 "contact Ground" reminder afterwards either
             return Neg($"{c}, {Station}, contact {Contact(resp)}.");
+        }
         role = resp ?? role;
         bool firstTower = role == "Tower" && towerDue;   // R314: first call to Tower after handover (reply with station name)
         if (role == "Tower" && !ground) towerDue = false;   // Reporting obligation: reported to Tower after "contact Tower"
-        if (!ground && Has(n, "gear down", "wheels down", "three green")) gearDown = true;   // R201: gear reported, no wheels-down check
+        if (!ground && Has(n, "gear (?:is )?down", "wheels (?:are )?down", "3 green", "down and locked")) gearDown = true;   // R201: gear reported, no wheels-down check
         var hdr = $"{c}, {Station}";
+        // PAR final: first call to Tower starts the talk-down (decision height, no acknowledgement, lost communications); the clearance comes from the tick
+        if (!ground && t != null && firstTower && !parOn && intent is not ("goaround" or "visual" or "cancelapproach" or "unable" or "emergency" or "minfuel" or "cancelemergency") && ParApp(rw) && OnParFinal(t, rw)) return ParSetup(hdr, rw);   // whatever he says: no landing clearance before the talk-down
 
         // Traffic pattern request, also applies together with ready / inbound / final
         // Practice instrument approach = low approach, then straight back to radar vectoring (tick)
@@ -165,7 +213,7 @@ public partial class Tower
         bool rwNew = false;   // Runway request changed the runway (A46: re-plan under radar vectoring)
         sayTail = "";
         bool gwish = ground && intent is "taxi" or "startup" or "clearance" && Phase is Phase.Parked or Phase.StartupApproved or Phase.TaxiOut;
-        if (t != null && (gwish || !ground && intent is "inbound" or "straightin" or "runway" && Phase is Phase.Away or Phase.Departing or Phase.Inbound) && RwySlot(n) is { } ws && ws + RwySide(n) is var wr)
+        if (t != null && (gwish || !ground && intent is "inbound" or "straightin" or "runway" or "route" && Phase is Phase.Away or Phase.Departing or Phase.Inbound) && RwySlot(n) is { } ws && ws + RwySide(n) is var wr)
         {
             // "runway 30 left" -> 30L; without a (matching) side: the runway with that number, the active one first
             var we = F.Ends.FirstOrDefault(e => e.Name == wr) ?? F.Ends.Where(e => e.Name.StartsWith(ws)).OrderBy(e => e.Name != rw).FirstOrDefault();
@@ -195,6 +243,21 @@ public partial class Tower
                 sayTail += $" Caution similar callsign, {SpokenCallsign($"{am.Groups[1].Value} {am.Groups[2].Value}-{am.Groups[3].Value}")} is also on this frequency.";
                 break;
             }
+
+        // Helicopter arrival (VFR): direct to the field and "cleared to land at the ramp" (FAA JO 7110.65 3-11-6), no runway, pattern or landing sequence;
+        // a named runway, an option (touch and go ...), instrument weather or an emergency keep the airplane flow
+        if (IsHeli && !ground && t != null && !Ifr && !Emergency && opt is null or "full stop" &&
+            (heliArr > 0 ? intent is "inbound" or "final" or "base" or "fieldinsight" : intent == "inbound" && Phase == Phase.Away && RwySlot(n) == null))
+        {
+            Expected = false;
+            double hd = Dist(t.X, t.Z, CX, CZ);
+            if (heliArr == 0 && hd > 5 * NM)
+            {
+                (heliArr, heliNm) = (1, hd);
+                return Say($"{hdr}, {Position(t)}, {Wind(t)}, {Qnh(t)}.{AtisNote(n)} Proceed direct to the field, contact {Contact("Tower")}, report two miles.");
+            }
+            return HeliClear(t, hdr, heliArr == 0);
+        }
 
         switch (intent)
         {
@@ -309,12 +372,14 @@ public partial class Tower
                 bool again = Phase == Phase.TaxiIn && taxiInTold && spot != null;   // "say again parking": same parking spot
                 Phase = Phase.TaxiIn;
                 taxiInTold = true;
+                stoppedSince = -1;   // #28 (log Nellis): standing still before the clearance does not count, the stand Ground gives can be right beside him
                 specArea = special != null;
                 ProgStart(Has(n, "progressive"), now);
                 if (special is { } sp) { special = null; lastParkCall = -1; return Say($"{c}, taxi to the {sp}."); }   // R251: once de-arm area instead of parking position (afterwards "request taxi to parking" normal), no taxi guidance to the old parking spot
                 if (!again && t != null && FreeSpot(t, traffic) is { } fs) { spot = (fs.X, fs.Z); parkNum = fs.Num; home = NearestRamp(t with { X = fs.X, Z = fs.Z }); }   // named ramp = that of the parking spot
+                if ((!ParkSpot || F.RampOnly) && home != null) (spot, parkNum) = (null, 0);   // forum (Lt_Jaeger): only the ramp of that spot ("taxi to Ramp West via …"), he parks where he likes
                 var park = parkNum > 0 ? $"parking spot {StandName(parkNum)}" : "parking";
-                var route = home != null ? $"taxi to {home.Name}{ParkRoute()}{(parkNum > 0 ? ", " + park : "")}" : $"taxi to {park}";
+                var route = (IsHeli ? "air " : "") + (home != null ? $"taxi to {home.Name}{ParkRoute()}{(parkNum > 0 ? ", " + park : "")}" : $"taxi to {park}");   // R347: helicopter air taxi
                 var where = F.Net == null && t != null && ParkDir(t) is { } pd ? (parkNum > 0 ? $", {pd}" : $", your parking position {pd}") : "";   // DCS network: no clock direction (wrong way only)
                 (crossOk, crossWait) = (null, null);
                 var hxi = t != null && CrossIn(t) is { } xi ? $", hold short runway {RwSay(xi)}" : "";   // LA06 (log Nellis): runway on the way to the parking position, crossing on report
@@ -325,7 +390,8 @@ public partial class Tower
             {
                 var df = ClrDest(n);
                 if (Hostile(df)) return Neg($"{c}, unable clearance to {df!.Name.Replace('-', ' ')}, say alternate destination.");   // N1: hostile target
-                dest = df ?? Limit(rw);   // R8: clearance limit always an airfield, without destination the next one in departure direction
+                toRange = df == null ? ClrRange(n) : null;   // #61: a range named instead of an airfield is the limit, no airfield
+                dest = df ?? (toRange != null ? null : Limit(rw));   // R8: clearance limit always an airfield, without destination the next one in departure direction
                 depClr = true;
                 depFt = ClimbFt(rw);
                 cruiseFt = CruiseLevel();
@@ -339,8 +405,17 @@ public partial class Tower
                     if (!known && fresh) { idFf = false; popDf = df; return Say($"{hdr}, {SqId(now)}.", "Approach"); }   // R219/R128: first the code, "radar contact" and clearance after observing (tick)
                     return Say($"{hdr}, {(fresh ? $"squawk {Digits(TakeSquawk())}, " : "")}" + (known ? PopClr(t, df) : $"radar contact, {Where(t)}. {Cap(PopClr(t, df))}"), "Approach");
                 }
-                return Say($"{hdr}, {rwAck}cleared {(dest != null ? $"to {dest.Name.Replace('-', ' ')} airport" : "out of the control zone")} via radar vectors, " +
-                           $"after departure fly runway heading, climb and maintain {Alt(depFt)}, expect {Alt(cruiseFt)} ten minutes after departure, " +
+                var dpq = DepOf(n);   // #40 (log Nellis: "request clearance, Dream"): charts.jsonc departure named in the clearance request is kept for the takeoff clearance
+                if (dpq != null && !dpq.Rwy.Contains(rw))
+                    return Neg($"{c}, negative, {CrpSay(dpq.Name)} departure is for runway {string.Join(" and ", dpq.Rwy.Select(RwSay))}, runway {RwSay(rw)} in use. Say request.");
+                depRoute = dpq ?? depRoute; depSaid = dpq;
+                if (dpq != null && dpq.Pts.Where(p => p.Cross is "at or above" or "between").Select(p => p.Ft).DefaultIfEmpty(0).Max() is var need && need > depFt)   // #31 (log Nellis): cleared altitude not below what the departure requires
+                    cruiseFt = Math.Max(cruiseFt, depFt = Math.Ceiling(need / 1000) * 1000);
+                var lastFix = df == null ? dpq?.Pts.LastOrDefault(p => !Airfield.Silent(p.Fix)).Fix : null;   // #57: last spoken point   // #31: departure without a named airfield: its last fix is the limit, not the next airfield
+                var lim = toRange != null ? toRange.Name : !string.IsNullOrEmpty(lastFix) ? CrpSay(lastFix) : null;   // #61: the range replaces the last fix
+                return Say($"{hdr}, {rwAck}cleared " + (lim != null && dpq != null ? $"to {lim} via the {CrpSay(dpq.Name)} departure, " :
+                           $"{(toRange != null ? $"to {toRange.Name}" : dest != null ? $"to {dest.Name.Replace('-', ' ')} airport" : "out of the control zone")} via radar vectors, " +
+                           $"after departure {(dpq != null ? $"fly the {CrpSay(dpq.Name)} departure" : "fly runway heading")}, ") + $"climb and maintain {Alt(depFt)}, {(cruiseFt > depFt ? $"expect {Alt(cruiseFt)} ten minutes after departure, " : "")}" +
                            $"{(F.Own.ContainsKey("Departure") ? $"departure frequency {FreqSay(FreqOf(F, "Departure"))}" : $"departure {Contact("Approach")}")}, squawk {Digits(TakeSquawk())}.");   // own departure frequency (AirfieldFrequencies): the one in the clearance
             }
 
@@ -364,6 +439,7 @@ public partial class Tower
                 (taxiRouteSet, taxiHoldSaid, taxiOffSince) = (false, false, -1);   // Etappe 6: new taxi clearance, new corridor
                 home = NearestRamp(t);
                 exitDir = dir ?? exitDir;
+                depRoute = DepOf(n) ?? depRoute;   // "request taxi, FLEX departure": used with the takeoff clearance
                 ProgStart(Has(n, "progressive"), now);
                 var hp = t != null && progressive && F.Net == null ? ParkDir(t, HoldPt(rw, t)) : null;   // DCS network: no clock direction (wrong way only); N26: "request progressive taxi" right in the taxi request
                 (crossOk, crossWait) = (null, null);
@@ -386,9 +462,16 @@ public partial class Tower
 
             case "ready":
             {
-                if (F.Charted && dir != null && !F.Exit[rw].Contains(dir))   // K20: entry-only CRP is no exit of this runway on the chart
-                    return Neg($"{c}, negative, no departure via C R P {dir} from runway {RwSay(rw)}. Exit via C R P {string.Join(", ", F.Exit[rw])}, report ready for departure.");
-                exitDir = F.Charted ? dir ?? (exitDir != null && F.Exit[rw].Contains(exitDir) ? exitDir : F.Exit[rw][0]) : dir ?? exitDir;   // A92: without a map the named direction stays as the departure direction (no CRP)
+                if (DepOf(n) is { } dq)   // "ready for departure, FLEX departure"
+                {
+                    if (!dq.Rwy.Contains(rw))
+                        return Neg($"{c}, negative, {CrpSay(dq.Name)} departure is for runway {string.Join(" and ", dq.Rwy.Select(RwSay))}, runway {RwSay(rw)} in use. Report ready for departure.");
+                    depRoute = dq;
+                }
+                bool exitCh = F.Charted && ExitChart(rw);   // no exit in the chart for this runway: as without a chart
+                if (exitCh && dir != null && !F.Exit[rw].Contains(dir))   // K20: entry-only CRP is no exit of this runway on the chart
+                    return Neg($"{c}, negative, no departure via {CrpSay(dir!)} from runway {RwSay(rw)}. Exit via {string.Join(", ", F.Exit[rw].Select(CrpSay))}, report ready for departure.");
+                exitDir = exitCh ? dir ?? (exitDir != null && F.Exit[rw].Contains(exitDir) ? exitDir : F.Exit[rw][0]) : dir ?? exitDir;   // A92: without a map the named direction stays as the departure direction (no CRP)
                 if (Has(n, "unrestricted", "spiral", "tactical departure", "combat departure"))   // kept until the takeoff clearance (also while still taxiing)
                     (climbOut, climbFt) = (Has(n, "spiral", "tactical", "combat") ? "tactical" : "free", AltSlot(n) ?? 0);
                 bool onRwy = t != null && OnRunwayPos(t.X, t.Z);
@@ -433,7 +516,7 @@ public partial class Tower
                 if (Center || role == "Center") { var cb = Say($"{c}, radar service terminated, {SquawkVfr()}frequency change approved.", "Center"); CenterEnd(); return cb; }   // Center: leaving frequency; the next contact finds the next controller (Pick); LA11: on the Center frequency also after its handover to the AWACS
                 Following = false; transitFt = null;
                 bool depOff = handedOff && Phase == Phase.Away;   // A51: this is the departure sign-off (at 15 NM a second one would follow), same ending as there
-                var head = depOff && depClr && nav != null ? $"proceed direct {navName}, resume own navigation. Radar service terminated" : "radar service terminated";
+                var head = depOff && depClr && nav != null ? $"{(navName != "" ? $"proceed direct {navName}, " : "")}resume own navigation. Radar service terminated" : "radar service terminated";
                 var end = depOff && AwacsContact is { } awc ? $"contact {awc}." : SquawkVfr() + "frequency change approved.";   // A90: squawk VFR only after an assigned code, IFR never
                 var ho = depOff ? IfrHandoff() : null;   // R43: IFR route to another airfield -> handover to its Approach, as at 15 NM
                 var bye = Say(ho != null ? $"{c}, {ho}" : $"{c}, {head}, {end}", "Approach");   // before the reset: sign-off still from Departure (Dep)
@@ -444,7 +527,9 @@ public partial class Tower
 
             case "traffic":   // "traffic in sight", "looking", "negative contact": acknowledge, remember the state of the last advisory (N24), never radar vectoring
                 if (advised.Count > 0 && advised.Values.MaxBy(v => v.At) is { } last)
-                    last.St = Has(n, "negative", "not in sight", "no joy") ? 2 : Has(n, "in sight", "tally") ? 1 : 0;
+                    last.St = Has(n, "negative", "not in sight", "no joy", "no visual", "blind") ? 2 : Has(n, "in sight", "tally") ? 1 : 0;
+                if (Has(n, "in sight", "tally") && !Has(n, "negative", "not in sight", "no joy", "no visual", "blind") && advised.Select(kv => (Id: kv.Key, At: kv.Value.At)).Concat(alerted.Select(kv => (Id: kv.Key, At: kv.Value))).ToList() is { Count: > 0 } repT)
+                    sighted.Add(repT.MaxBy(x => x.At).Id);   // the traffic he refers to: the last one called (information or alert)
                 return Say($"{c}, {OneOf("roger", "copy")}.");
 
             case "airborne_ready":
@@ -551,9 +636,9 @@ public partial class Tower
                 if (role == "Tower" && Phase == Phase.Entering && t != null)   // R102: first call to Tower after "cleared ILS …, contact Tower" (Responsible), not back to Approach
                     return Say($"{hdr}, {Wind(t)}, {Qnh(t)}, continue approach, report four mile final.{TrafficNote(traffic, rw)}");
                 wantStraight = true;
-                if (intent != "fieldinsight") { wantVisual = Has(n, "visual approach"); visSeen = wantVisual && Has(n, FieldSight) && !Has(n, "negative", "not in sight", "no joy"); visAsk = false; }   // P3-AP7: also after radar vectoring/holding "cleared visual approach" instead of ILS; R115: airfield already reported in the request
+                if (intent != "fieldinsight") { wantVisual = Has(n, "visual approach", "vfr"); visSeen = wantVisual && Has(n, FieldSight) && !Has(n, "negative", "not in sight", "no joy"); visAsk = false; }   // P3-AP7: also after radar vectoring/holding "cleared visual approach" instead of ILS; R115: airfield already reported in the request
                 if (QueueAhead >= 0 && !Spaced || OtherEmergency) goto case "inbound";   // Sequence also applies to instrument approaches: holding first
-                if (t != null && !OnFinalLoose(t, rw) && (Dist(t.X, t.Z, CX, CZ) > 8 * NM || !FinalOk(rw) || Proc(rw) != "" && !wantVisual))   // R317: instrument approach from the side: vectors (≤ 30°, position before heading), not across the 6-NM point   // terrain on final: plan instead of straight-in
+                if (t != null && !OnFinalLoose(t, rw) && (Dist(t.X, t.Z, CX, CZ) > 8 * NM || !FinalOk(rw) || Proc(rw) != "" && !wantVisual || BehindSixMile(t, rw)))   // R317; behind/beside the runway the 6-NM point lies across the field, flown away from it: vectors: instrument approach from the side: vectors (≤ 30°, position before heading), not across the 6-NM point   // terrain on final: plan instead of straight-in
                 {
                     var head = Phase is Phase.Inbound or Phase.Entering ? $"{c}, roger, {(wantVisual ? "expect visual approach" : "straight in approach approved")}. " : $"{hdr}, radar contact, {Where(t)}, {Qnh(t)}. ";   // already announced (inbound): no new first contact
                     Phase = Phase.Inbound;
@@ -583,9 +668,9 @@ public partial class Tower
                     double gsFt = Math.Floor((FieldElev / Ft + refA / NM * 318) / 500) * 500, now100 = Math.Round(IndFt(t) / 100) * 100;
                     double fl = fin ? FinalFloor(rw, refA) : F.MvaLeg(t.X, t.Z, rp.X, rp.Z);   // MVA (terrain + 1000 ft) would lie above the glide path on a short final
                     double af = Math.Max(fl, Math.Min(gsFt, now100));
-                    alt = Proc(rw) != "" ? $"{AltTo(t, af)} until established{(Proc(rw) == "ILS" ? " on the localizer" : "")}, " : $" {Cap(AltTo(t, af))}.";
+                    alt = Proc(rw) != "" ? $"{AltTo(t, af)}{Until(Proc(rw))}, " : $" {Cap(AltTo(t, af))}.";
                 }
-                // R220: clearance without localizer frequency (it is in the "expect"); R217: climb-out on practice approach; R271: PAR without lost-comm instruction (R221) as long as there is no talk-down
+                // R220: clearance without localizer frequency (it is in the "expect"); R217: climb-out on practice approach; R271: PAR lost-comm instruction comes with the talk-down setup (ParSetup)
                 return Say((vis ? $"{hdr}, cleared visual approach runway {RwSay(rw)}, {Qnh(t)}."
                     : Proc(rw) != "" ? $"{hdr}, {alt}cleared {Proc(rw)} approach runway {RwSay(rw)}{OnTheGo(rw)}, {Qnh(t)}."
                     : $"{hdr}, straight in approach runway {RwSay(rw)} approved{OnTheGo(rw)}, {Qnh(t)}.") + vec + (Proc(rw) != "" ? "" : alt) +
@@ -634,7 +719,7 @@ public partial class Tower
             case "pattern":
             {
                 if (t != null && Dist(t.X, t.Z, CX, CZ) > 5 * NM)
-                    return Neg($"{c}, negative, you are {Where(t)}, not in the pattern. Report {(F.Charted ? "C R P or " : "")}initial.");
+                    return Neg($"{c}, negative, you are {Where(t)}, not in the pattern. Report {(F.Charted && EntryChart(rw) ? "C R P or " : "")}initial.");
                 if (t != null && PatternOffset(t.X, t.Z, rw) < -900)
                     return Say($"{c}, wrong side, {Hand(rw)} pattern runway {RwSay(rw)}, report base.");
                 // A44: "base" after the break or in the pattern in base position (or already on final) is, like "final", the landing report; gear up without "gear down": first "check wheels down"
@@ -661,10 +746,32 @@ public partial class Tower
                 return Say(no > 1 ? $"{c}, {pw}number {no}, follow the {Follow(lead!, rw)}, report base." : $"{c}, {pw}number one, report base.");
             }
 
+            case "route":   // charts.jsonc route on request: fixes with altitudes, then report the C R P "to" (handover to Tower like a C R P entry)
+            {
+                var ro = RouteOf(n)!;
+                if (!ro.Rwy.Contains(rw))
+                    return Neg($"{hdr}, negative, {CrpSay(ro.Name)} recovery is for runway {string.Join(" and ", ro.Rwy.Select(RwSay))}, runway {RwSay(rw)} in use.");
+                (arrRoute, routeAt, entry, Phase, vec, holding, crpAsked, crpWaved, Expected) = (ro, 0, ro.To, Phase.Inbound, null, false, false, false, false);
+                var (p0, sp0) = (ro.Pts[0], NextSpoken(ro, 0) ?? CrpSay(ro.To));   // #57: silent points are not said
+                var cross = CrossTxt(ro);
+                return Say($"{hdr}, {Qnh(t)}, cleared {CrpSay(ro.Name)} recovery runway {RwSay(rw)}, proceed direct {sp0}{SteerTo(t, (p0.X, p0.Z), sp0)}" +
+                           $"{(cross != "" ? ", cross " + cross : "")}, report {CrpSay(ro.To)}.{TrafficNote(traffic, rw)}", "Approach");
+            }
+
+            case "fix":   // fix of the route reported: on to the next one
+            {
+                var r = Rt!;
+                routeAt = RouteFix(n) + 1;
+                (nav, navName) = (routeAt < r.Pts.Length ? (r.Pts[routeAt].X, r.Pts[routeAt].Z) : Crp[r.To], NextSpoken(r, routeAt) ?? CrpSay(r.To));   // #57
+                if (routeAt >= r.Pts.Length) arrRoute = null;
+                return Say($"{c}, roger, report {CrpSay(r.To)}.", "Approach");
+            }
+
             case "crp":
             {
+                arrRoute = null;
                 vec = null; crpAsked = crpWaved = false;   // new attempt to C R P: reporting obligation from the start
-                if (!F.Charted)   // without map: radar vectoring by terrain
+                if (!F.Charted || !EntryChart(rw))   // without map (or runway without entries in the chart): radar vectoring by terrain
                 {
                     var no = $"{c}, negative, no reporting points at {F.Name.Replace('-', ' ')}. ";
                     if (holding) return Neg(no + "Continue holding.");
@@ -677,21 +784,21 @@ public partial class Tower
                 if (!Allowed(rw).Contains(at))
                 {
                     entry = AssignEntry(t, rw, null);
-                    if (Phase == Phase.Entering && navName.StartsWith("C R P ")) (nav, navName) = (Crp[entry], $"C R P {entry}");   // K22
+                    if (Phase == Phase.Entering && F.Crp.Keys.Any(k => CrpSay(k) == navName)) (nav, navName) = (Crp[entry], CrpSay(entry!));   // K22
                     else Phase = Phase.Inbound;
-                    return Neg($"{c}, negative, C R P {at} is not available for runway {RwSay(rw)}. " +
-                               $"Enter via C R P {entry}{SteerTo(t, Crp[entry], $"C R P {entry}")}, report C R P {entry}.");
+                    return Neg($"{c}, negative, {CrpSay(at!)} is not available for runway {RwSay(rw)}. " +
+                               $"Enter via {CrpSay(entry!)}{SteerTo(t, Crp[entry], CrpSay(entry!))}, report {CrpSay(entry!)}.");
                 }
                 if (t != null && Dist(t.X, t.Z, Crp[at].X, Crp[at].Z) > 2.5 * NM)
                 {
                     entry = at;
-                    if (Phase == Phase.Entering && navName.StartsWith("C R P ")) (nav, navName) = (Crp[at], $"C R P {at}");   // K22: handed over early, stays with the Tower
+                    if (Phase == Phase.Entering && F.Crp.Keys.Any(k => CrpSay(k) == navName)) (nav, navName) = (Crp[at], CrpSay(at!));   // K22: handed over early, stays with the Tower
                     else Phase = Phase.Inbound;
-                    return Neg($"{c}, negative, you are {MilesTxt(Dist(t.X, t.Z, Crp[at].X, Crp[at].Z))} from C R P {at}. " +
-                               $"{Cap(Steer(t, Crp[at], $"C R P {at}"))}, report C R P {at}.");
+                    return Neg($"{c}, negative, you are {MilesTxt(Dist(t.X, t.Z, Crp[at].X, Crp[at].Z))} from {CrpSay(at!)}. " +
+                               $"{Cap(Steer(t, Crp[at], CrpSay(at!)))}, report {CrpSay(at!)}.");
                 }
                 entry = at;
-                if (holding) { holdFt = HoldFtAt(Crp[at]); holdArrived = false; lastHoldInfo = now; Phase = Phase.Inbound; nav = Crp[at]; navName = $"C R P {at}"; return Say($"{c}, hold at C R P {at}, {Alt(holdFt)}{HoldSpd(null)}, {OneOf("I will call you", "I will advise")}."); }
+                if (holding) { holdFt = HoldFtAt(Crp[at]); holdArrived = false; lastHoldInfo = now; Phase = Phase.Inbound; nav = Crp[at]; navName = CrpSay(at!); return Say($"{c}, hold at {CrpSay(at!)}, {Alt(holdFt)}{HoldSpd(null)}, {OneOf("I will call you", "I will advise")}."); }
                 return AtCrp(at);
             }
 
@@ -699,8 +806,8 @@ public partial class Tower
             {
                 Expected = false;
                 if (Phase == Phase.Entering && role == "Tower" && t != null && navName == "circle") return CircleJoin(t, traffic, hdr);   // R212
-                if (Phase == Phase.Entering && role == "Tower" && t != null && entry != null && navName == $"C R P {entry}")   // K22: handed over 2 minutes before the C R P
-                    return Say($"{hdr}, {Wind(t)}, {Qnh(t)}, report C R P {entry}." + TrafficNote(traffic, rw));
+                if (Phase == Phase.Entering && role == "Tower" && t != null && entry != null && navName == CrpSay(entry!))   // K22: handed over 2 minutes before the C R P
+                    return Say($"{hdr}, {Wind(t)}, {Qnh(t)}, report {CrpSay(entry!)}." + TrafficNote(traffic, rw));
                 if (Phase == Phase.Entering && role == "Tower" && t != null)   // First call after handover from Approach (also close to the airfield: continue as handed over)
                     return Say($"{hdr}, {Wind(t)}, {Qnh(t)}, " + (navName == "six mile final" ? "continue approach, report four mile final."
                                : $"{(lastAltFt >= 0 ? "" : AltTo(t, PatternFt) + ", ")}report {(navName == "overhead" ? "overhead" : $"initial runway {RwSay(rw)}")}.") + TrafficNote(traffic, rw));   // R256: altitude already instructed by Approach (lastAltFt), Tower does not repeat it
@@ -755,7 +862,7 @@ public partial class Tower
                     return Say(info + $"{Cap(Steer(t, fix, "the hold"))}, {AltTo(t, holdFt)}{HoldSpd(t)}, {(HoldAt(fix) is { } hr2 ? $"hold {hr2}, {MilesTxt(hd)} to go" : $"{MilesTxt(hd)} to the holding point")}, " +
                                $"I will call you there. {Cap(hold)}");
                 }
-                if (!F.Charted)
+                if (!F.Charted || !EntryChart(rw))
                 {
                     entry = null;
                     Phase = Phase.Entering; lastAltFt = PatternFt;   // R256: altitude already given
@@ -765,7 +872,7 @@ public partial class Tower
                 }
                 entry = AssignEntry(t, rw, dir); crpAsked = crpWaved = false;
                 Phase = Phase.Inbound;
-                return Say(info + $"Enter via C R P {entry}{SteerTo(t, Crp[entry], $"C R P {entry}")}, not above {Alt(MaxFt)}, report C R P {entry}.{TrafficNote(traffic, rw)}");
+                return Say(info + $"Enter via {CrpSay(entry!)}{SteerTo(t, Crp[entry], CrpSay(entry!))}, not above {Alt(MaxFt)}, report {CrpSay(entry!)}.{TrafficNote(traffic, rw)}");
             }
 
             case "runway":   // "request runway 31" (request checked above)
@@ -868,6 +975,9 @@ public partial class Tower
                 return Say($"{c}, {OneOf("good day", "good bye")}.");
             case "ground_say":
                 return Say($"{c}, you are on the ground. Say request.");
+            case "shutdown":   // #28: parked where he says (his squadron's ramp, no DCS stand there), the flight ends
+                if (Phase == Phase.TaxiIn && t != null && !OnRunwayPos(t.X, t.Z)) Park();
+                return Say($"{c}, roger.", "Ground");
             default:   // not understood: ask back, keep the last transmission ("say again" then repeats it), the repeat does not count as a readback
                 lastIntent = "";
                 if (addressed == null && Chatter(n)) return new();   // A140: flight radio does not go to the station
@@ -890,6 +1000,10 @@ public partial class Tower
         return new[] { Phase is Phase.TaxiOut or Phase.TaxiIn ? "hold short" : "hold(?:ing)? short", "hold(?:ing)? position", "giv(?:e|ing) way", "line up", "contact", "vacate", "when vacated", "when ready", "expect", "squawk(?:ing)?", "qnh", "altimeter", "until established", "frequency change", "own navigation", "maintain vfr" }   // TaxiOut: "holding short runway 25" reports at the holding point, Ground's "Hold short, contact Tower" is read back only as "hold short" (R111); LA06: likewise taxiing in
                    .Any(p => After(n, p) is { } v && (v == After(l, p) || p is "qnh" or "altimeter" && v == After(l, p == "qnh" ? "altimeter" : "qnh")))   // "altimeter 1013" reads back "QNH 1013"
             || HdgSlot(n) is { } h && h == HdgSlot(l)   // the pilot states a heading only when reading back ("request heading" is a request)
+            // #38 (log Nellis: "contact Showtime three two four decimal four" -> "324, 2004, Vapor 7-1." 0.59 -> "say again"): assigned frequency, Whisper drops "decimal" or turns it into extra digits
+            || Regex.Match(l, @"\b(\d) (\d) (\d) point (\d(?: \d)*)") is { Success: true } fm && Regex.IsMatch(Regex.Replace(NoCs(n), @"\D", ""), $@"^{fm.Groups[1]}{fm.Groups[2]}{fm.Groups[3]}\d{{0,4}}{fm.Groups[4].Value.Replace(" ", "")}$")
+            // Forum (Heling: "Descend to 2000 ft, Hawk 1-1" -> "say again"): the altitude he was given counts too when another transmission (traffic, heading) came in between
+            || intent == "unknown" && AltSlot(n) is { } ga && (vec != null && (ga == vecFt || ga == lastAltFt) || holding && ga == holdFt)
             || intent == "unknown" && (AltSlot(n) is { } a && a == AltSlot(l) || RwySlot(n) is { } rn && rn == RwySlot(l)
                                        || Regex.Replace(NoCs(n), @"\D", "") is { Length: >= 3 } d && Regex.Replace(l, @"\D", "").Contains(d));   // values only: "4321, 1013, Enfield 1-1", "Tower 134.0, Enfield 1-1"
     }
@@ -897,7 +1011,7 @@ public partial class Tower
     /// Forum 0.9.7: acknowledgement without readback of a controller transmission: only the own callsign (AIM 4-2-3) and/or "approved", "starting up", "rolling", "taxiing", "lining up" …
     /// station: the station name may stand in front ("Kutaisi Departure, Enfield 1-1"); forum 0.15: "okay"/"thanks" are acknowledgements too
     bool AckOnly(string n, bool station = false) => last != null &&
-        Regex.Replace(NoCs(n), @"\b(?:roger|copy|copied|wilco|affirm(?:ative)?|approved|understood|okay|ok|thanks|thank you|starting(?: up| engines?)?|rolling|taxiing|lining up|switching(?: over)?"
+        Regex.Replace(NoCs(n), @"\b(?:roger|copy|copied|wilco|affirm(?:ative)?|approved|understood|okay|ok|thanks|thank you|starting(?: up| engines?)?|rolling|taxiing|lining up|switching(?: over)?|push(?:ing)?(?: (?:to )?(?:ground|tower|approach|departure|radar))?"
             + (station ? "|ground|tower|approach|departure|radar|" + string.Join("|", $"{F.Name}-{F.Callsign}".ToLowerInvariant().Split('-', ' ', StringSplitOptions.RemoveEmptyEntries).Select(Regex.Escape)) : "") + @")\b", " ").Trim() == "";
     /// Transmission without the own callsign (also misheard)
     string NoCs(string n) => Regex.Replace(n, @"\b([a-z]{3,}) \d(?: ?\d)?\b", m => !NotCallsign.Contains(m.Groups[1].Value) && (SameCallsign(m.Value, callsign) || Digits(m.Value) == Digits(callsign)) ? " " : m.Value);
@@ -905,13 +1019,20 @@ public partial class Tower
     internal string IntentOf(string text, Telemetry? t) => Intent(Normalize(text), t == null || OnGround(t));   // Debug log (Program)
     /// Destination of the route clearance after "clearance"/"ifr", not the station called; most name words (Krasnodar Center/Pashkovsky)
     Airfield? ClrDest(string n) => Named(Regex.Match(n, @"\b(?:clearance|ifr)\b.*").Value);
+    /// #61: range as clearance limit ("request clearance to Three Lakes Range via ..."): full zone name or its call sign directly before "range", longest name wins.
+    Ops.Zone? ClrRange(string n)
+    {
+        var s = Regex.Match(n, @"\b(?:clearance|ifr)\b.*").Value;
+        return Ops.Ranges.Where(z => Ops.NameRx(z.Name).IsMatch(s) || Ops.CallWords(z).ToList() is { Count: > 0 } cw && Regex.IsMatch(s, $@"\b(?:{string.Join("|", cw.Select(Regex.Escape))}) range\b"))
+            .OrderByDescending(z => z.Name.Length).FirstOrDefault();
+    }
 
     string Intent(string n, bool ground)
     {
         if (Has(n, "cancel emergency", "cancel mayday", "cancel pan", "emergency cancel")) return "cancelemergency";
         // R101: emergency call only with MAYDAY/PAN PAN or own "emergency"; readbacks ("emergency traffic/in progress", "hold short, …") not
         if (Has(n, "mayday", "pan pan") || Regex.IsMatch(n, @"\bemergency\b(?! traffic| in progress| services)") && !Has(n, "hold short", "holding short", "continue approach", "expedite vacating")) return "emergency";
-        if (Has(n, "minimum fuel", "min fuel", "low fuel", "bingo")) return "minfuel";   // before "inbound"/rest, otherwise first contact or on the ground "say again"
+        if (Has(n, "minimum fuel", "min fuel", "low fuel", "low on fuel", "short on fuel", "fuel critical", "bingo")) return "minfuel";   // before "inbound"/rest, otherwise first contact or on the ground "say again"
         // R100 before R251: "aborting, bird strike" is an aborted takeoff (takeoff clearance expires)
         if (ground && (Phase == Phase.ClearedTakeoff || Phase == Phase.HoldShort && lineUp) && Has(n, "abort", "reject", "stopping", @"cancel(?:ling)? (?:my )?take ?off")) return "rto";
         if (Has(n, "hung", "hot gun")) return "hung";   // R251
@@ -923,16 +1044,21 @@ public partial class Tower
         {
             if (Has(n, "clearance", "ifr to") && !Has(n, "takeoff", "take off", "landing")) return "clearance";
             if (Has(n, "progressive") && (Phase == Phase.TaxiOut || Phase == Phase.TaxiIn && taxiInTold)) return "progressive";   // N26: otherwise part of the taxi request (taxi/taxiin)
-            if (Phase == Phase.TaxiIn && taxiInTold && lastTel is { } it && CrossIn(it) is { } ix && NearRwy(it, ix) && Has(n, "cross", "holding short")) return "cross";   // LA06: holding short of a runway on the way to parking
+            if (Phase == Phase.TaxiIn && taxiInTold && lastTel is { } it && CrossIn(it) is { } ix && NearRwy(it, ix) && Has(n, "cross", "hold(?:ing)? short")) return "cross";   // LA06: holding short of a runway on the way to parking
+            // #28 (log Nellis): "at parking, shutting down" after landing is the report that he is parked (also off a DCS stand), not a taxi request
+            if (Phase is Phase.TaxiIn or Phase.Parked && taxiInTold && Has(n, "shutting down", "shut ?down", "engines? (?:off|shut)", "parked", "in (?:the )?(?:chocks|blocks)", "(?:shutting|chatting) down", "at (?:the )?(?:parking|ramp|apron|stand|spot)") && !Has(n, "request")) return "shutdown";
             // A7: parking spot/apron before departure only as destination ("taxi to parking"), "parking spot 12, information Charlie, request taxi" states the location
-            if (Has(n, "vacated", "clear of") && !Has(n, "holding point", "departure", "take off", "takeoff") || Regex.IsMatch(n, (Phase is Phase.ClearedLand or Phase.TaxiIn ? @"\b" : @"\bto (?:the )?") + "(?:parking|ramp|apron)") ||   // R267: "runway vacated, request taxi to holding point" (after aborted takeoff) = back to the start
+            // #49 (log Nellis): the first call after vacating, before any taxi clearance: "at alpha", "cleared runway at Alpha" is the taxi request
+            bool firstAfterLand = Phase == Phase.ClearedLand || Phase == Phase.TaxiIn && !taxiInTold;
+            if (Has(n, "vacated", "clear of") && !Has(n, "holding point", "departure", "take off", "takeoff") ||
+                firstAfterLand && Regex.IsMatch(n, @"\bcleared (?:the )?runway\b|\bat (?:taxiway )?(?:" + string.Join("|", Spell) + @")\b") || Regex.IsMatch(n, (Phase is Phase.ClearedLand or Phase.TaxiIn ? @"\b" : @"\bto (?:the )?") + "(?:parking|ramp|apron)") ||   // R267: "runway vacated, request taxi to holding point" (after aborted takeoff) = back to the start
                 (Has(n, "taxi") && !Has(n, "departure", "runway", "holding", "take off", "takeoff") &&
                  (Phase == Phase.ClearedLand || Phase == Phase.TaxiIn && !taxiInTold))) return "taxiin";   // after taxi clearance to parking: "request taxi" = start again
             if (Has(n, "taxi") && OnRwyWait && Has(n, "departure", "take off", "takeoff")) return "ready";   // LA04 (log Kutaisi): "request taxi, request takeoff" on the runway is the takeoff request
             if (Has(n, "taxi")) return "taxi";   // A6: before "start" ("engines started, request taxi"); "request startup and taxi" is answered by case "taxi" too
             if (StartReq(n) && Phase is Phase.Parked or Phase.StartupApproved) return "startup";   // otherwise e.g. the takeoff clearance would be lost
-            if (Phase == Phase.TaxiOut && lastTel is { } ct && CrossNext(ct) is { } cx && NearRwy(ct, cx) && Has(n, "cross", "ready", "departure", "take off", "takeoff", "holding short", "holding point")) return "cross";   // Forum 0.9.7: at the parallel runway holding point
-            if (Has(n, "ready", "departure", "take off", "takeoff", "holding short", "holding point", "unrestricted", "spiral")) return "ready";
+            if (Phase == Phase.TaxiOut && lastTel is { } ct && CrossNext(ct) is { } cx && NearRwy(ct, cx) && Has(n, "cross", "ready", "departure", "take off", "takeoff", "hold(?:ing)? short", "holding point")) return "cross";   // Forum 0.9.7: at the parallel runway holding point
+            if (Has(n, "ready", "departure", "take off", "takeoff", "hold(?:ing)? short", "holding point", "unrestricted", "spiral") || F.Backtrack.Contains(Runway) && Has(n, "back ?track")) return "ready";   // "request backtrack" where the holding point leads onto the middle of the runway
             if (Has(n, "inbound", "landing", "final", "initial")) return "ground_say";
         }
         else
@@ -949,7 +1075,7 @@ public partial class Tower
             if (transitFt != null && Has(n, "clear of the", "outside the", @"(?:leaving|left) the (?:control )?zone") && !Has(n, "report")) return "transitoff";   // before transit ("transit complete, clear of the zone"), readback "report clear of the zone" not
             if (Phase is Phase.Away or Phase.Departing && Has(n, "transit", "crossing", "cross the", "overfl", "pass through") && !Has(n, "inbound", "landing")) return "transit";   // N3 ("transition" too; "crossing the coast, inbound for landing" is a first call)
             if (Phase is Phase.Inbound or Phase.Entering or Phase.Initial or Phase.Pattern or Phase.ClearedLand && Has(n, "zone transit", "request transit") && !Has(n, "inbound", "landing")) return "transitno";   // R389: in the landing flow no transit, not a new check-in
-            if (Has(n, "visual approach") && !Ifr && !Has(n, "cancel ifr", "cancelling ifr", "vfr")) return "straightin";   // P3-AP7: straight-in approach without procedure; IFR weather: "visual" rejects
+            if ((Has(n, "visual approach") && !Has(n, "vfr") || Has(n, "vfr") && Has(n, "straight in")) && !Ifr && !Has(n, "cancel ifr", "cancelling ifr")) return "straightin";   // "request VFR straight-in" is no overhead   // P3-AP7: straight-in approach without procedure; IFR weather: "visual" rejects
             if (Has(n, "cancel ifr", "cancelling ifr", "vfr", "visual approach", "visual recovery")) return "visual";
             if (Has(n, FieldSight) && !Has(n, "report", "request", "inbound", "landing", "final", "initial", "overhead")) return "fieldinsight";   // R115: reply to "report field in sight" (airfield/runway in sight); after cancel/flight following/visual ("field in sight, cancel IFR" stays a sign-off)
             if (Has(n, "leaving frequency", "leaving your frequency")) return "ffoff";   // itself requires "report leaving frequency"
@@ -965,15 +1091,19 @@ public partial class Tower
             if (Has(n, "airborne", "passing", "climbing", "departed", "out of") && Phase is Phase.ClearedTakeoff or Phase.Departing or Phase.Away) return "airborne";   // R40: also below 100 m
             if (Has(n, "start up", "startup", "taxi", "parking")) return "air_ground";
             if (Has(n, "separate", "split", "radar trail", "trail recovery")) return "separate";
-            if (Has(n, "ils", "straight in", "instrument", "tacan approach", "vor approach", "par approach", "p a r", "radar approach", "ifr", "practice approach")) return "straightin";
+            if (Has(n, "ils", "i l s", "straight in", "instrument", "tacan approach", "vor approach", "par approach", "p a r", "gca", "g c a", "radar approach", "precision approach", "surveillance approach", "ifr", "practice approach",
+                    @"(?:request|requesting) (?:the |a )?(?:tacan|vor|ndb)\b") || req && Has(n, "vectors") && Has(n, "final")) return "straightin";
             if (Has(n, "final")) return "final";
+            if (req && Has(n, "vectors") && !Has(n, "final", "ils", "i l s", "tacan", "instrument", "par", "gca")) return "inbound";   // "request vectors to initial" is no initial report
             if (Has(n, "initial")) return "initial";
             if (Has(n, "overhead")) return "overhead";
             if (Has(n, "downwind", "base", "break")) return "pattern";
+            if (!ground && RouteFix(n) >= 0) return "fix";   // charts.jsonc route: fix passed ("Gass Peak")
+            if (!ground && Rt == null && RouteOf(n) != null && Phase is Phase.Away or Phase.Departing or Phase.Inbound) return "route";   // "inbound via MINTT", "request MINTT recovery"
             if (Has(n, "crp", "c r p", "reporting point", "entry point") ||
-                (Phase == Phase.Inbound && Direction(n) != null && !Has(n, "inbound", "landing"))) return "crp";
+                ((Phase == Phase.Inbound || Phase == Phase.Entering && entry != null && navName == CrpSay(entry)) && Direction(n) != null && !Has(n, "inbound", "landing"))) return "crp";   // K22: named point ("Craig") also to the Tower
             if (req && RwySlot(n) != null && !Has(n, "inbound", "landing", "recovery", "full stop", "rejoin")) return "runway";   // before "approach" (call name)
-            if (Has(n, "in sight", "looking", "negative contact", "no joy") && !Has(n, "field", "runway", "airport")) return "traffic";   // Reply to traffic advisory
+            if (Has(n, "in sight", "looking", "negative contact", "no joy", "tally", "blind", "negative visual", "no visual") && !Has(n, "field", "runway", "airport")) return "traffic";   // Reply to traffic advisory
             if (Has(n, "inbound", "landing", "recovery", "full stop", "rejoin")) return "inbound";
             // First call to Departure after takeoff ("Kutaisi Approach, Enfield 1-1", "…, with you"): check-in, not a landing announcement
             if ((Phase is Phase.ClearedTakeoff or Phase.Departing || Phase == Phase.Away && handedOff) && (Has(n, "with you", "checking in", "check in") || Addressed(n) == "Approach" && Rest(n) == "unknown")) return "airborne";   // LA09: "checking in" like "with you"
@@ -1014,7 +1144,7 @@ public partial class Tower
         "fieldinsight" => visAsk ? "Approach" : null,   // R115: only the requested visual report belongs to Approach, otherwise the station called acknowledges (on final the Tower)
         "centercheck" => "Center",
         "crp" when Phase == Phase.Entering => "Tower",   // K22: handed over 2 minutes before the point
-        "straightin" or "crp" or "airborne" or "ff" or "ffoff" or "leavezone" => "Approach",
+        "straightin" or "crp" or "airborne" or "ff" or "ffoff" or "leavezone" or "route" or "fix" => "Approach",
         "transit" => t != null && Dist(t.X, t.Z, CX, CZ) < 5 * NM ? "Tower" : "Approach",   // N3: without a station called (OnTranscript otherwise takes the one called)
         "transitoff" => transitBy,
         "inbound" when Phase == Phase.Inbound && vec != null && !holding => "Approach",   // under radar vectoring, also close to the field
@@ -1077,7 +1207,12 @@ public partial class Tower
     bool SameFreq(string r) => (F.HasFreq || F.Own.Count > 0) && Math.Abs(FreqOf(F, Dep(r)) - FreqOf(F, Dep(role))) < 0.005;
 
     /// Other airfield named in the transmission (most name words), null = none.
-    Airfield? Named(string n) => ByName(All.Where(f => f.Name != F.Name), w => Regex.IsMatch(n, $@"\b{w}\b"));
+    Airfield? Named(string n) => ByName(All.Where(f => f.Name != F.Name), w => Regex.IsMatch(n, $@"\b{w}\b")) ?? All.FirstOrDefault(f => f.Name != F.Name && IcaoRx(f.Icao) is { } rx && Regex.IsMatch(n, rx));
+    /// #32: ICAO code spoken in the alphabet ("echo tango mike november"), spelled ("e t m n") or as one word ("etmn"); null = airfield without code.
+    static string? IcaoRx(string icao) => icao.Length != 4 || !icao.All(c => char.IsAsciiLetterUpper(c) || char.IsAsciiDigit(c)) ? null   // "UG5X": digits as Normalize writes them
+        : @"\b" + string.Join(@"[ .-]*", icao.Select(ch => char.IsAsciiDigit(ch) ? ch.ToString() : $"(?:{Spell[ch - 'A']}|{char.ToLowerInvariant(ch)})")) + @"\b";
+    static readonly string[] Spell = { "alpha|alfa", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliett?", "kilo", "lima", "mike", "november", "oscar",
+                                       "papa", "quebec", "romeo", "sierra", "tango", "uniform", "victor", "whiske?y", "x[ -]?ray", "yankee", "zulu" };
     /// N1: airfield of the opposing side (neutral and without player's side: never).
     bool Hostile(Airfield? f) => f is { Side: > 0 } && Side > 0 && f.Side != Side;
     /// Threat for a tactical departure: enemy aircraft airborne or an enemy airfield within 60 NM
@@ -1135,11 +1270,13 @@ public partial class Tower
             => ("Tower", $"{Miles(Approach(t.X, t.Z, Runway).along)} mile final, gear down, {option ?? "full stop"}"),   // R314: first call on the long final with distance ("9 mile final, gear down, full stop")
         Phase.Entering when towerDue || t != null && (navName == "six mile final" ? !OnFinalLoose(t, Runway) : nav is { } np && Dist(t.X, t.Z, np.X, np.Z) > 2.5 * NM)
             => ("Tower", "inbound"),   // handed over or still far away: first call to Tower instead of "negative, you are 8 miles from initial"
-        Phase.Entering when entry != null && navName == $"C R P {entry}" => ("Tower", "crp"),   // K22
+        Phase.Entering when entry != null && navName == CrpSay(entry!) => ("Tower", "crp"),   // K22
         Phase.Entering => ("Tower", navName switch { "overhead" => "overhead", "six mile final" => "four mile final, gear down", "high key" => "high key", "low key" => "low key, gear down", "circle" => "inbound", _ => "initial" }),   // R212: Circling: first call
         Phase.Initial => t == null || !OnFinalLoose(t, Runway) && Dist(t.X, t.Z, CX, CZ) < 5 * NM ? ("Tower", $"base, gear down, {option ?? "full stop"}") : null,   // on initial nothing (wait for break, "final" would give the landing clearance), then "base"
         Phase.Pattern => t == null || OnFinalLoose(t, Runway) ? ("Tower", option is "touch and go" or "low approach" or "low pass" or "the option" ? $"final, {option}" : "final, gear down, full stop")
                        : option == "low pass" ? null : ("Tower", $"base, gear down, {option ?? "full stop"}"),   // A47: low pass without pattern; R200: landing report base with gear
+        Phase.Away when heliArr > 0 => heliArr == 1 ? ("Tower", "two miles, inbound for landing") : null,   // helicopter: report two miles; cleared to land: nothing to say
+        Phase.TaxiIn when !taxiInTold && IsHeli && t != null && !OnRunwayPos(t.X, t.Z) => ("Ground", "on the ground, request air taxi to parking"),   // landed beside the runway
         Phase.Away when intr is 1 or 2 && transitFt == null && t != null && !OnGround(t) => ("Tower", "request zone transit"),   // N2: called in the zone without contact, legal way (N3)
         Phase.Departing => ("Approach", "airborne, climbing"),
         Phase.TaxiIn when taxiInTold && t != null && CrossIn(t) is { } ci && NearRwy(t, ci) => ci == crossOk || ci == crossWait ? null : ("Ground", $"holding short runway {RwSay(ci)}, request crossing"),   // LA06: runway on the way to parking
@@ -1175,7 +1312,7 @@ public partial class Tower
 
     /// LA06: taxi in: runway between the aircraft and its parking position (nearest first, not the landing runway), name in the direction of the active runway. Without taxiways:
     /// only if the straight line to the parking position crosses the centerline within the runway (otherwise it goes around its end).
-    string? CrossIn(Telemetry t) => spot is not { } sp ? null : F.Ends.Where(o => HdgDiff(o.Hdg, F.End(Runway).Hdg) < 90 && !Landed(o.Name)).Select(o =>
+    string? CrossIn(Telemetry t) => (spot ?? ((!ParkSpot || F.RampOnly) && Phase == Phase.TaxiIn && home != null ? (home.X, home.Z) : null)) is not { } sp ? null : F.Ends.Where(o => HdgDiff(o.Hdg, F.End(Runway).Hdg) < 90 && (!Landed(o.Name) || vacatedAt > landedAt)).Select(o =>   // #45: the landing runway counts once vacated (single runway field: parking is on the other side)
     {
         double la = (t.X - o.CX) * o.Dz - (t.Z - o.CZ) * o.Dx, lb = (sp.X - o.CX) * o.Dz - (sp.Z - o.CZ) * o.Dx;   // lateral: aircraft, parking position
         double aa = (t.X - o.CX) * o.Dx + (t.Z - o.CZ) * o.Dz, ab = (sp.X - o.CX) * o.Dx + (sp.Z - o.CZ) * o.Dz;   // along
@@ -1194,6 +1331,7 @@ public partial class Tower
         var c = Cs();
         if (CrossBlock(traffic, x) is { } b) { (crossWait, crossRole) = (x, role); return $"{c}, hold short runway {RwSay(x)}, traffic {Describe(b, x)}."; }
         (crossOk, crossWait) = (x, null);
+        taxiSaid = taxiSaid?.Replace($", hold short runway {RwSay(x)}", "");   // issue #62: crossed now, a later "wrong way" must not repeat the hold short
         if (Phase == Phase.TaxiIn) return $"{c}, cross runway {RwSay(x)}, continue to {(parkNum > 0 ? $"parking spot {StandName(parkNum)}" : "parking")}.";   // LA06
         return $"{c}, cross runway {RwSay(x)}, hold short runway {RwSay(Runway)}" +
                (role == "Tower" || SameFreq("Tower") ? ", report ready for departure." : $", contact {Contact("Tower")} when ready for departure.");

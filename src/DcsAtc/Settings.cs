@@ -2,14 +2,94 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using NAudio.Wave;
 
 namespace DcsAtc;
 
-/// Settings window (DcsAtc --settings) in the radio wheel look: callsign and general, writes config.jsonc (comments stay).
+/// Settings window (DcsAtc --settings) in the radio wheel look: sidebar with one page per topic, writes config.jsonc (comments stay).
 /// The running app applies callsign, volume, pace and radio options immediately (Program.ReloadLive).
 static class Settings
 {
+    /// Ko-fi supporters, named on the "Thanks" page (only with their OK, under the name they want)
+    static readonly string[] Supporters = { "Heling", "buur", "Pascali Alessandro", "Kampfkoloss", "JSF_Aggie" };
+
+    internal static string InstallationReport(string dir)
+    {
+        // Public support report: fixed package filenames and status only.
+        var lines = new List<string> { $"DCS-ATC {Update.Own}", RuntimeInformation.OSDescription, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss zzz}", "" };
+        foreach (var file in new[] { @"models\ggml-small.en.bin", @"tools\whisper\Release\whisper-cli.exe", @"tools\piper\piper.exe", @"tools\ffmpeg\ffmpeg.exe" })
+            lines.Add(Path.GetFileName(file) + ": " + (File.Exists(Path.Combine(dir, file)) ? L("vorhanden", "present") : L("fehlt", "missing")));
+        return string.Join(Environment.NewLine, lines) + Environment.NewLine;
+    }
+
+    /// Bug report zip: logs, config (API key blanked), frequencies, modules, own charts*.jsonc (also in charts\), info.txt. Missing files skipped, logs read while the app writes them, at most the last 20 MB each.
+    internal static void CollectDiagnostics(string dir, Stream output)
+    {
+        using var zip = new System.IO.Compression.ZipArchive(output, System.IO.Compression.ZipArchiveMode.Create, true);
+        void Add(string rel)
+        {
+            var path = Path.Combine(dir, rel);
+            if (!File.Exists(path)) return;
+            try
+            {
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                if (fs.Length > 20_000_000) fs.Seek(-20_000_000, SeekOrigin.End);
+                var entry = zip.CreateEntry(rel.Replace('\\', '/'), System.IO.Compression.CompressionLevel.Optimal);
+                using var o = entry.Open();
+                var w = new StreamWriter(o);
+                w.Write(Program.MaskKey(new StreamReader(fs).ReadToEnd(), rel == "config.jsonc" ? "" : "***"));   // key also in old logs (START line)
+                w.Flush();
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
+        foreach (var f in new[] { "atc-log.txt", "atc-debug.txt", "config.jsonc", "frequencies.jsonc", "modules.txt" }) Add(f);
+        foreach (var d in new[] { dir, Path.Combine(dir, "charts") })
+            if (Directory.Exists(d))
+                foreach (var f in Directory.GetFiles(d, "charts*.jsonc")) Add(Path.GetRelativePath(dir, f));
+        var info = zip.CreateEntry("info.txt").Open();
+        using var iw = new StreamWriter(info);
+        iw.Write($"DCS-ATC {Update.Own}\r\n{RuntimeInformation.OSDescription}\r\n{DateTime.Now:yyyy-MM-dd HH:mm:ss zzz}\r\n");
+        var marks = ReportFields(ReadLog(dir)).Marks;
+        if (marks.Count > 0) iw.Write("\r\nLog marks of this run:\r\n" + string.Join("\r\n", marks) + "\r\n");
+    }
+
+    /// atc-log.txt while the app writes it (empty if missing).
+    static string ReadLog(string dir)
+    {
+        try
+        {
+            using var fs = new FileStream(Path.Combine(dir, "atc-log.txt"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            return new StreamReader(fs).ReadToEnd();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return ""; }
+    }
+
+    /// Bug report data from the last run in atc-log.txt (the settings window is its own process): map from the Session line, aircraft from the last
+    /// "Spieler ... (type) als ..." line, the log marks of the run and the date and time of the last one ("2026-11-18 22:15:03", empty without a mark).
+    internal static (string Map, string Aircraft, string When, List<string> Marks) ReportFields(string log)
+    {
+        var run = log[Math.Max(0, log.LastIndexOf("===== ", StringComparison.Ordinal))..];
+        string Last(string pattern) => Regex.Matches(run, pattern, RegexOptions.Multiline).LastOrDefault()?.Groups[1].Value ?? "";
+        var marks = Regex.Matches(run, @"^\d\d:\d\d:\d\d \[MARK\] .*$", RegexOptions.Multiline).Select(m => m.Value.TrimEnd()).ToList();
+        var time = marks.Count > 0 ? marks[^1][..8] : "";
+        var day = Regex.Match(run, @"^===== (\d{4}-\d\d-\d\d)").Groups[1].Value;
+        return (Last(@"\[ATC\] Session: map ([^,\r\n]+)"), Last(@"\[ATC\] Spieler .* \(([^()\r\n]+)\) als "), time == "" ? "" : (day + " " + time).Trim(), marks);
+    }
+
+    /// New-issue form of the public repo with the fields of .github/ISSUE_TEMPLATE/bug_report.yml filled in (empty values left out). No names, callsigns or transcripts.
+    internal static string ReportUrl(string version, string map, string aircraft, string when) =>
+        "https://github.com/Iceman1991/DCS-ATC-Release/issues/new?template=bug_report.yml" + string.Concat(
+            new[] { ("version", version), ("map", map), ("aircraft", aircraft), ("when", when) }.Where(f => f.Item2 != "").Select(f => $"&{f.Item1}={Uri.EscapeDataString(f.Item2)}"));
+
+    /// Diagnostics zip on the desktop (the button "Create diagnostics zip" and "Report a problem"), the path of it.
+    static string DiagnosticsZip()
+    {
+        var zipPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), $"DCS-ATC-diagnostics-{DateTime.Now:yyyyMMdd-HHmm}.zip");
+        using (var fs = File.Create(zipPath)) CollectDiagnostics(Program.Root, fs);
+        return zipPath;
+    }
+
     [DllImport("kernel32.dll")] static extern bool FreeConsole();
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hwnd);
@@ -23,15 +103,16 @@ static class Settings
     public static void Show(Config cfg)
     {
         FreeConsole();   // window only, no console window beside it (start menu)
-        Sta(() => Application.Run(Build(cfg)));
+        Sta(() => Application.Run(Build(cfg, true)));
     }
 
-    /// Preview as PNG (DcsAtc --settings-png datei.png [de|en]): draw the window off-screen.
-    public static void Snapshot(Config cfg, string file) => Sta(() =>
+    /// Preview as PNG (DcsAtc --settings-png datei.png [de|en] [page]): draw the window off-screen.
+    public static void Snapshot(Config cfg, string file, int page = 0) => Sta(() =>
     {
         using var f = Build(cfg);
         (f.StartPosition, f.Location, f.ShowInTaskbar, f.TopMost) = (FormStartPosition.Manual, new Point(-20000, -20000), false, false);
         f.Show();
+        ((Action<int>)f.Tag!)(page);
         Application.DoEvents();
         using var bmp = new Bitmap(f.Width, f.Height);
         f.DrawToBitmap(bmp, new Rectangle(Point.Empty, f.Size));
@@ -47,15 +128,32 @@ static class Settings
         t.Join();
     }
 
-    static Form Build(Config cfg)
+    /// "Parent": { ... } holds keys that also exist elsewhere (Tower in Frequencies and Voices): change only inside that block; block missing: insert it whole.
+    internal static string WithNested(string c, string parent, IEnumerable<(string Key, string Value)> changed, string full)
     {
+        if (!changed.Any()) return c;
+        var m = Regex.Match(c, $@"""{parent}""\s*:\s*\{{[^}}]*\}}");   // ponytail: flat block, no "}" in its comments; deeper nesting needs a JSONC parser
+        if (!m.Success) return Program.WithConfigValue(c, parent, full, "");
+        var block = changed.Aggregate(m.Value, (b, x) => Program.WithConfigValue(b, x.Key, x.Value, ""));
+        return c[..m.Index] + block + c[(m.Index + m.Length)..];
+    }
+
+    /// Voice value "a@0.94|b" as (a, "0.94"), (b, "1.00") – the pitch the way the list shows it – and back.
+    internal static (string Model, string Pitch)[] VoiceParts(string v) => v.Split('|').Select(x => x.Split('@')).Select(x =>
+        (x[0], (x.Length > 1 && double.TryParse(x[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var p) ? p : 1).ToString("0.00", CultureInfo.InvariantCulture))).ToArray();
+    internal static string VoiceText(IEnumerable<(string Model, string Pitch)> parts) =>
+        string.Join("|", parts.Select(x => x.Model + (x.Pitch == "1.00" ? "" : "@" + x.Pitch.TrimEnd('0').TrimEnd('.'))));
+
+    /// live: the real window (asks GitHub for a newer version when shown), not the off-screen preview.
+    static Form Build(Config cfg, bool live = false)
+    {
+        var wa = Screen.PrimaryScreen!.WorkingArea.Size;
         var f = new Form
         {
             Text = "DCS-ATC – " + L("Einstellungen", "Settings"), Font = Wheel.F(Wheel.Font1, 10f), BackColor = Wheel.Hub, ForeColor = Wheel.Ink,
             StartPosition = FormStartPosition.CenterScreen, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false,
             TopMost = true,   // from the radio wheel over DCS
-            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, AutoScroll = true,
-            MaximumSize = Screen.PrimaryScreen!.WorkingArea.Size,   // too small: scroll
+            ClientSize = new Size(Math.Min(836, wa.Width - 40), Math.Min(660, wa.Height - 60)),   // too small: the page scrolls
         };
         f.HandleCreated += (_, _) => { int on = 1; DwmSetWindowAttribute(f.Handle, 20 /*DWMWA_USE_IMMERSIVE_DARK_MODE*/, ref on, 4); };
         f.Shown += (_, _) =>   // always to the front (from wheel, start menu, setup), not behind DCS: the wheel never activates itself, then Windows blocks SetForegroundWindow – attaching to the input thread of the foreground window lifts the lock
@@ -65,34 +163,80 @@ static class Settings
             BringWindowToTop(f.Handle); SetForegroundWindow(f.Handle); f.Activate();
             if (att) AttachThreadInput(me, fg, false);
         };
-        FlowLayoutPanel Column() => new() { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Margin = new Padding(0, 0, 18, 0) };
-        var (left, right) = (Column(), Column());
-        TableLayoutPanel grid = null!;
-        // Group: heading in accent color, below it tile like a wheel segment
-        void Group(FlowLayoutPanel col, string title)
+
+        // Sidebar on the left (search, one button per page), pages on the right, Save/Cancel below
+        var nav = new FlowLayoutPanel { Dock = DockStyle.Left, Width = 190, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Wheel.Seg, Padding = new Padding(8, 14, 8, 8) };
+        var host = new Panel { Dock = DockStyle.Fill };
+        var pages = new List<FlowLayoutPanel>();
+        var tabs = new List<Tab>();
+        var find = new List<(Control C, int Page)>();   // what the search looks through: row labels and checkboxes
+        int sel = 0;
+        string q = "";
+        bool Hit(Control c) => c.Text.Contains(q, StringComparison.CurrentCultureIgnoreCase);
+        void Mark()   // show page sel; search: hits in accent color, pages without a hit dimmed
         {
-            col.Controls.Add(new Label { Text = title.ToUpperInvariant(), Font = Wheel.F(Wheel.Font1, 11f, FontStyle.Bold), ForeColor = Wheel.Accent, AutoSize = true, UseMnemonic = false,
-                                         Margin = new Padding(0, col.Controls.Count == 0 ? 0 : 16, 0, 5) });
+            for (int i = 0; i < tabs.Count; i++)
+            {
+                pages[i].Visible = i == sel;
+                bool hit = q == "" || find.Any(x => x.Page == i && Hit(x.C));
+                (tabs[i].BackColor, tabs[i].ForeColor) = (i == sel ? Box : Wheel.Seg, i == sel ? Wheel.Accent : hit ? Wheel.Ink : Line);
+            }
+            foreach (var (c, _) in find) c.ForeColor = q != "" && Hit(c) ? Wheel.Accent : Wheel.Ink;
+        }
+        var search = new TextBox { Width = 174, BackColor = Box, ForeColor = Wheel.Ink, BorderStyle = BorderStyle.FixedSingle, PlaceholderText = L("Suchen", "Search"), Margin = new Padding(0, 0, 0, 12) };
+        search.TextChanged += (_, _) =>
+        {
+            q = search.Text.Trim();
+            if (q != "" && !find.Any(x => x.Page == sel && Hit(x.C))) sel = find.Where(x => Hit(x.C)).Select(x => x.Page).DefaultIfEmpty(sel).First();
+            Mark();
+        };
+        nav.Controls.Add(search);
+
+        FlowLayoutPanel cur = null!;
+        TableLayoutPanel grid = null!;
+        void Page(string title)
+        {
+            int i = pages.Count;
+            cur = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Padding = new Padding(18, 12, 18, 12), Visible = false };
+            cur.Controls.Add(new Label { Text = title, Font = Wheel.F(Wheel.Font1, 15f, FontStyle.Bold), AutoSize = true, UseMnemonic = false, Margin = Padding.Empty });
+            var b = new Tab { Text = title, Size = new Size(174, 34), FlatStyle = FlatStyle.Flat, TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(8, 0, 0, 0), Margin = new Padding(0, 0, 0, 2),
+                                 Cursor = Cursors.Hand, UseMnemonic = false };
+            (b.FlatAppearance.BorderSize, b.FlatAppearance.MouseOverBackColor, b.FlatAppearance.MouseDownBackColor) = (0, Box, Box);
+            b.Click += (_, _) => { sel = i; Mark(); };
+            pages.Add(cur); tabs.Add(b); host.Controls.Add(cur); nav.Controls.Add(b);
+        }
+        // Group: heading in accent color, below it tile like a wheel segment
+        void Group(string title)
+        {
+            cur.Controls.Add(new Label { Text = title.ToUpperInvariant(), Font = Wheel.F(Wheel.Font1, 11f, FontStyle.Bold), ForeColor = Wheel.Accent, AutoSize = true, UseMnemonic = false,
+                                         Margin = new Padding(0, 14, 0, 5) });
             grid = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, BackColor = Wheel.Seg, Padding = new Padding(14, 8, 14, 8), Margin = Padding.Empty };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 250));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 290));
             var g = grid;
             g.Paint += (_, e) => { using var p = new Pen(Line); e.Graphics.DrawRectangle(p, 0, 0, g.Width - 1, g.Height - 1); };
-            col.Controls.Add(grid);
+            cur.Controls.Add(grid);
         }
+        void Wide(Control c) { grid.Controls.Add(c); grid.SetColumnSpan(c, 2); }
         void Row(string label, Control c)
         {
-            grid.Controls.Add(new Label { Text = label, AutoSize = true, MaximumSize = new Size(240, 0), Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 10, 6) });
+            var l = new Label { Text = label, AutoSize = true, MaximumSize = new Size(240, 0), Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 10, 6), UseMnemonic = false };
+            grid.Controls.Add(l);
+            find.Add((l, pages.Count - 1));
             c.Anchor = AnchorStyles.Left; c.Margin = new Padding(0, 5, 0, 5);
             grid.Controls.Add(c);
         }
         CheckBox Check(string text, bool on)
         {
-            var b = new CheckBox { Text = text, Checked = on, AutoSize = true, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 6, 0, 6) };
+            var b = new CheckBox { Text = text, Checked = on, AutoSize = true, FlatStyle = FlatStyle.Flat, Margin = new Padding(0, 6, 0, 6), UseMnemonic = false };
             (b.FlatAppearance.BorderColor, b.FlatAppearance.CheckedBackColor) = (Wheel.Grey, Box);
-            grid.Controls.Add(b); grid.SetColumnSpan(b, 2);
+            Wide(b);
+            find.Add((b, pages.Count - 1));
             return b;
         }
+        void Note(string text) => Wide(new Label { Text = text, AutoSize = true, MaximumSize = new Size(520, 0), ForeColor = Wheel.Grey, Margin = new Padding(0, 4, 0, 2), UseMnemonic = false });
+        TextBox Field(string text, int width = 290, string hint = "") =>
+            new() { Text = text, Width = width, BackColor = Box, ForeColor = Wheel.Ink, BorderStyle = BorderStyle.FixedSingle, PlaceholderText = hint };
         ComboBox Combo(string[] items, int sel)
         {
             var c = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 290, FlatStyle = FlatStyle.Flat, BackColor = Box, ForeColor = Wheel.Ink, DrawMode = DrawMode.OwnerDrawFixed };
@@ -104,7 +248,8 @@ static class Settings
                 e.Graphics.FillRectangle(b, e.Bounds);
                 TextRenderer.DrawText(e.Graphics, c.Items[e.Index]!.ToString(), c.Font, e.Bounds, hi ? Wheel.Dark : Wheel.Ink, TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
             };
-            c.Items.AddRange(items); c.SelectedIndex = Math.Max(0, sel);
+            c.Items.AddRange(items);
+            if (items.Length > 0) c.SelectedIndex = Math.Max(0, sel);
             return c;
         }
         Button Btn(string text, bool main)
@@ -114,16 +259,85 @@ static class Settings
             (b.FlatAppearance.BorderColor, b.FlatAppearance.BorderSize) = (Wheel.Accent, 1);
             return b;
         }
+        void Notepad(string file) => Process.Start("notepad.exe", $"\"{file}\"");
+        string D(double v) => v.ToString(CultureInfo.InvariantCulture);
+        string J(object v) => JsonSerializer.Serialize(v);
 
-        Group(left, L("Rufzeichen & Sprache", "Callsign & language"));
-        var cs = new TextBox { Text = cfg.MyCallsign, Width = 290, BackColor = Box, ForeColor = Wheel.Ink, BorderStyle = BorderStyle.FixedSingle,
-                               PlaceholderText = L("leer = Rufzeichen aus dem DCS-Slot", "empty = callsign from the DCS slot") };
+        Page(L("Allgemein", "General"));
+        Group(L("Rufzeichen & Sprache", "Callsign & language"));
+        var cs = Field(cfg.MyCallsign, hint: L("leer = Rufzeichen aus dem DCS-Slot", "empty = callsign from the DCS slot"));
         Row(L("Eigenes Rufzeichen", "Your callsign"), cs);
         var unitCs = Check(L("Rufzeichen aus dem Unitnamen der Mission (z. B. VICTORY 9-1)", "Callsign from the mission unit name (e.g. VICTORY 9-1)"), cfg.CallsignFromUnit);
+        var playerCs = Check(L("Rufzeichen aus dem DCS-Spielernamen (z. B. GUARDIAN 1-1 | Christian)", "Callsign from the DCS player name (e.g. GUARDIAN 1-1 | Christian)"), cfg.CallsignFromPlayer);
         var lang = Combo(new[] { "Deutsch", "English" }, En ? 1 : 0);
         Row(L("Sprache der Oberfläche *", "Interface language *"), lang);
+        Group("Cockpit");
+        string[] units = { "auto", "hpa", "inhg" };
+        var unit = Combo(new[] { L("automatisch (nach Flugzeugtyp)", "automatic (by aircraft type)"), "hPa (QNH)", "inHg (altimeter)" }, Math.Max(0, Array.IndexOf(units, cfg.AltimeterUnit.ToLowerInvariant())));
+        Row(L("Höhenmesser-Einstellung", "Altimeter setting"), unit);
+        var knee = Check(L("Kneeboard-Seiten bei Missionsstart schreiben *", "Write kneeboard pages at mission start *"), cfg.KneeboardPages);
+        var f10 = Check(L("Kontrollzonen, Meldepunkte und Routen auf die F10-Karte zeichnen *", "Draw control zones, reporting points and routes on the F10 map *"), cfg.F10Drawings);
+        // Update from the GitHub releases: look when the window opens (Config.UpdateCheck) or on the button; download and setup only on the button
+        Group("Update");
+        var updState = new Label { Text = L($"Installiert: {Update.Own}", $"Installed: {Update.Own}"), AutoSize = true, MaximumSize = new Size(285, 0), UseMnemonic = false };
+        Row("Version", updState);
+        var updBtn = Btn(L("Nach Updates suchen", "Check for updates"), false);
+        Row("Update", updBtn);
+        var updAuto = Check(L("Beim Start nach einer neuen Version suchen", "Look for a new version at start"), cfg.UpdateCheck);
+        Update.Release? upd = null;
+        bool updBusy = false;
+        void UpdUi(Action a) { if (f.IsHandleCreated && !f.IsDisposed) f.BeginInvoke(a); }
+        void UpdCheck()
+        {
+            if (updBusy) return;
+            updBusy = true;
+            updState.Text = L("Suche nach Updates …", "Checking for updates …");
+            Task.Run(() =>
+            {
+                var (success, r) = Update.Check();
+                UpdUi(() =>
+                {
+                    (updBusy, upd) = (false, r);
+                    if (!success)
+                    {
+                        updState.Text = L("Update-Prüfung fehlgeschlagen. Bitte erneut versuchen.", "Update check failed. Please try again.");
+                        return;
+                    }
+                    updState.Text = r == null ? L($"Installiert: {Update.Own}. Nichts Neueres gefunden.", $"Installed: {Update.Own}. Nothing newer found.")
+                                              : L($"Installiert: {Update.Own}. Neu: {r.Version} ({r.Size / 1048576} MB).", $"Installed: {Update.Own}. New: {r.Version} ({r.Size / 1048576} MB).");
+                    if (r != null) (updBtn.Text, updBtn.BackColor, updBtn.ForeColor) = (L("Jetzt aktualisieren", "Update now"), Wheel.Accent, Wheel.Dark);
+                });
+            });
+        }
+        updBtn.Click += (_, _) =>
+        {
+            if (updBusy) return;
+            if (upd is not { } r) { UpdCheck(); return; }
+            if (Program.DcsProcs.Any(n => Process.GetProcessesByName(n).Length > 0))   // setup replaces the running app and may ask for admin rights: not during a flight
+            {
+                updState.Text = L("DCS läuft. Erst DCS beenden, dann aktualisieren.", "DCS is running. Close DCS first, then update.");
+                return;
+            }
+            updBusy = true;
+            Task.Run(() =>
+            {
+                try
+                {
+                    int last = -1;
+                    var setup = Update.Download(r, p => { int pc = (int)(p * 100); if (pc != last) { last = pc; UpdUi(() => updState.Text = L($"Lade {r.Version}: {pc} %", $"Downloading {r.Version}: {pc} %")); } });
+                    Update.Install(setup);
+                    Environment.Exit(0);   // setup replaces this exe and opens the settings window again
+                }
+                catch (Exception e) when (e is IOException or HttpRequestException or TaskCanceledException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+                {
+                    UpdUi(() => { updBusy = false; updState.Text = L($"Update fehlgeschlagen: {e.Message}", $"Update failed: {e.Message}"); });
+                }
+            });
+        };
+        if (live && cfg.UpdateCheck) f.Shown += (_, _) => UpdCheck();
 
-        Group(left, L("Lotsen-Stimmen", "Controller voices"));
+        Page(L("Stimmen", "Voices"));
+        Group(L("Lotsen-Stimmen", "Controller voices"));
         var vol = new Slider(0, 100, 5, Math.Round(Math.Clamp(cfg.Volume * 100, 0, 100)), "0' %'");
         Row(L("Lautstärke Lotsen", "Controller volume"), vol);
         var rate = new Slider(0.7, 1.5, 0.05, cfg.SpeechRate, "0.00");
@@ -132,48 +346,270 @@ static class Settings
         Row(L("Pause zwischen Funksprüchen", "Pause between calls"), pause);
         var fx = Check(L("Funkklang (Rauschen, Squelch)", "Radio effect (noise, squelch)"), cfg.RadioFx);
         var rtx = Check(L("Funksprüche auch als Text im Spiel", "Radio calls also as text in the game"), cfg.RadioText);
-        var pv = Check(L("Eigene Anfragen vorsprechen (Pilotenstimme)", "Speak your wheel requests (pilot voice)"), cfg.PilotVoice != "");
+        var htx = Check(L("Hinweise von DCS-ATC als Text im Spiel (Fehler, Landebewertung, Verstöße)", "Notes from DCS-ATC as text in the game (errors, landing grade, deviations)"), cfg.HintText);
+        var mdir = Path.Combine(Path.GetDirectoryName(Program.ConfigPath)!, "models");
+        var models = Directory.Exists(mdir) ? Directory.GetFiles(mdir, "*.onnx").Select(m => Path.GetFileNameWithoutExtension(m)).ToArray() : Array.Empty<string>();
+        var std = new Config().Voices;
+        var known = models.Concat(cfg.Voices.Values.Concat(std.Values).Append(cfg.PilotVoice).SelectMany(VoiceParts).Select(p => p.Model))   // also voices named in the file that are not installed
+                          .Where(m => m != "" && m != "random").Distinct().ToArray();
+        string[] Names(string first) => known.Select(m => Regex.Replace(m, @"^[a-z]+_([A-Z]+)-(.+?)(-medium)?$", "$2 ($1)") + (models.Contains(m) ? "" : L(" – fehlt", " – missing"))).Prepend(first).ToArray();
+        var pilot = cfg.PilotVoice.Split('@')[0];
+        var pv = Combo(Names(L("aus", "off")), 1 + Array.IndexOf(known, pilot));
+        Row(L("Pilotenstimme (spricht eigene Anfragen vor)", "Pilot voice (speaks your wheel requests)"), pv);
 
-        Group(left, "AWACS");
-        var bull = Check(L("AWACS-Picture als Bullseye (statt BRAA)", "AWACS picture as bullseye (instead of BRAA)"), cfg.AwacsBullseye);
-        var awNm = new Slider(40, 200, 10, cfg.AwacsNewGroupNm, "0' NM'");
-        Row(L("AWACS meldet neue Gruppen bis", "AWACS calls new groups within"), awNm);
+        Group(L("Stimme je Station *", "Voice per station *"));
+        var vt = new TableLayoutPanel { ColumnCount = 6, AutoSize = true, Margin = Padding.Empty };
+        foreach (var w in new[] { 84, 150, 64, 150, 64, 28 }) vt.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, w));
+        foreach (var (h, i) in new[] { "", L("Stimme", "Voice"), L("Tonhöhe", "Pitch"), L("Zweite Stimme", "Second voice"), L("Tonhöhe", "Pitch") }.Select((h, i) => (h, i)))
+            vt.Controls.Add(new Label { Text = h, AutoSize = true, ForeColor = Wheel.Grey, Margin = new Padding(0, 0, 0, 2), UseMnemonic = false }, i, 0);   // fixed cells: hidden boxes must not shift the rest
+        var voices = new List<(string Key, Func<string> Get, Action<string> Set, string Was, Control C)>();
+        foreach (var v in cfg.Voices)
+        {
+            var lab = new Label { Text = v.Key, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 6, 6), UseMnemonic = false };
+            int row = voices.Count + 1;
+            vt.Controls.Add(lab, 0, row);
+            find.Add((lab, pages.Count - 1));
+            var play = Btn("▶", false);
+            (play.AutoSize, play.Size, play.Padding, play.Margin, play.Anchor) = (false, new Size(26, 25), Padding.Empty, new Padding(0, 5, 0, 5), AnchorStyles.Left);
+            Func<string> get;
+            Action<string> set;
+            Control first;
+            if (VoiceParts(v.Value).Length > 2)   // three and more in the file: stays text
+            {
+                var t = Field(v.Value, 420);
+                (t.Anchor, t.Margin) = (AnchorStyles.Left, new Padding(0, 5, 0, 5));
+                vt.Controls.Add(t, 1, row); vt.SetColumnSpan(t, 4);
+                (get, set, first) = (() => t.Text.Trim(), s => t.Text = s, t);
+            }
+            else
+            {
+                ComboBox Cell(string[] items, int width, int col)
+                {
+                    var c = Combo(items, 0);
+                    (c.Width, c.Anchor, c.Margin) = (width, AnchorStyles.Left, new Padding(0, 5, 0, 5));
+                    vt.Controls.Add(c, col, row);
+                    return c;
+                }
+                var pitches = Enumerable.Range(80, 41).Select(i => (i / 100.0).ToString("0.00", CultureInfo.InvariantCulture)).ToArray();
+                ComboBox v1 = Cell(Names(L("Zufällig", "Random")), 144, 1), p1 = Cell(pitches, 58, 2), v2 = Cell(Names("–"), 144, 3), p2 = Cell(pitches, 58, 4);
+                void Sync() => (p1.Visible, v2.Visible, p2.Visible) = (v1.SelectedIndex > 0, v1.SelectedIndex > 0, v1.SelectedIndex > 0 && v2.SelectedIndex > 0);   // random takes every voice: nothing else to choose
+                v1.SelectedIndexChanged += (_, _) => Sync();
+                v2.SelectedIndexChanged += (_, _) => Sync();
+                void Pick(ComboBox voice, ComboBox pitch, (string Model, string Pitch) x)
+                {
+                    voice.SelectedIndex = 1 + Array.IndexOf(known, x.Model);   // "random" and "" are not in the list: first entry
+                    if (!pitch.Items.Contains(x.Pitch)) pitch.Items.Add(x.Pitch);
+                    pitch.SelectedItem = x.Pitch;
+                }
+                (get, set, first) = (() => v1.SelectedIndex == 0 ? "random" : VoiceText(new[] { (v1, p1), (v2, p2) }.Where(x => x.Item1.SelectedIndex > 0).Select(x => (known[x.Item1.SelectedIndex - 1], x.Item2.Text))),
+                                     s => { var p = VoiceParts(s); Pick(v1, p1, p[0]); Pick(v2, p2, p.Length > 1 ? p[1] : ("", "1.00")); Sync(); }, v1);
+            }
+            vt.Controls.Add(play, 5, row);
+            play.Click += async (_, _) =>   // sample on the PC speakers
+            {
+                play.Enabled = false;
+                var say = get();
+                try { await Task.Run(() => Program.Preview(say)); }
+                catch (Exception e) { MessageBox.Show(f, e.Message, "DCS-ATC"); }
+                play.Enabled = true;
+            };
+            set(v.Value);
+            voices.Add((v.Key, get, set, get(), first));
+        }
+        Wide(vt);
+        var allRandom = Btn(L("Alle zufällig", "All random"), false);
+        allRandom.Click += (_, _) => voices.ForEach(v => v.Set("random"));
+        var allStd = Btn(L("Standard", "Defaults"), false);
+        allStd.Click += (_, _) => voices.ForEach(v => v.Set(std.GetValueOrDefault(v.Key, std["Approach"])));
+        var vb = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 6, 0, 0) };
+        vb.Controls.AddRange(new Control[] { allRandom, allStd });
+        Wide(vb);
+        Note(L("Zufällig: jede Station bekommt bei jedem Start eine der installierten Stimmen (ohne die Pilotenstimme) und behält sie, solange DCS-ATC läuft. " +
+               "Zweite Stimme: die Plätze wechseln sich ab, etwa Senaki Tower und Kutaisi Tower. Tonhöhe 1.00 = unverändert, kleiner = tiefer. ▶ spricht eine Probe über die PC-Lautsprecher.",
+               "Random: at each start every station gets one of the installed voices (not the pilot voice) and keeps it while DCS-ATC runs. " +
+               "Second voice: airfields alternate, e.g. Senaki Tower and Kutaisi Tower. Pitch 1.00 = unchanged, lower = deeper. ▶ plays a sample on the PC speakers."));
 
-        Group(left, L("Module", "Modules"));   // like the installer: modules.txt (app) and DcsAtcModules.txt (F10 menu)
-        var offFile = Path.Combine(Program.SavedGamesDcs(), "Scripts", "DcsAtc", "DcsAtcOff.txt");   // forum 0.13: off without uninstalling, hook and mission script check it
-        var active = Check(L("DCS-ATC aktiv (aus: startet ab der nächsten Mission nicht mehr)", "DCS-ATC active (off: no longer starts from the next mission)"), !File.Exists(offFile));
-        var mods = Program.Modules.Select(m => { var b = Check(L(m.De, m.En), Program.On(m.Id)); grid.SetColumnSpan(b, 1); return (m.Id, Box: b); }).ToArray();
-        var mnote = new Label { Text = L("abgewählt: kein Funk, kein Eintrag im Funkrad und F10-Menü (F10 ab der nächsten Mission)", "unticked: no radio, no entry in the wheel and F10 menu (F10 from the next mission)"),
-                                AutoSize = true, MaximumSize = new Size(520, 0), ForeColor = Wheel.Grey, Margin = new Padding(0, 4, 0, 2) };
-        grid.Controls.Add(mnote); grid.SetColumnSpan(mnote, 2);
+        Group(L("ElevenLabs (optional)", "ElevenLabs (optional)"));
+        Note(L("Eigenes ElevenLabs-Konto und eigener API-Schlüssel (elevenlabs.io): Stimmen aus deinem Konto statt Piper, je Rolle wählbar. Der Schlüssel braucht die Rechte Text to Speech, Voices (lesen) und User (lesen). ElevenLabs rechnet nach Zeichen ab. DCS-ATC hört bei den im Tarif enthaltenen Zeichen auf und nutzt nie kostenpflichtige Zusatzzeichen; zusätzlich ein Kreditlimit am Key setzen und nutzungsbasierte Abrechnung im Konto aus lassen. Ohne Schlüssel, Netz, lesbares Kontingent oder Rest spricht Piper.",
+               "Your own ElevenLabs account and API key (elevenlabs.io): voices from your account instead of Piper, chosen per role. The key needs the permissions Text to Speech, Voices (read) and User (read). ElevenLabs bills per character. DCS-ATC stops at the characters included in the plan and never uses paid extra characters; also set a credit limit on the key and keep usage-based billing off in the account. Without a key, network, readable quota or remaining characters Piper speaks."));
+        var elKey = Field(cfg.ElevenLabsKey);
+        elKey.UseSystemPasswordChar = true;
+        Row(L("API-Schlüssel", "API key"), elKey);
+        ElevenLabs.Quota? elQ = null;   // quota read by Connect for the typed key; null = unknown, no ElevenLabs sample
+        elKey.TextChanged += (_, _) => elQ = null;
+        var elConnect = Btn(L("Verbinden", "Connect"), false);
+        Row(L("Stimmen und Kontingent laden", "Load voices and quota"), elConnect);
+        var elQuota = new Label { Text = "–", AutoSize = true, MaximumSize = new Size(285, 0), UseMnemonic = false };
+        Row(L("Kontingent", "Quota"), elQuota);
+        Note(L("Tempo je Rolle in der Spalte neben der Stimme: 1.00 = normal, größer = schneller.", "Speed per role in the column next to the voice: 1.00 = normal, higher = faster."));
+        var elVt = new TableLayoutPanel { ColumnCount = 4, AutoSize = true, Margin = Padding.Empty };
+        foreach (var w in new[] { 84, 240, 58, 28 }) elVt.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, w));
+        var elList = new List<(string Id, string Name)>();
+        var elRows = new List<(string Key, ComboBox Cb, List<string> Ids, string Was, ComboBox Sp)>();
+        var elSpeeds = Enumerable.Range(0, 15).Select(i => (0.8 + i * 0.05).ToString("0.00", CultureInfo.InvariantCulture)).ToArray();
+        foreach (var role in cfg.Voices.Keys.Where(k => k != "Departure"))   // Departure speaks with the Approach voice
+        {
+            int row = elRows.Count;
+            var lab = new Label { Text = role, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 6, 6), UseMnemonic = false };
+            elVt.Controls.Add(lab, 0, row);
+            find.Add((lab, pages.Count - 1));
+            var cb = Combo(new[] { L("Piper (wie oben)", "Piper (as above)") }, 0);
+            (cb.Anchor, cb.Margin) = (AnchorStyles.Left, new Padding(0, 5, 0, 5));
+            elVt.Controls.Add(cb, 1, row);
+            var stored = cfg.ElevenVoices.GetValueOrDefault(role, "").Split('|').Select(Program.ElevenSpec).ToArray();   // "id@1.3|id2": ids stripped, speed of the first part (default without @)
+            var sp = Combo(elSpeeds, 0);
+            (sp.Width, sp.Anchor, sp.Margin) = (58, AnchorStyles.Left, new Padding(0, 5, 0, 5));
+            var spText = stored[0].Speed.ToString("0.00", CultureInfo.InvariantCulture);
+            if (!sp.Items.Contains(spText)) sp.Items.Add(spText);
+            sp.SelectedItem = spText;
+            elVt.Controls.Add(sp, 2, row);
+            var play = Btn("▶", false);
+            (play.AutoSize, play.Size, play.Padding, play.Margin, play.Anchor) = (false, new Size(26, 25), Padding.Empty, new Padding(0, 5, 0, 5), AnchorStyles.Left);
+            elVt.Controls.Add(play, 3, row);
+            var ids = new List<string>();
+            elRows.Add((role, cb, ids, string.Join("|", stored.Select(x => x.Id)), sp));
+            play.Click += async (_, _) =>   // sample on the PC speakers: the voice chosen here, otherwise the Piper voice of the row above
+            {
+                var id = ids[cb.SelectedIndex].Split('|')[0];
+                var say = id == "" ? voices.First(v => v.Key == role).Get() : $"el:{id}@{sp.Text}#en_US-ryan-medium";
+                long allowed = 0;
+                if (id != "")   // ElevenLabs sample only with a known quota and enough left above the floor (never paid extra characters)
+                {
+                    if (elQ == null || (allowed = elQ.Remaining - Math.Max(500, elQ.Limit / 100)) < Program.PreviewText.Length)
+                    { elQuota.Text = L("Erst Verbinden – Kontingent unbekannt oder zu knapp", "Connect first – quota unknown or too low"); return; }
+                }
+                play.Enabled = false;
+                try
+                {
+                    await Task.Run(() => Program.Preview(say, id == "" ? null : elKey.Text.Trim(), allowed));
+                    if (id != "") { elQ = elQ! with { Count = elQ.Count + Program.PreviewText.Length }; elQuota.Text = ElevenLabs.QuotaText(elQ, false); }
+                }
+                catch (Exception e) { MessageBox.Show(f, e.Message, "DCS-ATC"); }
+                play.Enabled = true;
+            };
+        }
+        void ElFill()   // voice names of the account; a stored id the account does not list stays selectable as its id
+        {
+            foreach (var (_, cb, ids, was, _) in elRows)
+            {
+                var cur = ids.Count > 0 && cb.SelectedIndex >= 0 ? ids[cb.SelectedIndex] : was;
+                ids.Clear(); cb.Items.Clear();
+                cb.Items.Add(L("Piper (wie oben)", "Piper (as above)")); ids.Add("");
+                foreach (var (id, name) in elList) { cb.Items.Add(name); ids.Add(id); }
+                if (cur != "" && !ids.Contains(cur)) { cb.Items.Add(cur); ids.Add(cur); }
+                cb.SelectedIndex = ids.IndexOf(cur);
+            }
+        }
+        ElFill();
+        Wide(elVt);
+        string ElError(Exception e) => e switch
+        {
+            HttpRequestException { StatusCode: System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden } => L("Schlüssel abgelehnt oder Recht fehlt (Voices/User lesen)", "Key rejected or permission missing (Voices/User read)"),
+            HttpRequestException { StatusCode: System.Net.HttpStatusCode.BadRequest } => L("Schlüssel ungültig – den ganzen Schlüssel einfügen (beginnt mit sk_, ElevenLabs zeigt ihn nur beim Erstellen): ", "Invalid key – paste the whole key (starts with sk_, ElevenLabs shows it only once when you create it): ") + e.Message,
+            TaskCanceledException => L("Zeitüberschreitung", "Timed out"),
+            JsonException => L("Unerwartete Antwort", "Unexpected answer"),
+            _ => e.Message,   // never contains the key
+        };
+        async Task ElLoad()
+        {
+            var key = elKey.Text.Trim();
+            if (key == "") { elQuota.Text = L("Kein Schlüssel eingegeben.", "No key entered."); return; }
+            elConnect.Enabled = false;
+            elQuota.Text = "…";
+            string msg;
+            elQ = null;
+            try
+            {
+                var q = await ElevenLabs.GetQuota(key);
+                if (key == elKey.Text.Trim()) elQ = q;
+                msg = ElevenLabs.QuotaText(q, false);
+                if (live && key == Program.Cfg.ElevenLabsKey)ElevenLabs.Apply(q);
+            }
+            catch (HttpRequestException e) when (e.StatusCode == System.Net.HttpStatusCode.BadRequest)
+            {   // same key, same error: no voice list request
+                if (f.IsDisposed) return;
+                elQuota.Text = ElError(e);
+                elConnect.Enabled = true;
+                return;
+            }
+            catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException)
+            {
+                msg = e is HttpRequestException { StatusCode: System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden }
+                    ? L("Kontingent nicht lesbar – der Key braucht die Berechtigung User (read)", "Quota not readable – the key needs the User (read) permission")
+                    : L("Kontingent nicht lesbar: ", "Quota not readable: ") + ElError(e);
+            }
+            try { elList = await ElevenLabs.GetVoices(key); if (!f.IsDisposed) ElFill(); }
+            catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException or KeyNotFoundException) { msg += " | " + L("Stimmenliste: ", "Voice list: ") + ElError(e); }
+            if (f.IsDisposed) return;
+            elQuota.Text = msg;
+            elConnect.Enabled = true;
+        }
+        elConnect.Click += async (_, _) => await ElLoad();
+        if (live && cfg.ElevenLabsKey != "") f.Shown += async (_, _) => await ElLoad();
 
-        Group(right, L("Funk & Verkehr", "Radio & traffic"));
+        Page(L("Funk & Verkehr", "Radio & traffic"));
+        Group(L("KI-Verkehr", "AI traffic"));
         var chat = Check(L("KI-Verkehr funkt hörbar mit", "Hear AI traffic on frequency"), cfg.AiChatter);
         string[] modes = { "voll", "taktisch", "aus" };
         var combat = Combo(new[] { L("voll", "full"), L("taktisch", "tactical"), L("aus", "off") }, Array.IndexOf(modes, cfg.AiFlightComms));
         Row(L("KI-Flüge im Gefecht", "AI flights in combat"), combat);
+        var aiNm = new Slider(10, 200, 10, cfg.AiFlightRadiusNm, "0' NM'");
+        Row(L("KI-Funk nur im Umkreis eigener Spieler", "AI radio only within this range of players"), aiNm);
+        var wingmen = Check(L("Eigene KI-Wingmen funken mit (DCS spricht sie schon selbst)", "Your AI wingmen transmit too (DCS already speaks for them)"), cfg.AiOwnWingmen);
+        var tvec = Check(L("Tanker führt selbst zum Join (Kurs, Entfernung, Höhe bis \"visual\")", "Tanker guides you to the join itself (heading, range, altitude until \"visual\")"), cfg.TankerVectors);
+        Group(L("Flugplatz", "Airfield"));
         var atis = Check(L("ATIS-Dauersendung", "ATIS broadcast"), cfg.Atis);
-        var iffc = Check(L("Transponder prüfen (Code, Ident, Mode 4, über SRS)", "Check transponder (code, ident, Mode 4, via SRS)"), cfg.IffCheck);
-        var spos = Check(L("Lotsen senden mit Standort (SRS-Reichweite und Sichtlinie)", "Controllers transmit with their position (SRS range and line of sight)"), cfg.StationPositions);
-        var notam = Check(L("Zufällige NOTAMs (ILS aus, Bahn gesperrt, Vogelschlag)", "Random NOTAMs (ILS out, runway closed, bird activity)"), cfg.RandomNotams);
-        var watch = Check(L("Luftraum überwachen (Kontrollzonen, Verstöße, Debriefing)", "Watch airspace (control zones, deviations, debriefing)"), cfg.AirspaceWatch);
-        var dbg = Check(L("Debug-Log für Fehlerberichte (atc-debug.txt)", "Debug log for bug reports (atc-debug.txt)"), cfg.DebugLog);
         string[] lights = { "silent", "dcs", "off" };
         var light = Combo(new[] { L("stumm", "silent"), L("mit DCS-Lotse (hörbar)", "with DCS controller (audible)"), L("aus", "off") }, Math.Max(0, Array.IndexOf(lights, cfg.RunwayLights)));
         Row(L("Bahnbefeuerung (nachts)", "Runway lights (at night)"), light);
-        string[] units = { "auto", "hpa", "inhg" };
-        var unit = Combo(new[] { L("automatisch (nach Flugzeugtyp)", "automatic (by aircraft type)"), "hPa (QNH)", "inHg (altimeter)" }, Math.Max(0, Array.IndexOf(units, cfg.AltimeterUnit.ToLowerInvariant())));
-        Row(L("Höhenmesser-Einstellung", "Altimeter setting"), unit);
+        var notam = Check(L("Zufällige NOTAMs (ILS aus, Bahn gesperrt, Vogelschlag)", "Random NOTAMs (ILS out, runway closed, bird activity)"), cfg.RandomNotams);
+        var watch = Check(L("Luftraum überwachen (Kontrollzonen, Verstöße, Debriefing)", "Watch airspace (control zones, deviations, debriefing)"), cfg.AirspaceWatch);
 
-        Group(right, L("Funkrad & Eingabe", "Radio wheel & input"));
-        string[] ingames = { "auto", "on", "off" };
-        var ingame = Combo(new[] { L("automatisch (wenn DCS im VR-Modus)", "automatic (when DCS is in VR mode)"), L("immer", "always"), L("aus", "off") }, Array.IndexOf(ingames, cfg.WheelInGame));
-        Row(L("Funkrad im Spiel (VR)", "Radio wheel in game (VR)"), ingame);
+        Page("AWACS");
+        Group(L("Lagebild", "Picture"));
+        var bull = Check(L("AWACS-Picture als Bullseye (statt BRAA)", "AWACS picture as bullseye (instead of BRAA)"), cfg.AwacsBullseye);
+        var awNm = new Slider(40, 200, 10, cfg.AwacsNewGroupNm, "0' NM'");
+        Row(L("AWACS meldet neue Gruppen bis", "AWACS calls new groups within"), awNm);
+        var follow = Check(L("KI-Jäger fliegen die AWACS-Zuweisung (aus: nur Funk)", "AI fighters fly the AWACS assignment (off: radio only)"), cfg.AiFollowAwacs);
+
+        Page(L("Frequenzen", "Frequencies"));
+        Group(L("Funktionsfrequenzen in MHz *", "Station frequencies in MHz *"));
+        var freqs = cfg.Frequencies.Select(x => { var t = Field(D(x.Value), 100); Row(x.Key, t); return (x.Key, Box: t); }).ToArray();
+        var modu = Combo(new[] { "AM", "FM" }, cfg.Modulation.Equals("FM", StringComparison.OrdinalIgnoreCase) ? 1 : 0);
+        Row(L("Modulation *", "Modulation *"), modu);
+        var side = Combo(new[] { L("blau", "blue"), L("rot", "red") }, cfg.Coalition == 1 ? 1 : 0);
+        Row(L("SRS-Seite für Stationen ohne eigene Seite *", "SRS side for stations without their own *"), side);
+        Group(L("Flugplätze", "Airfields"));
+        var fq = Btn("frequencies.jsonc …", false);
+        fq.Click += (_, _) =>
+        {
+            if (!File.Exists(Program.FreqPath))   // the app writes it with all airfields as commented lines
+                Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "--frequencies") { WorkingDirectory = AppContext.BaseDirectory, CreateNoWindow = true })!.WaitForExit();
+            Notepad(Program.FreqPath);
+        };
+        Row(L("Eigene Frequenzen je Platz (gilt sofort)", "Own frequencies per airfield (applied at once)"), fq);
+
+        Page(L("Tasten & Funkrad", "Keys & radio wheel"));
+        Group(L("Eingabe", "Input"));
+        var keys = Btn(L("Tasten festlegen …", "Set keys …"), false);
+        keys.Click += (_, _) => Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "--keys") { WorkingDirectory = AppContext.BaseDirectory, UseShellExecute = true });
+        Row(L("Funkrad-Taste, HOTAS, Sprechtaste", "Wheel key, HOTAS, push-to-talk"), keys);
         var mics = Enumerable.Range(0, WaveInEvent.DeviceCount).Select(i => WaveInEvent.GetCapabilities(i).ProductName).ToArray();
         var mic = Combo(mics.Prepend(L("Windows-Standard", "Windows default")).ToArray(),
                         cfg.MicName == "" ? 0 : Array.FindIndex(mics, m => m.Contains(cfg.MicName, StringComparison.OrdinalIgnoreCase)) + 1);
         Row(L("Mikrofon (nur ohne SRS) *", "Microphone (only without SRS) *"), mic);
-        var srs = new TextBox { Text = cfg.SrsPath, Width = 246, Margin = Padding.Empty, BackColor = Box, ForeColor = Wheel.Ink, BorderStyle = BorderStyle.FixedSingle };
+        Group(L("Funkrad", "Radio wheel"));
+        string[] ingames = { "auto", "on", "off", "window" };
+        var ingame = Combo(new[] { L("Text, automatisch (wenn DCS im VR-Modus)", "text, automatic (when DCS is in VR mode)"), L("Text, immer", "text, always"), L("aus", "off"), L("Rad als Bild (Test)", "wheel as a picture (test)") }, Array.IndexOf(ingames, cfg.WheelInGame));
+        Row(L("Funkrad im Spiel (VR)", "Radio wheel in game (VR)"), ingame);
+        var wsize = new Slider(25, 95, 5, Math.Round(cfg.WheelSize * 100), "0' %'");
+        Row(L("Größe (Anteil der Fensterhöhe, im Rad mit + / -) *", "Size (share of the window height, + / - in the wheel) *"), wsize);
+        var wfix = Check(L("Feste Nummern im Funkrad (unbenutzte Module abwählen, damit alles in 1-9 passt)", "Fixed radio wheel numbers (switch off unused modules so everything fits 1-9)"), cfg.WheelFixed);
+
+        Page("SRS");
+        Group(L("Verbindung", "Connection"));
+        var srs = Field(cfg.SrsPath, 246);
+        srs.Margin = Padding.Empty;
         var browse = Btn("…", false);
         (browse.AutoSize, browse.Padding, browse.Margin, browse.Size) = (false, Padding.Empty, new Padding(6, 0, 0, 0), new Size(36, srs.Height));
         browse.Click += (_, _) =>
@@ -184,53 +620,176 @@ static class Settings
         var srsRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = Padding.Empty };
         srsRow.Controls.AddRange(new Control[] { srs, browse });
         Row(L("SRS-Ordner *", "SRS folder *"), srsRow);
-        var keys = Btn(L("Tasten festlegen …", "Set keys …"), false);
-        keys.Click += (_, _) => Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "--keys") { WorkingDirectory = AppContext.BaseDirectory, UseShellExecute = true });
-        Row(L("Funkrad-Taste, HOTAS, Sprechtaste", "Wheel key, HOTAS, push-to-talk"), keys);
+        var listen = Check(L("Über SRS auf der Lotsen-Frequenz sprechen (aus: eigene Sprechtaste) *", "Talk via SRS on the controller frequency (off: own push-to-talk key) *"), cfg.SrsListen);
+        var auto = Check(L("SRS-Client beim Start mit dem lokalen SRS-Server verbinden *", "Connect the SRS client to the local SRS server on start *"), cfg.SrsAutoConnect);
+        var srsStart = Check(L("SRS-Server und SRS-Client starten, wenn sie nicht laufen *", "Start the SRS server and SRS client if they are not running *"), cfg.SrsStart);   // forum (Killg0re NL): off for servers that start SRS themselves
+        Group(L("Funk über SRS", "Radio via SRS"));
+        var iffc = Check(L("Transponder prüfen (Code, Ident, Mode 4, über SRS)", "Check transponder (code, ident, Mode 4, via SRS)"), cfg.IffCheck);
+        var spos = Check(L("Lotsen senden mit Standort (SRS-Reichweite und Sichtlinie)", "Controllers transmit with their position (SRS range and line of sight)"), cfg.StationPositions);
 
-        // bottom: hint and config.jsonc left, Save/Cancel right
-        var raw = new LinkLabel { Text = L("Alle Optionen (config.jsonc) …", "All options (config.jsonc) …"), AutoSize = true, LinkColor = Wheel.Accent, ActiveLinkColor = Wheel.Ink, Margin = new Padding(0, 14, 0, 0) };
-        raw.LinkClicked += (_, _) => Process.Start("notepad.exe", $"\"{Program.ConfigPath}\"");
-        var note = new Label { Text = L("* gilt ab dem nächsten Start, alles andere sofort", "* takes effect on next start, everything else immediately"), AutoSize = true, ForeColor = Wheel.Grey, Margin = new Padding(0, 4, 0, 0) };
-        var info = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, Margin = Padding.Empty };
-        info.Controls.AddRange(new Control[] { raw, note });
+        Page(L("Module", "Modules"));   // like the installer: modules.txt (app) and DcsAtcModules.txt (F10 menu)
+        Group(L("Ein- und ausschalten", "Switch on and off"));
+        var offFile = Path.Combine(Program.SavedGamesDcs(), "Scripts", "DcsAtc", "DcsAtcOff.txt");   // forum 0.13: off without uninstalling, hook and mission script check it
+        var active = Check(L("DCS-ATC aktiv (aus: startet ab der nächsten Mission nicht mehr)", "DCS-ATC active (off: no longer starts from the next mission)"), !File.Exists(offFile));
+        var mods = Program.Modules.Select(m => { var b = Check(L(m.De, m.En), Program.On(m.Id)); grid.SetColumnSpan(b, 1); return (m.Id, Box: b); }).ToArray();
+        Note(L("abgewählt: kein Funk, kein Eintrag im Funkrad und F10-Menü (F10 ab der nächsten Mission)", "unticked: no radio, no entry in the wheel and F10 menu (F10 from the next mission)"));
+
+        Page(L("Erweitert", "Advanced"));
+        Group(L("Diagnose", "Diagnostics"));
+        var radioCheck = Btn(L("Funk-Selbsttest starten", "Start radio self-test"), false);
+        Row(L("Funk-Selbsttest", "Radio self-test"), radioCheck);
+        Note(L("Beim Start vier Sekunden ins gewählte Windows-Mikrofon sprechen: „Radio check“. Whisper prüft die Aufnahme lokal. Die Testantwort bleibt stumm. SRS wird am lokalen TCP-Port geprüft.",
+               "At the start, say “Radio check” into the selected Windows microphone within four seconds. Whisper checks the recording locally. The test reply is silent. SRS is checked on its local TCP port."));
+        var result = new Label { AutoSize = true, MaximumSize = new Size(510, 0), UseMnemonic = false, Visible = false };
+        Wide(result);
+        CancellationTokenSource? radioStop = null;
+        f.FormClosed += (_, _) => radioStop?.Cancel();
+        radioCheck.Click += async (_, _) =>
+        {
+            if (radioStop != null) { radioStop.Cancel(); return; }
+            using var stop = new CancellationTokenSource();
+            radioStop = stop;
+            int device = mic.SelectedIndex - 1;
+            var folder = srs.Text;
+            var voice = voices.First(v => v.Key == "Tower").Get();
+            result.Text = "";
+            result.Visible = true;
+            radioCheck.Text = L("Selbsttest abbrechen", "Cancel self-test");
+            IProgress<string> progress = new Progress<string>(line =>
+            {
+                if (!f.IsDisposed && radioStop == stop) result.Text += (result.Text == "" ? "" : Environment.NewLine) + line;
+            });
+            try
+            {
+                await Task.Run(() => Program.RadioSelfTest(Program.Root, device, null, folder, voice, cfg.AsrGpu, progress.Report, stop.Token));
+            }
+            catch (OperationCanceledException) { if (!f.IsDisposed) result.Text += Environment.NewLine + L("Abgebrochen.", "Cancelled."); }
+            catch (Exception e) { if (!f.IsDisposed) result.Text += Environment.NewLine + e.Message; }
+            finally { radioStop = null; if (!f.IsDisposed) radioCheck.Text = L("Funk-Selbsttest starten", "Start radio self-test"); }
+        };
+        var dbg = Check(L("Debug-Log für Fehlerberichte (atc-debug.txt)", "Debug log for bug reports (atc-debug.txt)"), cfg.DebugLog);
+        var report = Btn(L("Installationsbericht erstellen …", "Create installation report …"), false);
+        report.Click += (_, _) =>
+        {
+            using var save = new SaveFileDialog { FileName = "DCS-ATC-installation.txt", Filter = L("Textdatei (*.txt)|*.txt", "Text file (*.txt)|*.txt"), DefaultExt = "txt" };
+            if (save.ShowDialog(f) != DialogResult.OK) return;
+            try { File.WriteAllText(save.FileName, InstallationReport(Program.Root)); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { MessageBox.Show(f, e.Message, "DCS-ATC"); }
+        };
+        Row(L("Version, Windows und mitgelieferte Sprachwerkzeuge", "Version, Windows and bundled speech tools"), report);
+        var diag = Btn(L("Diagnose-Zip erstellen …", "Create diagnostics zip …"), false);
+        diag.Click += (_, _) =>
+        {
+            try
+            {
+                Process.Start("explorer.exe", $"/select,\"{DiagnosticsZip()}\"");
+            }
+            catch (Exception ex) { MessageBox.Show(ex.Message, "DCS-ATC"); }
+        };
+        Row(L("Logs, Einstellungen und Charts für Fehlerberichte (ohne API-Schlüssel)", "Logs, settings and charts for bug reports (without API key)"), diag);
+        var problem = Btn(L("Problem melden …", "Report a problem …"), false);
+        problem.Click += (_, _) =>
+        {
+            try
+            {
+                Process.Start("explorer.exe", $"/select,\"{DiagnosticsZip()}\"");   // the zip is attached to the issue by hand
+                var r = ReportFields(ReadLog(Program.Root));
+                Process.Start(new ProcessStartInfo(ReportUrl(Update.Own, r.Map, r.Aircraft, r.When)) { UseShellExecute = true });
+            }
+            catch (Exception ex) { MessageBox.Show(ex.Message, "DCS-ATC"); }
+        };
+        Row(L("Diagnose-Zip erstellen und das Formular für den Fehlerbericht auf GitHub öffnen (Zip dort anhängen)", "Create the diagnostics zip and open the bug report form on GitHub (attach the zip there)"), problem);
+        Group(L("Spracherkennung *", "Speech recognition *"));
+        var gpu = Check(L("Auf der Grafikkarte rechnen (Vulkan), sonst CPU", "Run on the graphics card (Vulkan), otherwise CPU"), cfg.AsrGpu);
+        var apiUrl = Field(cfg.AsrApiUrl, hint: "https://…/v1/audio/transcriptions");
+        Row(L("API-Adresse (leer = lokal erkennen)", "API URL (empty = recognize locally)"), apiUrl);
+        var apiKey = Field(cfg.AsrApiKey);
+        apiKey.UseSystemPasswordChar = true;
+        Row(L("API-Schlüssel", "API key"), apiKey);
+        var apiModel = Field(cfg.AsrApiModel);
+        Row(L("API-Modell", "API model"), apiModel);
+        Group(L("Lagekarte im Browser *", "Situation map in the browser *"));
+        var port = Field(cfg.MapPort.ToString(), 100);
+        Row(L("Port (0 = aus)", "Port (0 = off)"), port);
+        var lan = Check(L("Auch von anderen Geräten im Netzwerk (Tablet)", "Also from other devices on the network (tablet)"), cfg.MapLan);
+        Group(L("Alles andere", "Everything else"));
+        var raw = Btn("config.jsonc …", false);
+        raw.Click += (_, _) => Notepad(Program.ConfigPath);
+        Row(L("Alle Optionen als Textdatei", "All options as a text file"), raw);
+        Note(L("Nur dort: Center-Namen und -Sektoren, eigene NOTAMs, ATIS-Frequenz je Platz, On-speed-AoA.", "Only there: center names and sectors, own NOTAMs, ATIS frequency per airfield, on-speed AoA."));
+
+        Page(L("Danke", "Thanks"));
+        Group(L("Spender", "Supporters"));   // uppercase Ü loses its dots in the heading font
+        Note(L("DCS-ATC ist kostenlos und bleibt es. Danke an alle, die es trotzdem mit einer Spende unterstützen", "DCS-ATC is free and will always stay free. Thanks to everyone who supports it anyway with a tip")
+             + (Supporters.Length > 0 ? ":" : "."));
+        foreach (var n in Supporters)
+            Wide(new Label { Text = n, AutoSize = true, ForeColor = Wheel.Accent, Font = Wheel.F(Wheel.Font1, 12f, FontStyle.Bold), Margin = new Padding(0, 4, 0, 4), UseMnemonic = false });
+        var kofi = Btn("ko-fi.com/christianwagner", false);
+        kofi.Click += (_, _) => Process.Start(new ProcessStartInfo("https://ko-fi.com/christianwagner") { UseShellExecute = true });
+        kofi.Margin = new Padding(0, 10, 0, 4);
+        Wide(kofi);
+        // supporters also in the sidebar below the page buttons: in view on every page
+        if (Supporters.Length > 0)
+        {
+            nav.Controls.Add(new Label { Text = L("DANKE AN", "THANKS TO"), Font = Wheel.F(Wheel.Font1, 9f, FontStyle.Bold), ForeColor = Wheel.Grey, AutoSize = true, Margin = new Padding(8, 26, 0, 4), UseMnemonic = false });
+            nav.Controls.Add(new Label { Text = string.Join("\n", Supporters), Font = Wheel.F(Wheel.Font1, 10f, FontStyle.Bold), ForeColor = Wheel.Accent, AutoSize = true, MaximumSize = new Size(166, 0), Margin = new Padding(8, 0, 0, 0), UseMnemonic = false });
+        }
+
+        // bottom: hint left, Save/Cancel right
+        var bar = new Panel { Dock = DockStyle.Bottom, Height = 60 };
+        bar.Paint += (_, e) => { using var p = new Pen(Line); e.Graphics.DrawLine(p, 0, 0, bar.Width, 0); };
         var save = Btn(L("Speichern", "Save"), true);
         var cancel = Btn(L("Abbrechen", "Cancel"), false);
         cancel.Click += (_, _) => f.Close();   // DialogResult closes only ShowDialog windows, this one runs via Application.Run (Esc via CancelButton likewise)
-        var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, AutoSize = true, Anchor = AnchorStyles.Right | AnchorStyles.Bottom, Margin = new Padding(0, 14, 0, 0) };
+        var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, AutoSize = true, WrapContents = false, Dock = DockStyle.Right, Padding = new Padding(0, 14, 18, 0) };
         save.Margin = new Padding(0, 0, 10, 0); cancel.Margin = Padding.Empty;
         buttons.Controls.AddRange(new Control[] { cancel, save });
-
-        var page = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Location = new Point(18, 18), Margin = new Padding(0, 0, 18, 18) };   // Form padding only works with Dock, Dock and AutoScroll do not get along
-        page.Controls.AddRange(new Control[] { left, right, info, buttons });
-        right.Margin = Padding.Empty;
-        f.Controls.Add(page);
+        bar.Controls.Add(new Label { Text = L("* gilt ab dem nächsten Start, alles andere sofort", "* takes effect on next start, everything else immediately"), AutoSize = true, ForeColor = Wheel.Grey, Location = new Point(18, 21) });
+        bar.Controls.Add(buttons);
+        f.Controls.AddRange(new Control[] { host, bar, nav });   // docked back to front: sidebar full height, then the bar, pages get the rest
         f.AcceptButton = save; f.CancelButton = cancel;
-        f.Shown += (_, _) => f.ActiveControl = vol;   // Callsign field without focus: hint "leer = aus dem DCS-Slot" visible
+        search.Enter += (_, _) => f.AcceptButton = null;   // Enter in the search field must not save
+        search.Leave += (_, _) => f.AcceptButton = save;
+        f.Shown += (_, _) => f.ActiveControl = tabs[0];   // Callsign field without focus: hint "leer = aus dem DCS-Slot" visible
+        f.Tag = (Action<int>)(i => { sel = Math.Clamp(i, 0, pages.Count - 1); Mark(); });   // Snapshot picks the page
+        Mark();
 
         save.Click += (_, _) =>
         {
+            bool Bad(Control c, string msg)   // message, then the page with the field
+            {
+                MessageBox.Show(f, msg, "DCS-ATC");
+                sel = pages.FindIndex(p => p.Contains(c)); Mark(); c.Focus();
+                return true;
+            }
             var call = cs.Text.Trim() == "" ? "" : Program.NormCallsign(cs.Text);
-            if (call == null)
+            if (call == null && Bad(cs, L("Rufzeichen wie in DCS: Name und zwei Ziffern, z. B. \"Viper 1-1\".", "Callsign like in DCS: a name and two digits, e.g. \"Viper 1-1\"."))) return;
+            if (srs.Text.Trim() != cfg.SrsPath && Program.SrsRoot(srs.Text) == null &&
+                Bad(srs, L("Kein SRS-Ordner: darin fehlt ExternalAudio\\DCS-SR-ExternalAudio.exe.", "Not an SRS folder: ExternalAudio\\DCS-SR-ExternalAudio.exe is missing."))) return;
+            var mhz = new Dictionary<string, double>(cfg.Frequencies);
+            foreach (var (key, box) in freqs)
             {
-                MessageBox.Show(f, L("Rufzeichen wie in DCS: Name und zwei Ziffern, z. B. \"Viper 1-1\".", "Callsign like in DCS: a name and two digits, e.g. \"Viper 1-1\"."), "DCS-ATC");
-                cs.Focus(); return;
+                if (double.TryParse(box.Text.Trim().Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out var v) && v is >= 30 and <= 400) mhz[key] = v;
+                else if (Bad(box, L($"{key}: Frequenz in MHz zwischen 30 und 400, z. B. 265.0.", $"{key}: frequency in MHz between 30 and 400, e.g. 265.0."))) return;
             }
-            if (srs.Text.Trim() != cfg.SrsPath && Program.SrsRoot(srs.Text) == null)
-            {
-                MessageBox.Show(f, L("Kein SRS-Ordner: darin fehlt ExternalAudio\\DCS-SR-ExternalAudio.exe.", "Not an SRS folder: ExternalAudio\\DCS-SR-ExternalAudio.exe is missing."), "DCS-ATC");
-                srs.Focus(); return;
-            }
-            string D(double v) => v.ToString(CultureInfo.InvariantCulture);
-            string J(object v) => JsonSerializer.Serialize(v);
+            if ((!int.TryParse(port.Text.Trim(), out var mapPort) || mapPort is < 0 or > 65535) && Bad(port, L("Port: Zahl von 0 bis 65535.", "Port: a number from 0 to 65535."))) return;
+            var voice = voices.ToDictionary(v => v.Key, v => v.Get() == v.Was ? cfg.Voices[v.Key] : v.Get());   // untouched row: as written in the file ("@1.0" stays)
+            if (voices.FirstOrDefault(v => voice[v.Key] == "").C is { } empty && Bad(empty, L("Stimme fehlt.", "Voice is missing."))) return;
             var set = new (string Key, string Value, string After)[]
             {
-                ("MyCallsign", J(call), "Callsign"), ("CallsignFromUnit", J(unitCs.Checked), "MyCallsign"), ("Volume", D(vol.Value / 100), "RadioFx"), ("SpeechRate", D(rate.Value), "Volume"),
-                ("ReplyPause", D(pause.Value), "SpeechRate"), ("RadioFx", J(fx.Checked), "PilotVoice"), ("RadioText", J(rtx.Checked), "RadioFx"),
-                ("PilotVoice", J(pv.Checked ? (cfg.PilotVoice != "" ? cfg.PilotVoice : new Config().PilotVoice) : ""), "Voices"),
+                ("MyCallsign", J(call!), "Callsign"), ("CallsignFromUnit", J(unitCs.Checked), "MyCallsign"), ("CallsignFromPlayer", J(playerCs.Checked), "CallsignFromUnit"), ("WheelFixed", J(wfix.Checked), "WheelSize"),("Volume", D(vol.Value / 100), "RadioFx"), ("SpeechRate", D(rate.Value), "Volume"),
+                ("ReplyPause", D(pause.Value), "SpeechRate"), ("RadioFx", J(fx.Checked), "PilotVoice"), ("RadioText", J(rtx.Checked), "RadioFx"), ("HintText", J(htx.Checked), "RadioText"),
+                ("PilotVoice", J(pv.SelectedIndex == 0 ? "" : known[pv.SelectedIndex - 1] == pilot ? cfg.PilotVoice : known[pv.SelectedIndex - 1]), "Voices"),   // same model: its "@pitch" stays
                 ("AiChatter", J(chat.Checked), "ReplyPause"), ("AwacsBullseye", J(bull.Checked), "Coalition"), ("AwacsNewGroupNm", D(awNm.Value), "AwacsBullseye"), ("Atis", J(atis.Checked), "AiChatter"), ("RunwayLights", J(lights[light.SelectedIndex]), "Atis"), ("AltimeterUnit", J(units[unit.SelectedIndex]), "RunwayLights"), ("AiFlightComms", J(modes[combat.SelectedIndex]), "Volume"), ("IffCheck", J(iffc.Checked), "AirspaceWatch"), ("StationPositions", J(spos.Checked), "IffCheck"), ("RandomNotams", J(notam.Checked), "StationPositions"),("AirspaceWatch", J(watch.Checked), "RunwayLights"), ("DebugLog", J(dbg.Checked), "AirspaceWatch"),
                 ("WheelInGame", J(ingames[ingame.SelectedIndex]), "WheelSize"), ("MicName", J(mic.SelectedIndex == 0 ? "" : mics[mic.SelectedIndex - 1]), "WheelSize"), ("SrsPath", J(srs.Text.Trim()), "DebugLog"),
+                ("KneeboardPages", J(knee.Checked), "DebugLog"), ("F10Drawings", J(f10.Checked), "KneeboardPages"),("AiFlightRadiusNm", D(aiNm.Value), "AiFlightComms"), ("AiOwnWingmen", J(wingmen.Checked), "AiFlightRadiusNm"), ("TankerVectors", J(tvec.Checked), "AiOwnWingmen"),
+                ("AiFollowAwacs", J(follow.Checked), "AiFlightComms"), ("Modulation", J(modu.Text), "AwacsNewGroupNm"), ("Coalition", side.SelectedIndex == 1 ? "1" : "2", "Modulation"),
+                ("WheelSize", D(wsize.Value / 100), "WheelButton"), ("SrsListen", J(listen.Checked), "AiChatter"), ("SrsAutoConnect", J(auto.Checked), "SrsListen"), ("SrsStart", J(srsStart.Checked), "SrsPath"),
+                ("AsrGpu", J(gpu.Checked), "DebugLog"), ("AsrApiUrl", J(apiUrl.Text.Trim()), "AsrGpu"), ("AsrApiKey", J(apiKey.Text.Trim()), "AsrApiUrl"), ("AsrApiModel", J(apiModel.Text.Trim()), "AsrApiKey"),
+                ("ElevenLabsKey", J(elKey.Text.Trim()), "PilotVoice"),
+                ("MapPort", mapPort.ToString(), "DebugLog"), ("MapLan", J(lan.Checked), "MapPort"), ("UpdateCheck", J(updAuto.Checked), "DebugLog"),
             };
+            var was = JsonSerializer.SerializeToElement(cfg);   // write only what changed: the file keeps its shape, and a value another window wrote meanwhile (wheel size) stays
             try
             {
                 var dcs = Path.Combine(Program.SavedGamesDcs(), "Scripts", "DcsAtc");
@@ -239,9 +798,22 @@ static class Settings
                 if (Directory.Exists(dcs)) File.WriteAllText(Path.Combine(dcs, "DcsAtcModules.txt"), ml);
                 if (!active.Checked && Directory.Exists(dcs)) File.WriteAllText(offFile, "DCS-ATC aus / off: DCS-ATC Einstellungen / settings -> DCS-ATC aktiv / active\n");
                 else if (active.Checked && File.Exists(offFile)) File.Delete(offFile);
-                var text = File.ReadAllText(Program.ConfigPath);
-                foreach (var s in set) text = Program.WithConfigValue(text, s.Key, s.Value, s.After);
-                File.WriteAllText(Program.ConfigPath, text);
+                string text = File.ReadAllText(Program.ConfigPath), before = text;
+                foreach (var s in set.Where(s => !was.TryGetProperty(s.Key, out var o) || o.GetRawText() != s.Value)) text = Program.WithConfigValue(text, s.Key, s.Value, s.After);
+                text = WithNested(text, "Frequencies", mhz.Where(x => x.Value != cfg.Frequencies[x.Key]).Select(x => (x.Key, D(x.Value))), J(mhz));
+                text = WithNested(text, "Voices", voice.Where(x => x.Value != cfg.Voices[x.Key]).Select(x => (x.Key, J(x.Value))), J(voice));
+                var defSpeed = cfg.ElevenLabsSpeed.ToString("0.00", CultureInfo.InvariantCulture);
+                string ElSave((string Key, ComboBox Cb, List<string> Ids, string Was, ComboBox Sp) r)
+                {
+                    var sel = r.Ids[r.Cb.SelectedIndex];
+                    if (sel == "") return "";
+                    var raw = cfg.ElevenVoices.GetValueOrDefault(r.Key, "");
+                    if (sel == r.Was && r.Sp.Text == Program.ElevenSpec(raw.Split('|')[0]).Speed.ToString("0.00", CultureInfo.InvariantCulture)) return raw;   // untouched: as stored
+                    return string.Join("|", sel.Split('|').Select(i => r.Sp.Text == defSpeed ? i : $"{i}@{r.Sp.Text}"));   // "@speed" only when it differs from the default
+                }
+                var elv = elRows.ToDictionary(r => r.Key, ElSave);
+                text = WithNested(text, "ElevenVoices", elv.Where(x => x.Value != cfg.ElevenVoices.GetValueOrDefault(x.Key, "")).Select(x => (x.Key, J(x.Value))), J(elv.Where(x => x.Value != "").ToDictionary(x => x.Key, x => x.Value)));
+                if (text != before) File.WriteAllText(Program.ConfigPath, text);
                 if ((lang.SelectedIndex == 1) != En)   // like the installer: app and mission (F10 menu)
                 {
                     var code = lang.SelectedIndex == 1 ? "en" : "de";
@@ -257,6 +829,9 @@ static class Settings
         };
         return f;
     }
+
+    /// Sidebar button: no white default-button frame while it has the focus.
+    sealed class Tab : Button { public override void NotifyDefault(bool value) => base.NotifyDefault(false); }
 
     /// Slider in radio wheel look (TrackBar and NumericUpDown cannot be colored dark): mouse, mouse wheel, arrow keys.
     sealed class Slider : Control

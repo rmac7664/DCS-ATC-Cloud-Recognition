@@ -25,12 +25,13 @@ public partial class Tower
         var word = Phonetic(letter);
         var zulu = clock < 0 || Airfield.UtcOffset is not { } off ? "" : $", time {Digits(TimeSpan.FromSeconds((clock - off * 3600 + 86400) % 86400).ToString("hhmm"))} Zulu";   // R125: Zulu per map, unknown map without time
         var rw = WindRunway(w);
+        var inUse = WindRunway(w, true) is var dr && dr != rw ? $"Landing runway {RwSay(rw)}, departure runway {RwSay(dr)}" : $"Runway {RwSay(rw)} in use";   // land_rwy/dep_rwy differ
         // R208: visibility obstruction per ICAO Annex 3 (FG under 1000 m, BR up to 5000 m)
         var vis = visM >= 9500 ? "visibility one zero kilometers or more" : visM < 1000 ? $"visibility {Math.Round(visM / 50) * 50} meters, fog"
                 : $"visibility {Digits(Math.Max(1, Math.Round(visM / 1000)).ToString())} kilometers{(visM < 5000 ? ", mist" : "")}";
         var sky = clouds ? $"clouds {Math.Round(Math.Max(0, baseM - F.Elev) / Ft / 100) * 100:0} feet" : "sky clear";   // A34: ceiling above airfield (AGL), not above MSL
         var temp = (tempC < -0.5 ? "minus " : "") + Digits(Math.Abs(Math.Round(tempC)).ToString());
-        return $"{F.Name.Replace('-', ' ')} information {word}{zulu}. Runway {RwSay(rw)} in use, {Hand(rw)} pattern, {Alt(PatternFt)}. " +
+        return $"{F.Name.Replace('-', ' ')} information {word}{zulu}. {inUse}, {Hand(rw)} pattern, {Alt(PatternFt)}. " +
                $"{Cap(Wind(w))}. {Cap(vis)}, {sky}. Temperature {temp}. {Cap(AtisQnh(w))}. " +
                (F.FreqsOf("Tower") is { } tf ? (tf.Any(x => x < 200) && tf.Any(x => x >= 200) ? $"Tower {FreqSay(tf.First(x => x < 200))}, UHF {FreqSay(tf.First(x => x >= 200))}. " : $"Tower {FreqSay(tf[0])}. ")   // K5: map frequency (VHF) first; own (AirfieldFrequencies) likewise
                           : $"Ground {FreqSay(Freqs["Ground"])}, tower {FreqSay(Freqs["Tower"])}, approach {FreqSay(Freqs["Approach"])}. ") +
@@ -75,25 +76,35 @@ public partial class Tower
             return climbOut == "tactical" ? $"{c}, after departure spiral climb overhead, remain within 3 miles, unrestricted{top}, then own navigation, {clr}"
                                           : $"{c}, after departure unrestricted climb{top}, own navigation, {clr}";
         }
+        if (depRoute is { } dr && dr.Rwy.Contains(Runway) && !IsHeli)   // charts.jsonc departure: fixes with altitudes, then own navigation (IFR: climb to the cleared altitude)
+        {
+            var sp = NextSpoken(dr, 0);   // #57: silent points are flown, not said; none spoken at all: "fly the X departure"
+            (depAt, nav, navName) = (0, (dr.Pts[0].X, dr.Pts[0].Z), sp ?? "");
+            if (depClr && depSaid == dr) return $"{c}, after departure fly the {CrpSay(dr.Name)} departure, {clr}";   // #31 (log Nellis): Ground already cleared it by name, no second reading of the fixes
+            var cross = CrossTxt(dr);
+            return $"{c}, after departure {(sp != null ? $"{CrpSay(dr.Name)} departure, proceed direct {sp}" : $"fly the {CrpSay(dr.Name)} departure")}{(cross != "" ? ", cross " + cross : "")}, " +
+                   $"then {(depClr ? $"climb and maintain {Alt(depFt)}" : "own navigation")}, {clr}";
+        }
         if (depClr)
         {
             nav = null;
             return $"{c}, after departure fly runway heading, climb and maintain {Alt(depFt)}, {clr}";
         }
-        if (!F.Charted && exitDir != null)   // A92: without map departure direction instead of CRP
+        bool exitCh = F.Charted && ExitChart(Runway);
+        if (!exitCh && exitDir != null)   // A92: without map (or without exit in the chart) departure direction instead of CRP
         {
             nav = null;
             return $"{c}, after departure leave the control zone {exitDir}bound, not above {Alt(MaxFt)}, {clr}";
         }
-        if (!F.Charted || exitDir == null)
+        if (!exitCh || exitDir == null)
         {
             nav = null;
             return $"{c}, after departure own navigation, not above {Alt(MaxFt)} until leaving the control zone, {clr}";
         }
         nav = Crp[exitDir];
-        navName = $"C R P {exitDir}";
+        navName = CrpSay(exitDir!);
         var xn = F.ExitNote.TryGetValue((Runway, exitDir), out var note) ? ", " + SayChart(note) : "";   // K24: hint of the chart ("then 354 to the C R P")
-        return $"{c}, after departure exit via C R P {exitDir}{xn}, not above {Alt(MaxFt)} until leaving the control zone, {clr}";
+        return $"{c}, after departure exit via {CrpSay(exitDir!)}{xn}, not above {Alt(MaxFt)} until leaving the control zone, {clr}";
     }
 
     /// Takeoff clearance, otherwise wait: emergency / landing traffic up to 4 NM -> hold short, runway occupied -> line up and wait (only behind a rolling aircraft with no approach traffic within 6 NM, A10),
@@ -329,7 +340,7 @@ public partial class Tower
     }
 
     void PatternReset() { nav = null; kneeTo = null; lastAltFt = -1; if (navName == "circle") navName = "";   // Review R212: no old "circle" (otherwise a later first call at the Tower becomes circling)
-        baseCalled = extended = s360 = wrongRwyTold = finalLowTold = iniAsked = iniWaved = ovhAsked = ovhWaved = crpAsked = crpWaved = landCall = finAsked = gearDown = sfo = towerDue = towerNag = false; sideWarns = 0; }
+        baseCalled = extended = s360 = wrongRwyTold = finalLowTold = iniAsked = iniWaved = ovhAsked = ovhWaved = crpAsked = crpWaved = landCall = finAsked = gearDown = sfo = towerDue = towerNag = false; sideWarns = 0; ParReset(); }
     int sideWarns;   // LA14: "wrong side" in this pattern (at most twice, the second time with heading)
     double vecLim;   // R315: lead for the next waypoint turn
     bool intentsAsked;   // R318: "say intentions" already said within the gate

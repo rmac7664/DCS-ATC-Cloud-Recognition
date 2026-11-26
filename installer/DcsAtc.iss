@@ -1,5 +1,7 @@
-﻿; DCS-ATC Installer (Inno Setup 6). Bauen: installer\build.cmd -> dist\DCS-ATC-Setup.exe
-#define AppVer "0.20.1-alpha"
+﻿; DCS-ATC Installer (Inno Setup 6). Bauen: installer\build.cmd -> dist\DCS-ATC-Setup.exe und (ISCC /DSmall) dist\DCS-ATC-Update-Setup.exe
+; Small: update setup without the big files (models, tools) for the update from the app; only over an existing installation.
+; installer\manifest.ps1 reads the big files from the block "#ifndef Small" in [Files].
+#define AppVer "0.23.29-alpha"
 #define Src ".."
 
 [Setup]
@@ -12,7 +14,11 @@ DefaultGroupName=DCS-ATC
 PrivilegesRequired=lowest
 DisableProgramGroupPage=yes
 OutputDir={#Src}\dist
+#ifdef Small
+OutputBaseFilename=DCS-ATC-Update-Setup
+#else
 OutputBaseFilename=DCS-ATC-Setup
+#endif
 Compression=lzma2/max
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
@@ -34,6 +40,10 @@ de.IconKeys=Tasten festlegen (Funkrad, Push-to-Talk)
 en.IconKeys=Set keys (radio wheel, push-to-talk)
 de.IconConfig=Einstellungen (Rufzeichen, Lautstärke, Funk)
 en.IconConfig=Settings (callsign, volume, radio)
+de.IconDesktop=DCS-ATC Einstellungen
+en.IconDesktop=DCS-ATC Settings
+de.IconCharts=Verfahrens-Editor (Meldepunkte, Routen)
+en.IconCharts=Chart editor (reporting points, routes)
 de.IconOptions=Bodenpersonal (Standard)
 en.IconOptions=Ground crew (default)
 de.IconRepair=Nach DCS-Update reparieren
@@ -42,16 +52,20 @@ de.IconReadme=Liesmich
 en.IconReadme=Readme
 de.IconUninstall=DCS-ATC deinstallieren
 en.IconUninstall=Uninstall DCS-ATC
-de.RunPatch=DCS: MissionScripting.lua anpassen (Admin-Abfrage) ...
-en.RunPatch=DCS: patching MissionScripting.lua (admin prompt) ...
+de.RunPatch=DCS: MissionScripting.lua und autoexec.lua anpassen (Admin-Abfrage) ...
+en.RunPatch=DCS: patching MissionScripting.lua and autoexec.lua (admin prompt) ...
 de.RunKeys=Tasten festlegen (Funkrad, Push-to-Talk – Tastatur oder HOTAS)
 en.RunKeys=Set keys (radio wheel, push-to-talk – keyboard or HOTAS)
 de.RunSettings=Einstellungen öffnen (neue Optionen ansehen)
 en.RunSettings=Open settings (see the new options)
 de.RunSettings=Einstellungen öffnen (Rufzeichen, Stimmen, Funk, VR, Höhenmesser)
 en.RunSettings=Open settings (callsign, voices, radio, VR, altimeter)
+de.NoBase=Dieses Update-Setup enthält keine Sprachmodelle und Stimmen und braucht eine vorhandene DCS-ATC-Installation. Bitte DCS-ATC-Setup.exe aus DCS-ATC.zip verwenden.
+en.NoBase=This update setup has no speech models and voices and needs an existing DCS-ATC installation. Please use DCS-ATC-Setup.exe from DCS-ATC.zip.
 de.NoDcs=Saved Games\DCS wurde nicht gefunden. Bitte deinen DCS-Ordner in Saved Games wählen (enthält Config und Scripts):
 en.NoDcs=Saved Games\DCS was not found. Please select your DCS folder in Saved Games (contains Config and Scripts):
+de.TaskDesktop=Desktop-Symbol für die Einstellungen
+en.TaskDesktop=Desktop icon for the settings
 de.TaskServer=Dedicated Server (DCS_server.exe auf diesem PC): Hook und Missionsskript auch in dessen Saved-Games-Ordner, MissionScripting.lua des Servers anpassen
 en.TaskServer=Dedicated server (DCS_server.exe on this PC): hook and mission script also into its Saved Games folder, patch the server's MissionScripting.lua
 de.ServerSaved=Saved-Games-Ordner des Dedicated Servers (z. B. DCS.server, DCS.dcs_serverrelease oder der Name nach -w):
@@ -110,6 +124,7 @@ Source: "{#Src}\charts\caucasus.jsonc"; DestDir: "{app}\charts"; Flags: ignoreve
 Source: "{#Src}\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 Source: "{#Src}\mod\DcsAtc-Patch.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#Src}\airfields.txt"; DestDir: "{app}"; Flags: ignoreversion
+#ifndef Small
 Source: "{#Src}\models\ggml-small.en.bin"; DestDir: "{app}\models"; Flags: ignoreversion
 Source: "{#Src}\models\en_US-ryan-medium.onnx*"; DestDir: "{app}\models"; Flags: ignoreversion
 Source: "{#Src}\models\en_US-joe-medium.onnx*"; DestDir: "{app}\models"; Flags: ignoreversion
@@ -119,9 +134,11 @@ Source: "{#Src}\models\en_US-bryce-medium.onnx*"; DestDir: "{app}\models"; Flags
 Source: "{#Src}\tools\piper\*"; DestDir: "{app}\tools\piper"; Flags: ignoreversion recursesubdirs
 Source: "{#Src}\tools\whisper\Release\*"; DestDir: "{app}\tools\whisper\Release"; Flags: ignoreversion recursesubdirs
 Source: "{#Src}\tmp\ffmpeg\ffmpeg.exe"; DestDir: "{app}\tools\ffmpeg"; Flags: ignoreversion
+#endif
 ; DCS part: hook (autostart, radio wheel for other players) and mission script (if only a dedicated server is on this PC: only there)
 Source: "{#Src}\mod\Scripts\Hooks\DcsAtcHook.lua"; DestDir: "{code:SavedGames}\Scripts\Hooks"; Check: HasClient; Flags: ignoreversion
 Source: "{#Src}\mod\Scripts\DcsAtc\DcsAtcMission.lua"; DestDir: "{code:SavedGames}\Scripts\DcsAtc"; Check: HasClient; Flags: ignoreversion
+Source: "{#Src}\mod\Scripts\DcsAtc\DcsAtcWing.lua"; DestDir: "{code:SavedGames}\Scripts\DcsAtc"; Check: HasClient; Flags: ignoreversion
 Source: "{#Src}\mod\Scripts\DcsAtc\DcsAtcOptions.lua"; DestDir: "{code:SavedGames}\Scripts\DcsAtc"; Check: HasClient; Flags: onlyifdoesntexist uninsneveruninstall
 ; Own-aircraft telemetry (AoA for the LSO); Export.lua includes it via pcall
 Source: "{#Src}\export\DcsAtcExport.lua"; DestDir: "{code:SavedGames}\Scripts"; Check: HasClient; Flags: ignoreversion
@@ -132,6 +149,7 @@ Source: "{#Src}\mod\Scripts\DcsAtc\DcsAtcOptions.lua"; DestDir: "{code:ServerSav
 
 [Tasks]
 Name: "server"; Description: "{cm:TaskServer}"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:TaskDesktop}"; Flags: unchecked
 
 [Registry]
 ; Location of Saved Games\DCS for the app (language switch), reinstall and uninstall
@@ -144,6 +162,8 @@ Root: HKCU; Subkey: "Software\DCS-ATC"; ValueType: string; ValueName: "ServerDcs
 Name: "{group}\{cm:IconStart}"; Filename: "{app}\DcsAtc.exe"; WorkingDir: "{app}"
 Name: "{group}\{cm:IconKeys}"; Filename: "{app}\DcsAtc.exe"; Parameters: "--keys"; WorkingDir: "{app}"
 Name: "{group}\{cm:IconConfig}"; Filename: "{app}\DcsAtc.exe"; Parameters: "--settings"; WorkingDir: "{app}"
+Name: "{group}\{cm:IconCharts}"; Filename: "{app}\DcsAtc.exe"; Parameters: "--charts"; WorkingDir: "{app}"
+Name: "{autodesktop}\{cm:IconDesktop}"; Filename: "{app}\DcsAtc.exe"; Parameters: "--settings"; WorkingDir: "{app}"; Tasks: desktopicon
 Name: "{group}\{cm:IconOptions}"; Filename: "notepad.exe"; Parameters: """{code:SavedGames}\Scripts\DcsAtc\DcsAtcOptions.lua"""
 Name: "{group}\{cm:IconRepair}"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\DcsAtc-Patch.ps1"" -Pause"
 Name: "{group}\{cm:IconReadme}"; Filename: "{app}\LIESMICH.txt"; Languages: de
@@ -167,6 +187,8 @@ Type: filesandordirs; Name: "{app}\tmp"
 Type: files; Name: "{code:SavedGames}\Scripts\DcsAtc\DcsAtcPath.txt"
 Type: files; Name: "{code:SavedGames}\Scripts\DcsAtc\DcsAtcLang.txt"
 Type: files; Name: "{code:ServerSaved}\Scripts\DcsAtc\DcsAtcPath.txt"
+Type: files; Name: "{code:SavedGames}\Scripts\DcsAtc\DcsAtcVersion.txt"
+Type: files; Name: "{code:ServerSaved}\Scripts\DcsAtc\DcsAtcVersion.txt"
 Type: files; Name: "{code:ServerSaved}\Scripts\DcsAtc\DcsAtcLang.txt"
 Type: files; Name: "{app}\lang.txt"
 Type: files; Name: "{app}\modules.txt"
@@ -181,7 +203,18 @@ const ExportLine = 'pcall(function() local l=require(''lfs''); dofile(l.writedir
 var Saved, ServerSave, ServerDir: String;
     ServerOnly, TaskSet, CompSet: Boolean;   { ServerOnly: no Saved Games\DCS but a dedicated server -> install there only }
 
-{ Saved Games\DCS (bzw. DCS.openbeta, falls nur das existiert): früher gewählter Ordner (HKCU\Software\DCS-ATC, liest auch die App),
+{ Last write time of Logs\dcs.log as FILETIME (0 = no log) }
+function LogTime(Dir: String): Int64;
+var R: TFindRec;
+begin
+  Result := 0;
+  if FindFirst(Dir + '\Logs\dcs.log', R) then begin
+    Result := Int64(R.LastWriteTime.dwHighDateTime) * 4294967296 + R.LastWriteTime.dwLowDateTime;
+    FindClose(R);
+  end;
+end;
+
+{ Saved Games\DCS (bzw. DCS.openbeta, falls nur das existiert oder dessen Logs\dcs.log neuer ist, DCS schreibt es bei jedem Start neu): früher gewählter Ordner (HKCU\Software\DCS-ATC, liest auch die App),
   sonst der echte Ort von Saved Games (Konstante usersavedgames = Known Folder, in Windows verschiebbar) }
 function SavedGames(Param: String): String;
 var Base, Chosen: String;
@@ -189,7 +222,7 @@ begin
   { Windows Saved Games\DCS first (the folder DCS uses, also when moved), the folder chosen earlier only when that is missing }
   if Saved = '' then begin
     Base := ExpandConstant('{usersavedgames}');
-    if not DirExists(Base + '\DCS') and DirExists(Base + '\DCS.openbeta') then Saved := Base + '\DCS.openbeta'
+    if DirExists(Base + '\DCS.openbeta') and (not DirExists(Base + '\DCS') or (LogTime(Base + '\DCS.openbeta') > LogTime(Base + '\DCS'))) then Saved := Base + '\DCS.openbeta'
     else Saved := Base + '\DCS';
     if not DirExists(Saved) and RegQueryStringValue(HKCU, 'Software\DCS-ATC', 'SavedGames', Chosen) and DirExists(Chosen) then Saved := Chosen;
   end;
@@ -231,10 +264,11 @@ begin
   Result := not ServerOnly;
 end;
 
-{ Update: untick modules missing in modules.txt (the settings window may have changed them since the last setup; Inno only remembers its own choice) }
-procedure Untick(S, Id: String);
+{ Settings may have changed a module in either direction since the previous setup. }
+procedure RestoreModule(S, Id: String);
 begin
-  if Pos(',' + Id + ',', S) = 0 then begin
+  if Pos(',' + Id + ',', S) > 0 then WizardSelectComponents(Id)
+  else begin
     WizardSelectComponents('!' + Id);
     WizardForm.TypesCombo.ItemIndex := 1;   { custom }
   end;
@@ -244,13 +278,18 @@ end;
 procedure CurPageChanged(CurPageID: Integer);
 var S: AnsiString;
 begin
-  if (CurPageID = wpSelectComponents) and not CompSet and not WizardSilent then begin
+  if (CurPageID = wpSelectComponents) and not CompSet then begin
     CompSet := True;
-    if LoadStringFromFile(ExpandConstant('{app}\modules.txt'), S) then begin
+    if (ExpandConstant('{param:COMPONENTS|unset}') = 'unset') and
+       (ExpandConstant('{param:TYPE|unset}') = 'unset') and
+       (ExpandConstant('{param:LOADINF|unset}') = 'unset') and
+       LoadStringFromFile(ExpandConstant('{app}\modules.txt'), S) then begin
       S := ',' + Lowercase(Trim(S)) + ',';
-      Untick(S, 'atc'); Untick(S, 'range'); Untick(S, 'awacs'); Untick(S, 'tanker'); Untick(S, 'carrier'); Untick(S, 'ai'); Untick(S, 'crew');
-      if Pos(',m2,', S) > 0 then Untick(S, 'jtac');   { m2: list written by 0.12.1+, knows jtac (an older list lacks it because it did not exist) }
-      if Pos(',m3,', S) > 0 then Untick(S, 'center');   { m3: list written with Center }
+      { A list from before a module was introduced inherits its initial enabled default. }
+      if Pos(',m2,', S) = 0 then S := S + 'jtac,';
+      if Pos(',m3,', S) = 0 then S := S + 'center,';
+      RestoreModule(S, 'atc'); RestoreModule(S, 'range'); RestoreModule(S, 'awacs'); RestoreModule(S, 'tanker');
+      RestoreModule(S, 'carrier'); RestoreModule(S, 'ai'); RestoreModule(S, 'crew'); RestoreModule(S, 'jtac'); RestoreModule(S, 'center');
     end;
   end;
   if (CurPageID = wpSelectTasks) and not TaskSet then begin
@@ -280,6 +319,15 @@ function InitializeSetup(): Boolean;
 var Dir: String;
 begin
   Result := True;
+#ifdef Small
+  { update setup: the big files must be there from the full setup (folder of the last setup from Inno's uninstall key) }
+  if not (RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{6B7E2C1A-4D2F-4E8B-9A11-DC5A7C0A7C01}_is1', 'Inno Setup: App Path', Dir)
+          and FileExists(Dir + '\models\ggml-small.en.bin')) then begin
+    MsgBox(CustomMessage('NoBase'), mbError, MB_OK);
+    Result := False;
+    Exit;
+  end;
+#endif
   ServerOnly := not DirExists(SavedGames('')) and DirExists(ServerSaved(''));
   if not DirExists(SavedGames('')) and not ServerOnly then begin
     Dir := ExpandConstant('{usersavedgames}');
@@ -321,6 +369,7 @@ begin
     if HasClient() then begin
       ForceDirectories(SavedGames('') + '\Scripts\DcsAtc');
       SaveStringToFile(SavedGames('') + '\Scripts\DcsAtc\DcsAtcPath.txt', ExpandConstant('{app}\DcsAtc.exe'), False);
+      SaveStringToFile(SavedGames('') + '\Scripts\DcsAtc\DcsAtcVersion.txt', '{#AppVer}', False);
       SaveStringToFile(SavedGames('') + '\Scripts\DcsAtc\DcsAtcLang.txt', ActiveLanguage, False);
       SaveStringToFile(SavedGames('') + '\Scripts\DcsAtc\DcsAtcModules.txt', Mods, False);
       ExportLua(True);
@@ -328,6 +377,7 @@ begin
     if WantServer() then begin   { Dedicated server: the hook starts the app with every server mission }
       ForceDirectories(ServerSaved('') + '\Scripts\DcsAtc');
       SaveStringToFile(ServerSaved('') + '\Scripts\DcsAtc\DcsAtcPath.txt', ExpandConstant('{app}\DcsAtc.exe'), False);
+      SaveStringToFile(ServerSaved('') + '\Scripts\DcsAtc\DcsAtcVersion.txt', '{#AppVer}', False);
       SaveStringToFile(ServerSaved('') + '\Scripts\DcsAtc\DcsAtcLang.txt', ActiveLanguage, False);
       SaveStringToFile(ServerSaved('') + '\Scripts\DcsAtc\DcsAtcModules.txt', Mods, False);
     end;

@@ -22,7 +22,62 @@ local function session(text)
   if h then h:write(text) h:close() end
 end
 
+-- Version check in multiplayer: the server names its DCS-ATC version in chat to each joining player (once per mission); a client with DCS-ATC compares it,
+-- shows a hint locally if it differs and reports its own version back as hidden "ATC>~version x" (the server app logs it). Old servers never send the line.
+local told, checked = {}, false
+local function readFile(name)   -- first line of Scripts\DcsAtc\<name>, nil if missing
+  local h = io.open(lfs.writedir() .. 'Scripts\\DcsAtc\\' .. name, 'r')
+  local s = h and h:read('*l')
+  if h then h:close() end
+  s = s and s:match('^%s*(.-)%s*$')
+  return s ~= '' and s or nil
+end
+local function nums(v) local a, b, c = tostring(v):match('(%d+)%.(%d+)%.(%d+)') return { tonumber(a) or 0, tonumber(b) or 0, tonumber(c) or 0 } end
+local function older(a, b)   -- version a < b by its three numbers ("-alpha" ignored)
+  local x, y = nums(a), nums(b)
+  for i = 1, 3 do if x[i] ~= y[i] then return x[i] < y[i] end end
+  return false
+end
+
+function cb.onPlayerChangeSlot(id)
+  pcall(function()
+    if not (Sim.isServer() and Sim.isMultiplayer()) or told[id] or id == net.get_my_player_id() then return end
+    local ver = readFile('DcsAtcVersion.txt')
+    if not ver then return end
+    told[id] = true
+    net.send_chat_to('This server runs DCS-ATC ' .. ver .. '. Talk to its controllers over SRS. If you have DCS-ATC installed, use the same version.', id)
+  end)
+end
+
+function cb.onChatMessage(message, from)
+  if checked or type(message) ~= 'string' then return end
+  local ok, err = pcall(function()
+    local sok, sid = pcall(net.get_server_id)
+    if from ~= (sok and sid or 1) then return end
+    local srv = message:match('This server runs DCS%-ATC (%S+)%.')
+    if not srv or Sim.isServer() then return end
+    local own = readFile('DcsAtcVersion.txt')
+    if not own then return end
+    checked = true
+    net.send_chat('ATC>~version ' .. own, false)
+    if own == srv then return end
+    local de = readFile('DcsAtcLang.txt') == 'de'
+    local txt
+    if older(own, srv) or not older(srv, own) then   -- equal numbers, different text: "older" wording
+      txt = de and ('DCS-ATC: Du hast ' .. own .. ', der Server hat ' .. srv .. '. Bitte updaten (Einstellungen, Update).')
+                or ('DCS-ATC: you have ' .. own .. ', the server runs ' .. srv .. '. Please update (settings window, Update).')
+    else
+      txt = de and ('DCS-ATC: Du hast ' .. own .. ', der Server hat ' .. srv .. '. Manche Funkrad-Eintr\195\164ge kommen dort nicht an.')
+                or ('DCS-ATC: you have ' .. own .. ', the server runs ' .. srv .. '. Some radio wheel entries may not reach the server.')
+    end
+    local shown, e = pcall(net.recv_chat, txt)
+    if not shown then net.log('DcsAtcHook: Versionshinweis nicht angezeigt: ' .. tostring(e)) end
+  end)
+  if not ok then net.log('DcsAtcHook: Versionspruefung: ' .. tostring(err)) end
+end
+
 function cb.onSimulationStart()
+  told, checked = {}, false
   local off = io.open(lfs.writedir() .. 'Scripts\\DcsAtc\\DcsAtcOff.txt', 'r')   -- forum 0.13: switched off in the settings window, no app start
   if off then off:close() return end
   local host = not Sim.isMultiplayer() or Sim.isServer()
@@ -47,7 +102,7 @@ function cb.onSimulationStart()
   end
 end
 
-function cb.onSimulationStop() session('stop\n') end
+function cb.onSimulationStop() told, checked = {}, false session('stop\n') end
 
 function cb.onPlayerTrySendChat(id, msg, all)
   if type(msg) ~= 'string' or msg:sub(1, 4) ~= 'ATC>' then return end
@@ -64,69 +119,58 @@ function cb.onPlayerTrySendChat(id, msg, all)
   return ''   -- do not show in chat
 end
 
--- AI wingmen by voice: the app writes "par;wMsgLeader..." (par as in the DCS radio menu: 1-3 wingman 2-4, 5 flight). Performs the menu item
--- that sends this message to that recipient, with the menu's own parameters: independent of the module's numbering and of the DCS language, no keys.
-local wingFile = tmp .. '\\DcsAtc-Wing.txt'
-local function wing(par, name)
-  local P, id = package.loaded['RadioCommandDialogsPanel'] or rawget(_G, 'RadioCommandDialogsPanel'), rawget(_G, 'Message') and Message[name]
-  local root = P and P.getDataParameter and P.getDataParameter('rootItem')
-  if not root then return 'no radio menu' end
-  if not id then return 'unknown message ' .. name end
-  local function only()   -- the addressed wingman is the only one: "Flight" reaches just him (F-16C/FA-18C list "Wingman n" only if unit n+1 exists, so never in a two-ship)
-    local u = P.getDataParameter('pUnit')
-    local g = u and u:getGroup()
-    if not g or par > 3 then return false end
-    for i = 2, 4 do if (g:getUnit(i) ~= nil) ~= (i == par + 1) then return false end end
-    return true
+-- Radio wheel as a picture in the game (#30, setting WheelInGame "window"): DcsAtc.exe draws the open wheel into %TMP%\DcsAtc-Wheel\<hash>.png and names
+-- the file and its size in show.txt ("file|fraction of the screen height"); no show.txt = wheel closed. The window is DCS's own GUI (dxgui),
+-- so DCS draws it in the headset too. Display only: no cursor, the wheel is operated with its keys / HOTAS as before.
+local wheelDir = tmp .. '\\DcsAtc-Wheel'
+local wheel = { next = 0 }
+local WHEEL_DLG = [[dialog = {
+  ["type"] = "Window",
+  ["params"] = { ["bounds"] = { [1] = { ["x"] = 0, ["y"] = 0, ["w"] = 600, ["h"] = 600 } }, ["draggable"] = false, ["enabled"] = true, ["hasCursor"] = false,
+                 ["lockFlow"] = false, ["modal"] = false, ["offscreen"] = false, ["resizable"] = false, ["zOrder"] = 111, ["text"] = "" },
+  ["skin"] = { ["params"] = { ["headerHeight"] = 0, ["name"] = "windowSkin" }, ["states"] = { ["released"] = { [1] = { ["bkg"] = { ["center_center"] = "0x00000000" } } } } },
+  ["children"] = {
+    ["pic"] = { ["type"] = "Static", ["params"] = { ["bounds"] = { ["x"] = 0, ["y"] = 0, ["w"] = 600, ["h"] = 600 }, ["text"] = "" },
+                ["skin"] = { ["params"] = { ["name"] = "staticSkin" } } },
+  },
+}]]
+local function wheelShow(line)
+  if not line then if wheel.win then wheel.win:setVisible(false) end return end
+  local file, frac = line:match('^([%w]+%.png)|([%d.]+)$')
+  if not file then return end
+  if not wheel.win then
+    local dlg = wheelDir .. '\\wheel.dlg'
+    local d = assert(io.open(dlg, 'w'))
+    d:write(WHEEL_DLG) d:close()
+    wheel.win = require('DialogLoader').spawnDialogFromFile(dlg)
+    wheel.win:setHasCursor(false)
+    net.log('DcsAtcHook: Rad-Fenster angelegt')
   end
-  local function sub(it) return it.submenu or it.getSubmenu and it:getSubmenu() end
-  local path = {}
-  local function find(m, d)
-    for _, it in pairs(m and m.items or {}) do
-      path[d] = it
-      local c = it.command
-      if c and (c.command == id or c.sendMessage and c.sendMessage.command == id) or d < 5 and sub(it) and find(sub(it), d + 1) then return true end
-    end
-    path[d] = nil
-  end
-  for _, it in pairs(sub(root).items or {}) do
-    if it.parameter == par and (not it.condition or it.condition:check()) then
-      path = { it }
-      if find(sub(it), 2) then
-        local p = {}
-        for _, x in ipairs(path) do   -- as CommandMenu.performCommands: each command gets the parameters collected before it (recipient first tunes the radio)
-          if x.command then x.command:perform(p) p = {} end
-          if x.parameter then p[#p + 1] = x.parameter elseif x.parameters then for _, v in ipairs(x.parameters) do p[#p + 1] = v end end
-        end
-        return 'ok'
-      end
-    end
-  end
-  if only() then return wing(5, name) end
-  return 'not in the radio menu (recipient ' .. par .. ')'
+  local sw, sh = require('dxgui').GetScreenSize()
+  local s = math.floor(sh * tonumber(frac))
+  local skin = require('SkinUtils').setStaticPicture(wheelDir .. '\\' .. file, wheel.win.pic:getSkin())
+  skin.skinData.states.released[1].picture.size = { horz = s, vert = s }   -- the PNG is 840 px, DCS scales it
+  wheel.win.pic:setSkin(skin)
+  wheel.win:setBounds(math.floor((sw - s) / 2), math.floor((sh - s) / 2), s, s)
+  wheel.win.pic:setBounds(0, 0, s, s)
+  wheel.win:setVisible(true)
 end
-
-local function wingPoll()
-  local h = io.open(wingFile, 'r')
-  if not h then return end
-  local text = h:read('*a') or ''
-  h:close()
-  os.remove(wingFile)
-  local par, name = text:match('^(%d+);([%w_]+)')
-  local ok, r = pcall(wing, tonumber(par), name or '')
-  r = ok and r or 'error ' .. tostring(r)
-  lfs.mkdir(inDir)
-  n = n + 1
-  local f = string.format('%s\\%010d-w%04d', inDir, os.time(), n)
-  h = io.open(f .. '.tmp', 'w')
-  if h then h:write('WING;' .. tostring(r):gsub('[;\r\n]', ' ') .. ';' .. text:gsub('[\r\n]', '')) h:close() os.rename(f .. '.tmp', f .. '.evt') end
+local function wheelPoll()
+  if wheel.dead then return end
+  local h = io.open(wheelDir .. '\\show.txt', 'r')
+  local line = h and h:read('*l') or nil
+  if h then h:close() end
+  if line == wheel.line then return end
+  wheel.line = line
+  local ok, err = pcall(wheelShow, line)
+  if not ok then wheel.dead = true net.log('DcsAtcHook: Rad-Fenster abgeschaltet: ' .. tostring(err)) end   -- no GUI (dedicated server) or another dxgui: once, not every frame
 end
 
 function cb.onSimulationFrame()
   local now = os.clock()
+  if now >= wheel.next then wheel.next = now + 0.05; wheelPoll() end
   if now < nextPoll then return end
   nextPoll = now + 0.3
-  wingPoll()
   if Sim.isServer() or not lfs.attributes(outDir) then return end
   for f in lfs.dir(outDir) do
     if f:sub(-4) == '.txt' then

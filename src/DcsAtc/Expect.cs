@@ -72,7 +72,7 @@ static partial class Program
             "Approach: leaving the control zone" => flow == "leaving the control zone" || ask.Contains("leaving the control zone") || ask.Contains("clear of the zone"),   // R7 / N3: only when the report is due
             "Approach: report airspeed" => ask == "say airspeed" || flow == "report airspeed",
             "Range: checking in" => air && !h.Ops.RangeIn,
-            "JTAC: checking in" => air && h.Ops.Cas == 0,
+            "JTAC: checking in" => air && (h.Ops.Cas == 0 || h.Ops.Cas is 1 or 6 && Ops.Leaders.Count(l => l.Alive && l.Side == h.Coalition) > 1),   // forum Killg0re NL: again = next controller
             "JTAC: ready to copy" => h.Ops.Cas is 1 or 6,
             "JTAC: readback" => h.Ops.Cas == 2,
             "JTAC: tally target" or "JTAC: in" or "JTAC: laser on" or "JTAC: request mark" or "JTAC: request sparkle" => h.Ops.Cas is >= 3 and <= 5,
@@ -263,7 +263,7 @@ static partial class Program
         if (S(Expected(p, p.Active.Suggest(taxi))) is var rt && rt != "-") throw new Exception("Funkrad-Vorschlag beim Rollen: " + rt);
         p.Active = null;
         var souls = H("Colt three two, Kutaisi Approach, roger mayday, all traffic is holding. Turn left heading two seven zero. Runway two five available, QNH one zero one three, say souls on board and fuel remaining.", "Approach");
-        if (souls != "Approach: 45 minutes fuel, one soul on board") throw new Exception("Funkrad-Vorschlag R300 souls/fuel: " + souls);
+        if (souls != "Approach: 50 minutes fuel, one soul on board") throw new Exception("Funkrad-Vorschlag R300 souls/fuel: " + souls);
         Pilots.Remove(p.Unit); Pilots.Remove(o.Unit); tracedReq.Remove(p.Unit);
         var all = string.Join(" | ", res) + $" | {again} | {cap} | {intent} | {dep} | {old}";
         if (all != "Approach: inbound for landing | Approach: 250 knots | Approach: 250 knots | Carrier: Hornet ball, 5.4 | Tower: initial | Range: in hot | Range: in hot | Tanker: pre contact | Tower: ready for departure | " +
@@ -414,7 +414,8 @@ static partial class Program
         Want(Fit() == "checking in", "Funkrad JTAC vor Check-in: " + Fit());
         string Say(string t) => string.Join(" | ", p.Ops.OnTranscript("JTAC", t, MeOf(p), Array.Empty<Traffic>(), Fields, 0).Select(c => c.Text));
         Say("JTAC: checking in");
-        Want(Fit() == "ready to copy,checking out" && p.Ops.CasSuggest()?.Text == "ready to copy", "Funkrad JTAC nach Check-in: " + Fit() + " Enter " + p.Ops.CasSuggest());
+        var two = Ops.Leaders; Ops.Leaders = two.Take(1).ToList(); var one = Fit(); Ops.Leaders = two;   // forum Killg0re NL: "checking in" stays on the wheel while checked in only with a second controller on the side
+        Want(Fit() == "checking in,ready to copy,checking out" && one == "ready to copy,checking out" && p.Ops.CasSuggest()?.Text == "ready to copy", "Funkrad JTAC nach Check-in: " + Fit() + " / ein Lotse " + one + " Enter " + p.Ops.CasSuggest());
         Say("JTAC: ready to copy");
         Want(Fit() == "readback,checking out" && p.Ops.CasSuggest()?.Text == "readback", "Funkrad JTAC nach 9-Liner: " + Fit() + " Enter " + p.Ops.CasSuggest());
         Say("JTAC: " + p.Ops.CasWheel("readback"));
@@ -461,7 +462,7 @@ static partial class Program
         LoadModules("awacs");
         Want(Top() == "AWACS,Allgemein" || Top() == "AWACS,General", "nur awacs: Oberebene " + Top());
         Want(Sub("AWACS") is var a && a.Contains("AWACS: request picture") && !a.Contains("AWACS: vector to tanker"), "nur awacs: kein nearest tanker " + Sub("AWACS"));
-        Want(Sub(L("Allgemein", "General")) == "radio check,say again,debrief,settings", "nur awacs: Allgemein " + Sub(L("Allgemein", "General")));
+        Want(Sub(L("Allgemein", "General")) == "radio check,say again,Debriefing / Log,settings", "nur awacs: Allgemein " + Sub(L("Allgemein", "General")));
         Want(Said("Ground: request startup") == 0 && !RoleOn("Tower"), "atc aus: Ground antwortet");
         LoadModules(null);
         Pilots.Remove(p.Unit);

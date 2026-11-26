@@ -20,6 +20,7 @@ public record Traffic(int Id, string Type, double X, double Z, double AltMsl, do
 /// Radio call of a controller. Role: Ground / Tower / Approach / ATIS, "Info" = text only in the game (not spoken).
 public record Msg(string Role, string Text)
 {
+    public double MaxAge { get; init; }   // > 0: a delayed call is dropped after this many seconds (PAR talk-down), 0 = always spoken
     public static implicit operator string(Msg m) => m.Text;
     public bool Contains(string s) => Text.Contains(s);
     public bool StartsWith(string s) => Text.StartsWith(s);
@@ -69,13 +70,25 @@ public partial class Tower
     string callsign;
     Msg? last;
     string lastIntent = "";
+    double towerEnd = -1e9; bool awaitAir;   // PAR talk-down: end of the last Tower transmission on air (+ estimate) / last Tower call queued but not yet on air
     double lastAt = -999, callAt;   // lastAt: time of the last controller call (readback window), callAt: time of the current call (Tick/OnTranscript)
     string? exitDir, entry;
+    Airfield.Route? arrRoute; int routeAt;   // charts.jsonc route being flown, index of the next fix; only valid while entry is its "to" (Rt)
+    Airfield.Route? Rt => arrRoute != null && entry == arrRoute.To && Phase == Phase.Inbound ? arrRoute : null;
+    static string CrpSay(string k) => Airfield.Say(k);
+    Airfield.Route? depRoute, depSaid; int depAt;   // depSaid: departure the IFR clearance named (#31: the takeoff clearance then only names it again; not saved, like depRoute)   // charts.jsonc departure (on request with taxi or ready), index of the next fix; until the last fix (DRt)
+    Airfield.Route? DRt => depRoute != null && (Phase is Phase.TaxiOut or Phase.HoldShort || Phase is Phase.ClearedTakeoff or Phase.Departing or Phase.Away && nav != null) ? depRoute : null;   // released (nav null): no longer flown
+    /// #57: index / spoken name of the first point from i on that is not silent (-1 / null = none left).
+    static int NextSpokenAt(Airfield.Route r, int i) => i < r.Pts.Length ? Array.FindIndex(r.Pts, i, p => !Airfield.Silent(p.Fix)) : -1;
+    static string? NextSpoken(Airfield.Route r, int i) => NextSpokenAt(r, i) is >= 0 and var j ? CrpSay(r.Pts[j].Fix) : null;
+    /// Crossing altitudes of a route as said: "Mintt at or above 15000 feet, Simns at 5500 feet".
+    internal static string CrossTxt(Airfield.Route r) => string.Join(", ", r.Pts.Where(p => p.Ft > 0 && !Airfield.Silent(p.Fix)).Select(p => p.Cross == "between" ? $"{CrpSay(p.Fix)} between {(p.Ft2 < 18000 ? $"{p.Ft:0} and {p.Ft2:0} feet" : $"{Alt(p.Ft)} and {Alt(p.Ft2)}")}" : $"{CrpSay(p.Fix)} {p.Cross} {Alt(p.Ft)}"));
     public static IReadOnlyList<Airfield> All = new List<Airfield>();   // all airfields (Program): destination of the en-route clearance
-    Airfield? dest; bool depClr; double depFt;   // V14: route clearance (Clearance Delivery) -> departure vector
+    Airfield? dest; Ops.Zone? toRange; bool depClr; double depFt;   // #61: toRange = range as clearance limit (not saved)   // V14: route clearance (Clearance Delivery) -> departure vector
     string? climbOut; double climbFt;   // requested departure: "free" (unrestricted climb) / "tactical" (spiral climb overhead), climbFt = requested altitude, 0 = none
+    public static bool ParkSpot = true;   // config AssignParkingSpot: Ground names a stand after landing; false = only the ramp where the chart names one
     public static bool IffCheck;   // FI1: config IffCheck (code check, ident, 7600, AWACS parrot); 7700 always
-    public Iff? Iff;               // FI1: this pilot's transponder (SRS, Program.Prep), null = unknown or not fitted
+    public Iff? Iff;               // FI1: this pilot's transponder (SRS, Program.Prep), null = unknown (no SRS client or no "iff" data); transponder off = Status 0
     public string? Squawk;   // A90: transponder code, assigned once per flight (en-route clearance, VFR taxi clearance, flight following), moves along on airfield change (Program)
     double cruiseFt;         // A102: cruise altitude of the en-route clearance (semicircular rule), 0 = not yet calculated
     Ramp? home;
@@ -111,6 +124,7 @@ public partial class Tower
     public int HoldAhead;               // R341: other players holding short who reported ready earlier (Program; departure order by report time)
     public bool Heli;                   // R347: helicopter (mission category, Program); also by type without mission data
     bool IsHeli => Heli || Regex.IsMatch(AcType, @"^(UH-|Mi-|Ka-|AH-|CH-|OH|SA342|AS532|MH-60)");
+    int heliArr; double heliNm;         // helicopter arrival (HeliArrive): 1 = direct to the field, report two miles (heliNm: distance at the call), 2 = cleared to land at the ramp; phase stays Away (no runway, pattern or landing sequence)
     // Traffic patterns, emergency, holding, landing assessment
     string? option;                     // "touch and go" / "low approach" / "full stop"
     bool stayPattern, holding, wasAir, graded;   // graded: landing graded, free again only above 30 m (bounce = one landing)
@@ -139,8 +153,8 @@ public partial class Tower
     }
     /// R46: separated behind the preceding aircraft (remaining distance ahead): at the threshold at least 3 NM, behind Heavy 5 NM (ICAO Doc 4444 8.7.3, FAA JO 7110.65 5-5-4), plus marginS seconds.
     public static bool Behind(double mine, double ahead, bool heavy, double marginS = 0) => Secs(mine) - Secs(ahead) >= (heavy ? 5 : 3) * NM / (150 * Kt) + marginS;
-    /// Too close behind the preceding aircraft (less than separation + 30 s): slower, longer base.
-    bool Tight(Telemetry t) => vecFinal && AheadR >= 0 && !Behind(Path(t).R, AheadR, AheadHeavy, 30);
+    /// Too close behind the preceding aircraft (less than separation + 60 s): slower, longer base. 30 s let a follower closer to the field turn in 1.5 NM behind (mptest Nalchik IFR, real terrain).
+    bool Tight(Telemetry t) => vecFinal && AheadR >= 0 && !Behind(Path(t).R, AheadR, AheadHeavy, 60);
     double holdFt;                      // assigned altitude in the holding
     double holdFree = -1;               // since when it has been pending (clearance waits for a suitable heading in the circle)
     /// Holding stack: position 3 of the sequence is the lowest level, each position 1000 ft higher.
@@ -162,14 +176,14 @@ public partial class Tower
         if (planMva.X == p.X && planMva.Z == p.Z && planMva.Rw == key) return planMva.Ft;
         double ft = Math.Max(StackFt(F, 2), Math.Ceiling(F.MvaLeg(p.X, p.Z, CX, CZ) / 1000) * 1000), m = 0;   // plan altitude as when leaving: climbing because of terrain costs (Cost)
         // exit is possible anywhere in the circle (up to ~3.5 NM from the holding fix, which still moves up to 1.5 NM on arrival; Gudauta/Senaki: from there already over the mountains): plan from the center and eight points 4 NM around
-        foreach (var k in Enumerable.Range(-1, 9))
+        foreach (var k in Enumerable.Range(-1, 17))   // center, ring 4 NM, ring 6 NM (mptest: the circle drifts to ~5 NM from the fix)
         {
-            var q = k < 0 ? p : (X: p.X + 4 * NM * Math.Cos(k * Math.PI / 4), Z: p.Z + 4 * NM * Math.Sin(k * Math.PI / 4));
+            double rr = k < 8 ? 4 * NM : 6 * NM;
+            var q = k < 0 ? p : (X: p.X + rr * Math.Cos(k * Math.PI / 4), Z: p.Z + rr * Math.Sin(k * Math.PI / 4));
             var (rw, g, _, v) = Plan(new Telemetry(ft * Ft, 0, HoldKt * Kt, Bearing(q.X, q.Z, CX, CZ) * Math.PI / 180, q.X, q.Z, 0, 0, 0), Ifr || wantStraight);
             m = Math.Max(m, LegsMva(q, v, rw, g));
         }
-        planMva = (p.X, p.Z, key, m);
-        return planMva.Ft;
+        planMva = (p.X, p.Z, key, m);        return planMva.Ft;
     }
     public string Key = "";              // Program: "p:<Unit>" (holding occupancy)
     public static Func<string, double, double, double, double> FreeLevel = (k, x, z, ft) => ft;
@@ -249,7 +263,7 @@ public partial class Tower
     public double CallFreq;  // LA11: SRS frequency of the current call (Program.Request), 0 = menu/unknown
     public string? AwacsContact;   // "Overlord two five one decimal zero": own AWACS/GCI of the mission, handoff after departure (Program), null = none
     public bool Following;   // V15: flight following (radar service en route), moves along on airfield change (Program)
-    public bool Radar => handedOff || depClr || Following || transitFt != null;   // R47: Departure, Flight Following or transit (N3) still looks after the flight (Program.Pick keeps the airfield)
+    public bool Radar => handedOff || depClr || Following || transitFt != null || heliArr > 0;   // R47: Departure, Flight Following or transit (N3) still looks after the flight (Program.Pick keeps the airfield)
     double? transitFt; bool transitIn; string transitDir = "", transitBy = "Approach";   // N3: transit cleared (minimum altitude) / already in the zone / direction / releasing controller
     public readonly HashSet<string> TransitTold = new();   // N3: players in the pattern who have been informed of the transit (Program)
     public string? TransitInfo => transitFt is { } f ? $"crossing overhead {transitDir}bound, {Alt(f)}" : null;   // N3: transit in progress (Program: traffic info, guard silent)
@@ -270,6 +284,8 @@ public partial class Tower
     /// N24: reported traffic per aircraft: time of the advisory, state (0 reported/looking, 1 in sight, 2 no contact), completion/update already said
     sealed class Advice { public double At; public int St; public bool Done; }
     readonly Dictionary<int, Advice> advised = new();
+    public HashSet<int> Escorts = new();   // traffic ids in formation with the pilot for 60 s (Program.Escorts): no radar advisories on them
+    readonly HashSet<int> sighted = new();   // reported "traffic in sight": no further information or alert on it for the rest of the encounter
     double followAt = -1e9;   // N24: last FollowTick; after a pause (service ended, landing, airfield change) old advisories no longer apply
     bool lowTold, lowAck;   // A106: terrain warning once per flight, not at all after "terrain in sight"
     public bool Separate;   // V17: separate landing / radar trail -> each pilot with their own procedure

@@ -1,0 +1,25 @@
+name: Discord bridge
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: discord-bridge
+  cancel-in-progress: false
+
+jobs:
+  bridge:
+    if: github.repository == 'Iceman1991/DCS-ATC-Release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 .github/discord_bridge.py
+        env:
+          DISCORD_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_EVENT_PATH: ${{ github.event_path }}
+          RELEASE_CHANNEL_ID: '1574002414573457418'

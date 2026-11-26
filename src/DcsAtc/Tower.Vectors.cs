@@ -10,7 +10,7 @@ public partial class Tower
     // centreline, turning in at 30°, and releases the descent in steps (~300 ft/NM down to the threshold).
     // Goal: initial (visual) or final (straight in / IFR). Aligned -> handover to the tower.
     List<(double X, double Z)>? vec;     // Waypoints up to the turn-in point, empty = turning in
-    static readonly string[] FieldSight = { "field in sight", "airfield in sight", "airport in sight", "runway in sight", "have the field", "have the airport", "have the runway", "field not in sight", "airport not in sight", "runway not in sight" };
+    static readonly string[] FieldSight = { "field in sight", "airfield in sight", "airport in sight", "runway in sight", "have the field", "have the airfield", "have the airport", "have the runway", "field not in sight", "airfield not in sight", "airport not in sight", "runway not in sight" };
     bool visAsk, visSeen;   // R115: visual approach waits for "field in sight" / airfield is reported
     bool vecFinal, wantStraight, wantVisual, optedOut;   // wantStraight: instrument approach wanted (also after holding), wantVisual: of which visual approach (P3-AP7)
     bool apprClr;   // R353: approach clearance already given with the turn-in vector (handover only)
@@ -53,9 +53,11 @@ public partial class Tower
 
     /// K9: instrument approach as on the charts (minima only for ILS/PAR/SRA, no TACAN or VOR procedure): ILS of the runway (Beacons.lua),
     /// otherwise with IFR precision radar (PAR, final callouts from the controller); "" = in visual conditions without ILS "straight in approach". TACAN/VOR only navigation aid.
-    string Proc(string rw) => F.IlsOn(rw) ? "ILS" : Ifr ? "P A R" : "";   // FI5: ILS unserviceable (NOTAM) -> PAR or visual
+    string Proc(string rw) => IlsFor(rw) ? "ILS" : Ifr ? "P A R" : "";   // FI5: ILS unserviceable (NOTAM) -> PAR or visual
+    static string Until(string p) => p == "P A R" ? "" : $" until established{(p == "ILS" ? " on the localizer" : "")}";   // PAR: no glidepath in the cockpit, the descent comes from the talk-down
+    internal bool IlsFor(string rw) => F.IlsOn(rw) && !NoIls.IsMatch(AcType ?? "");   // type without ILS receiver gets PAR/straight in
     /// "ILS approach runway one three, localizer one one zero decimal three", "P A R approach runway two five", otherwise "straight in approach runway one three".
-    string ProcSay(string rw) => F.IlsOn(rw) ? $"ILS approach runway {RwSay(rw)}, localizer {FreqSay(F.Ils[rw].Mhz)}"
+    string ProcSay(string rw) => IlsFor(rw) ? $"ILS approach runway {RwSay(rw)}, localizer {FreqSay(F.Ils[rw].Mhz)}"
         : $"{(Proc(rw) is var p && p != "" ? p : "straight in")} approach runway {RwSay(rw)}";
 
     /// R352: replanning under radar; other runway or route than before: "due to terrain, expect …" before the vector (FAA JO 7110.65 4-8-1, 5-9-2)
@@ -74,7 +76,7 @@ public partial class Tower
         vecFt = Math.Max(Math.Min(Math.Round((holding ? holdFt : IndFt(t)) / 500) * 500, vec != null ? vecFt : double.MaxValue), Math.Max(PatternFt, minFt));
         nav = null; vecWhy = why;
         bool fresh = vec == null;
-        if (fresh) { pdDescent = false; keepHighR = 0; }   // R303: new approach: the previous one's request no longer applies
+        if (fresh) { pdDescent = false; keepHighR = 0; preAlertFt = double.NaN; resumeFollow = false; }   // R303: new approach: the previous one's request no longer applies
         (vrw, gate, vecOver, vec) = Plan(t, final);
         vecFinal = final && !vecOver;   // Circling as overhead
         if (fresh) altFree = !holding && minFt == 0 && !Emergency && !Ifr && (!vecFinal || Proc(vrw) == "" || wantVisual) && vecFt == Math.Round(IndFt(t) / 500) * 500 && PathMva(t) <= vecFt && FreeNm(t) >= 10;   // R394: VFR far out (descent 10 NM or more away): altitude at his discretion; IFR (IMC or instrument approach) always an assigned altitude
@@ -116,7 +118,7 @@ public partial class Tower
             var (a, l) = AL(t.X, t.Z, r);
             double s0 = Math.Abs(l) > 0.5 * NM ? Math.Sign(l) : HandSign(rw) * (r == rw ? 1 : -1), bestCost = double.MaxValue;
             (string, double, bool, List<(double X, double Z)>)? pick = null;
-            foreach (var g in final && !over ? new[] { 10 * NM, 8 * NM, 6 * NM, 4 * NM } : new[] { Ini(rw) + 4 * NM })
+            foreach (var g in final && !over ? (Proc(r) == "P A R" && !wantVisual ? new[] { 10 * NM, 8 * NM } : new[] { 10 * NM, 8 * NM, 6 * NM, 4 * NM }) : new[] { Ini(rw) + 4 * NM })   // PAR: long clean final, gate at least 8 NM (glidepath from below 6-7 NM out, FAA JO 7110.65 5-9-1)
             {
                 double gmin = final && !over ? g : Math.Min(g, Ini(rw) + NM);
                 var cands = (from s in new[] { s0, -s0 } from e in AheadR >= 0 ? new[] { 6 * NM, 3 * NM, 10 * NM } : new[] { 6 * NM, 3 * NM }   // R46: behind the preceding traffic also a longer downwind
@@ -264,6 +266,16 @@ public partial class Tower
         return Bearing(t.X, t.Z, tp.X, tp.Z);
     }
 
+    /// #45: distance by which the ground track (heading + wind) passes the next waypoint. The bearing to it drifts by the 5° heading rounding and the wind (the closer, the more),
+    /// but that stays one heading: a new one only when he would clearly miss the point (FAA JO 7110.65 5-9-2, one vector per leg).
+    const double MissMax = 1.5 * NM, MissFar = 10 * NM;   // closer than MissFar the bearing rule stays (its drift per degree is small there)
+    double Miss(Telemetry t)
+    {
+        double tas = t.Ias * (1 + 0.02 * IndFt(t) / 1000), vx = tas * Math.Cos(t.Hdg) + t.WindX, vz = tas * Math.Sin(t.Hdg) + t.WindZ;
+        double d = Dist(t.X, t.Z, vec![0].X, vec[0].Z), a = HdgDiff(Math.Atan2(vz, vx) * 180 / Math.PI, Bearing(t.X, t.Z, vec[0].X, vec[0].Z));
+        return a >= 90 ? d : d * Math.Sin(a * Math.PI / 180);   // flying away from it: the closest approach is now
+    }
+
     /// Turn-in point on the centreline: 30° intercept angle, flatter when close, not behind the gate (visual: up to 1 NM before initial),
     /// the gate at most at 45° and at least 2 NM ahead: otherwise the target near the gate would lie across/behind him, headings left/right alternating (zigzag at 6-9 NM).
     (double X, double Z) Icpt(double x, double z)
@@ -301,6 +313,7 @@ public partial class Tower
         double mva = PathMva(t);
         if (mva > vecFt) vecFt = mva;   // Terrain on the way: high
         else sd = stepFt ?? StepDown(t);
+        if (leg == null && !full && vec!.Count == 0 && !apprClr && ClrCut(t) is var (cutB, _) && ClrOk(t, cutB, true)) brg = cutB;   // R353: on the centreline (clearance allowed): turn onto the runway heading with the clearance, not a 15° cut that he flies through
         string tail;
         if (vec!.Count > 0)
             tail = vec.Count == 1 || HdgDiff(brg, LandHdg(Runway) + 180) > 45 ? $", vectors for {(vecFinal ? "final approach" : Circling ? (CircleIfr ? "circling approach" : $"{Hand(Runway)} downwind") : vecOver ? "overhead join" : "initial")} runway {RwSay(Runway)}"
@@ -310,11 +323,9 @@ public partial class Tower
                    $"{(!vecOver ? "" : Circling ? (CircleIfr ? $", circle to runway {RwSay(Runway)}" : $" for {Hand(Runway)} downwind runway {RwSay(Runway)}") : $" for overhead join runway {RwSay(Runway)}")}";   // Reciprocal direction only as a way to the overhead: say so, otherwise he thinks of a landing there
         // R353: last turn-in vector at most 30°, meets the centreline 2 NM or more before the gate and within 18 NM (localizer service volume), not above the glide path there (at most gate + 1000 ft):
         // "maintain … until established" and the approach clearance in the same call (FAA JO 7110.65 5-9-1, 5-9-2)
-        var ip = Icpt(t.X, t.Z);
-        double ca = AL(ip.X, ip.Z, rw).A;
         var p = Proc(rw);
-        bool clr = vec.Count == 0 && vecFinal && p != "" && !wantVisual && HdgDiff(brg, LandHdg(rw)) <= 30.5 && ca >= gate + 2 * NM && ca <= Math.Max(18 * NM, gate + 2 * NM) && vecFt <= Math.Min(GateFt + 1000, FieldElev / Ft + ca / NM * 318);
-        if (clr) { tail = $", maintain {Alt(vecFt)} until established{(p == "ILS" ? " on the localizer" : "")}, cleared {p} approach runway {RwSay(rw)}" + OnTheGo(rw); apprClr = true; altFree = false; }
+        bool clr = ClrOk(t, brg, true);
+        if (clr) { tail = $", maintain {Alt(vecFt)}{Until(p)}, cleared {p} approach runway {RwSay(rw)}" + OnTheGo(rw); apprClr = true; altFree = false; }
         var tailSaid = vecWhy != null && vec.Count > 0 ? ", " + vecWhy : tail;   // R222: led through the approach line / replanned: reason instead of first-contact wording (vecMemLeg remains the plan leg)
         vecWhy = null;
         bool newLeg = tail != vecMemLeg;
@@ -341,6 +352,59 @@ public partial class Tower
         return sb.Append('.').ToString();
     }
 
+    /// R353: the turn-in vector brg may carry the approach clearance (conditions see VecCall); uses the current vecFt.
+    bool ClrOk(Telemetry t, double brg, bool lower = false)   // lower: if only the altitude is too high and the terrain allows it, vecFt goes down to the limit (descend and maintain ... until established)
+    {
+        var rw = vrw;
+        var ip = Icpt(t.X, t.Z);
+        var cc = ClrCut(t);
+        bool cut = cc is { } c0 && c0.Brg == brg;   // cut: ClrCut already applied the 2 NM / 20° rule
+        double ca = cut ? cc!.Value.Ca : AL(ip.X, ip.Z, rw).A;   // on the centreline or a short cut toward it: he meets it where ClrCut says
+        if (!(vec!.Count == 0 && vecFinal && Proc(rw) != "" && !wantVisual && HdgDiff(brg, LandHdg(rw)) <= 30.5 && ca >= (cut ? gate : gate + 2 * NM) && ca <= (Proc(rw) == "P A R" ? gate + 3 * NM : Math.Max(18 * NM, gate + 2 * NM)))) return false;   // PAR: the clearance comes once, with the final turn-on (not 20 NM out followed by more vectors)
+        double lim = Math.Max(Math.Floor(Math.Min(GateFt + 1000, FieldElev / Ft + ca / NM * 318) / 100) * 100, PathMva(t));   // the terrain minimum may lie above the path limit: then that is the clearance altitude
+        if (vecFt <= lim) return true;
+        if (!lower || PathMva(t) > lim || Emergency || IndFt(t) > lim + 2000) return false;   // only a short step down, not from high up at first contact
+        vecFt = lim; altFree = false;
+        return true;
+    }
+
+    /// Heading for a clearance near the centreline and where it meets it (distance from the threshold): runway heading within 0.3 NM,
+    /// between 0.3 and 1 NM a 10/15/20° cut toward the centreline that still meets it gate + 2 NM or more out (PAR has no azimuth corrections: no parallel track). null = none.
+    (double Brg, double Ca)? ClrCut(Telemetry t)
+    {
+        var rw = vrw;
+        var (a, l) = AL(t.X, t.Z, rw);
+        if (a <= 0 || Math.Abs(l) >= NM) return null;
+        if (Math.Abs(l) < 0.3 * NM) return a >= gate + 2 * NM ? (LandHdg(rw), a) : null;
+        foreach (double ang in new[] { 10, 15, 20, 25, 30 })
+        {
+            double ca = a - Math.Abs(l) / Math.Tan(ang * Math.PI / 180);
+            if (ca < gate + 2 * NM && !(ca >= gate && ang <= 20 && CloseIcptOk(t))) continue;   // FAA JO 7110.65 5-9-1 / TBL 5-9-1: less than 2 NM outside the gate max 20°, only with ceiling >= MVA + 500 ft and visibility >= 3 SM
+            var q = Pt(rw, ca, 0);
+            if (ca < gate + NM) continue;   // close cut: 1 NM of turn-in distance (the turn onto the cut itself takes about that much) so that he is on the course by the gate
+            return (Bearing(t.X, t.Z, q.X, q.Z), ca);
+        }
+        return null;
+    }
+
+    /// 5-9-1.b: closer intercept (gate .. gate + 2 NM) needs ceiling at least 500 ft above the MVA and visibility at least 3 SM; no mission weather = clear.
+    bool CloseIcptOk(Telemetry t) => Sky is not { } s || s.VisM >= 4828 && (!s.Ceil || s.BaseM / Ft >= PathMva(t) + 500);
+
+    /// Turn onto the runway heading shortly before the centreline: with the approach clearance when allowed (R353), otherwise "join the extended centerline".
+    string JoinTurn(Telemetry t)
+    {
+        var rw = vrw;
+        vecHdg = LandHdg(rw); altFree = false;
+        if (!apprClr && ClrCut(t) is var (cutB, _) && ClrOk(t, cutB))
+        {
+            vecHdg = cutB;
+            var p = Proc(rw);
+            apprClr = true; lastAltFt = vecFt; vecMemFt = vecFt;
+            return $"{TurnTo(t, vecHdg)}, maintain {Alt(vecFt)}{Until(p)}, cleared {p} approach runway {RwSay(rw)}" + OnTheGo(rw);
+        }
+        return $"{TurnTo(t, vecHdg)}, join the extended centerline runway {RwSay(rw)}, {AltTo(t, vecFt)}";
+    }
+
     /// Prescribed speed: holding (also AI orbit, DcsAtcMission.lua), radar vectoring to initial or downwind/base/turn-in.
     public const int HoldKt = 230;
     /// Target speed under radar vectoring (from 25 NM): visual 300 kt; straight-in by flight path to the threshold 300, below 20 NM 250, below 10 NM 200 kt
@@ -348,7 +412,7 @@ public partial class Tower
     /// Slow types get lower values or 0 (= no speed instruction, no speed reminder); jets as above.
     int VecKt(Telemetry t)
     {
-        if (spdFree || altFree || Emergency || Dist(t.X, t.Z, CX, CZ) > 25 * NM) return 0;   // VFR far out (altitude at his discretion): speed too, the restriction comes with the descent; forum 0.13: emergency flies its own speed (bent flaps: "increase speed 300 knots")
+        if (spdFree || altFree || Emergency || Dist(t.X, t.Z, CX, CZ) > 25 * NM) return 0;   // VFR far out (altitude at his discretion): speed too, the restriction comes with the descent; forum 0.13: emergency flies its own speed (bent flaps: "increase speed to 300 knots")
         int tier = !vecFinal || Path(t).R > 20 * NM ? 0 : Path(t).R > 10 * NM ? 1 : 2;
         if (fromHold) tier = Math.Max(tier, 1);   // R319: from holding do not accelerate to 300 kt (FAA JO 7110.65 5-7-1)
         int kt = (Slow ?? new[] { 300, 250, 200 })[tier];
@@ -363,6 +427,7 @@ public partial class Tower
     /// Night (sun below -6°, Y line of the mission; unknown = day) or type without overhead break: inbound gets straight-in/instrument approach right away.
     static bool Night => Carrier.Sun < -6;
     static readonly Regex NoBreak = new(@"^(UH-|Mi-|Ka-|AH-|CH-|OH|SA342|AS532|C-1[37]|C-47|An-|Il-|Tu-|B-1|B-52|KC|E-[23]|S-3)");
+    static readonly Regex NoIls = new(@"^(FA-18|EA-18|F-14|AV8B|F-5E|F-86|MiG-15|MiG-19|P-51|TF-51|P-47|SpitfireLFMkIX|Bf-109|FW-190|I-16|MosquitoFBMkVI)");   // ICLS/TACAN/ADF only, no ILS -> PAR
     bool wantOverhead;   // explicitly overhead/visual requested: applies at night too
     static readonly (string Rx, int[] Kts)[] SlowTypes =
     {
@@ -406,7 +471,7 @@ public partial class Tower
     /// Radio menu "Fahrt melden": displayed speed rounded to 10 kt ("340 knots").
     internal static string IasSay(Telemetry t) => FormattableString.Invariant($"{Math.Round(t.Ias / Kt / 10) * 10:0} knots");
     static string Spd(Telemetry? t, int kt) => t == null || Math.Abs(t.Ias / Kt - kt) <= 30 ? $"speed {kt} knots"
-                                             : $"{(t.Ias / Kt > kt ? "reduce" : "increase")} speed {kt} knots";
+                                             : $"{(t.Ias / Kt > kt ? "reduce" : "increase")} speed to {kt} knots";   // "reduce speed 300 knots" would mean by 300 (ICAO 4444 12.3.1.6)
 
     /// Landing sequence: aircraft near the airfield that are closer to the airfield. Only on change or every 90 s.
     string SeqNote(Telemetry t, IReadOnlyList<Traffic> traffic, double now)
@@ -463,7 +528,7 @@ public partial class Tower
     double GateFt => vecFinal ? Math.Floor((FieldElev / Ft + (gate / NM - 1) * 318) / 100) * 100 : PatternFt;
     /// R305: handover to the tower on the centreline only shortly before the gate (up to 2 NM before, low enough) or at the latest at the gate, not 25 NM out:
     /// Approach vectors to the gate/FAF (FAA JO 7110.65 5-9-1/5-9-4, AIM 5-4-3); a: distance before the threshold.
-    bool HandoffOk(Telemetry t, double a) => a < gate || a < gate + 2 * NM && IndFt(t) <= GateFt + 1000;
+    bool HandoffOk(Telemetry t, double a) => a < gate || a < gate + 2 * NM && IndFt(t) <= GateFt + 1100;   // +100 ft: a few feet above the 3600 he was just told to descend to are no reason for one more vector call
 
     internal static double SegDist(double x, double z, (double X, double Z) a, (double X, double Z) b)
     {
@@ -529,12 +594,22 @@ public partial class Tower
         var rw = vrw;
         double hdg = t.Hdg * 180 / Math.PI;
         KeepLow(t);
+        if (!double.IsNaN(preAlertFt) && now >= alertUntil)   // traffic alert over (FAA JO 7110.65 2-1-6): the avoidance altitude was temporary, back to the vector altitude of the profile (the next call states it); a lower avoidance altitude stays, he is not sent back up
+        {
+            vecFt = Math.Min(vecFt, preAlertFt); preAlertFt = double.NaN; resumeFollow = true;
+        }
+        if (resumeFollow && !altFree)   // he descends on his own after the alert: vecFt follows him down (no climb back to the old level) until he has reached it
+        {
+            if (IndFt(t) < vecFt - 500) vecFt = Math.Max(Math.Round(IndFt(t) / 500) * 500, Math.Max(PathMva(t), vecFinal ? 0 : PatternFt));
+            else if (IndFt(t) <= vecFt + 300) resumeFollow = false;
+        }
         if (altFree)   // R394: follow his altitude (no deviation calls); below the minimum altitude the freedom ends with a climb
         {
             double min = Math.Max(PathMva(t), vecFinal ? 0 : PatternFt);
             vecFt = Math.Max(Math.Round(IndFt(t) / 500) * 500, min);
             if (IndFt(t) < min - 200 && t.Vs < 2.5 && now - lastVecSaid >= 15) { altFree = false; lastVecSaid = now; vecMemFt = vecFt; return Say($"{c}, {AltTo(t, vecFt)}.", "Approach"); }
         }
+        bool crossing = false;   // R353: just before the centreline with a heading still > 10° off it, and the call still has to turn him in
         bool soon = false;   // R355: VFR on the centreline, handover zone (gate + 2 NM) within ~15 s: no profile step any more, the handover states the altitude
         if (vec.Count > 0)
         {
@@ -557,15 +632,18 @@ public partial class Tower
             double lead = TurnR(t) * (1 - Math.Cos(Math.Min(dh, 90) * Math.PI / 180)) + 0.1 * NM;
             bool closing = dh < 5 || Math.Abs(AL(t.X + 300 * Math.Cos(t.Hdg), t.Z + 300 * Math.Sin(t.Hdg), rw).L) < Math.Abs(l);
             soon = !vecFinal && a > 0 && dh < 60 && closing && Math.Abs(l) - Math.Max(lead, 0.3 * NM) < 15 * t.Ias * Math.Sin(dh * Math.PI / 180) && a - 15 * t.Ias * Math.Cos(dh * Math.PI / 180) < gate + 2 * NM;
+            // R353: nearly parallel and less than 1 NM off, handover allowed: clearance and handover now, no extra vector call (after the intercept at most one call before the clearance)
+            if (a >= gate && Math.Abs(l) < 0.3 * NM && dh < 20 && !apprClr && HandoffOk(t, a) && now - lastVecSaid >= 15) return Established(t);
             if (a > 0 && Math.Abs(l) < Math.Max(lead, 0.3 * NM) && dh < 60 && closing)   // also far out: otherwise he flies through the centreline
             {
-                if (HandoffOk(t, a)) return Established(t);
+                crossing = dh > 10 && HdgDiff(vecHdg, LandHdg(rw)) > 1;
+                if (HandoffOk(t, a) && (!apprClr || dh < 25 || a < gate)) return Established(t);   // cleared on a close cut (gate .. gate + 2 NM): hand over only once he is nearly on the course
                 // too high or too far out for handover: first on heading, keep descending (StepDown), hand over at the gate at the latest. R306: only if he otherwise flies through –
                 // after "intercept …" he turns in himself (already turning to runway heading or not yet at his own turn-in point): no "join" seconds after the intercept heading
                 bool capturing = dh < HdgDiff(prevHdg, LandHdg(rw)) - 0.01 || Math.Abs(l) > (lead - 0.1 * NM) * 0.6;   // turns in or is not yet clearly beyond his turn-in point
                 if (dh > 10 && HdgDiff(vecHdg, LandHdg(rw)) > 1 && !capturing && !apprClr)
-                {                    vecHdg = LandHdg(rw); lastVecSaid = now; altFree = false;
-                    return Say($"{c}, {TurnTo(t, vecHdg)}, join the extended centerline runway {RwSay(rw)}, {AltTo(t, vecFt)}.", "Approach");
+                {                    lastVecSaid = now;
+                    return Say($"{c}, {JoinTurn(t)}.", "Approach");
                 }
             }
             bool late = a - Math.Abs(l) * 1.73 < (vecFinal ? Math.Min(IcptMin - NM, 3 * NM) : IcptMin - NM);   // 30° turn-in no longer possible (target across/behind him); flown through (gate 8/10 NM, R42): lead back up to 3 NM instead of a full circle
@@ -629,15 +707,20 @@ public partial class Tower
         }
         // new heading needed (wind/offset, through the centreline), not mid-turn and not shortly before (the turn corrects too); before the descent, the call includes it
         // R306: when turning in only if he misses the centreline – the turn-in point (VecBrg) slides along close to it and gets flatter (300 -> 285 -> 270), the given heading stays
-        if (now - lastVecSaid >= 30 && !turning && HdgDiff(VecBrg(t), vecHdg) > 7 && (vec.Count == 0 ? !Intercepts(t, vecHdg) && !(joining && Intercepts(t, hdg)) : Dist(t.X, t.Z, vec[0].X, vec[0].Z) > Math.Max(2.5 * NM, vecLim + NM))) return Say($"{c}, {VecCall(t, now)}{SeqNote(t, traffic, now)}", "Approach");
+        if (now - lastVecSaid >= 30 && !turning && HdgDiff(VecBrg(t), vecHdg) > 7 && (vec.Count == 0 ? !Intercepts(t, vecHdg) && !(joining && Intercepts(t, hdg)) : Dist(t.X, t.Z, vec[0].X, vec[0].Z) > Math.Max(2.5 * NM, vecLim + NM) && (Dist(t.X, t.Z, vec[0].X, vec[0].Z) < MissFar || Miss(t) > MissMax))) return Say($"{c}, {VecCall(t, now)}{SeqNote(t, traffic, now)}", "Approach");
         if (now - lastVecSaid >= 30 && Tight(t) && VecKt(t) is > 0 and var sk && sk < vecMemKt && t.Ias / Kt > sk + 10)   // R46: separation by speed (FAA JO 7110.65 5-7-1, ICAO Doc 4444 4.6)
         {
             lastVecSaid = now; vecMemKt = sk;
-            return Say($"{c}, reduce speed {sk} knots for spacing.", "Approach");
+            return Say($"{c}, reduce speed to {sk} knots for spacing.", "Approach");
         }
         if (now - lastVecSaid >= 30 && !soon && !(vec.Count > 0 && Dist(t.X, t.Z, vec[0].X, vec[0].Z) < vecLim + NM) && StepDown(t) is { } sd)   // Profile descent: gradually to handover altitude
         {
             lastVecSaid = now;
+            // R353: the step brings him below the clearance limit (e.g. terrain MVA dropped after the turn-in vector): the descent goes out with the clearance, not alone (he would fly through the centreline first)
+            if (!apprClr && sd <= IndFt(t) && ClrOk(t, VecBrg(t))) return Say($"{c}, {VecCall(t, now, stepFt: sd)}", "Approach");
+            // too late for the clearance with the vector, he is about to fly through the centreline (or is on it): the turn onto final (with the clearance when allowed) goes out with the step, not a descent alone
+            if (!apprClr && (crossing || sd <= IndFt(t) && ClrCut(t) is var (cutB, _) && ClrOk(t, cutB)))
+                return Say($"{c}, {JoinTurn(t)}.", "Approach");
             var say = sd > IndFt(t) ? $"climb and maintain {Alt(sd)}" : Descend(sd, t);   // Holding on the path: above it (StepDown)
             lastAltFt = sd;
             vecMemFt = vecFt;   // R315: the next vector call does not repeat this altitude
@@ -760,6 +843,17 @@ public partial class Tower
         return $"approach cancelled, resume own navigation, {Qnh(t)}. {OneOf("Call me when ready for another approach.", "Call when ready for another approach.")}";
     }
 
+    /// PAR: last vector to the final. Off the centreline it converges (10-30°, flatter the closer), wind drift corrected; on it the runway heading (true).
+    double FinalBrg(Telemetry t, string rw)
+    {
+        var (tx, tz) = Thr(rw);
+        double h = LandHdg(rw), hr = h * Math.PI / 180, right = (t.X - tx) * -Math.Sin(hr) + (t.Z - tz) * Math.Cos(hr), a = AL(t.X, t.Z, rw).A;   // right > 0 = right of the centreline (as ParTalk)
+        if (Math.Abs(right) < 0.1 * NM || a <= 0) return h;
+        double brg = h + (right > 0 ? -1 : 1) * Math.Clamp(Math.Atan(Math.Abs(right) / (0.4 * a)) * 180 / Math.PI, 10, 30), br = brg * Math.PI / 180, wn = -t.WindX * Math.Sin(br) + t.WindZ * Math.Cos(br);
+        if (t.Ias > 20) brg -= Math.Asin(Math.Clamp(wn / t.Ias, -0.5, 0.5)) * 180 / Math.PI;   // as ParTalk: IAS as airspeed
+        return brg;
+    }
+
     /// On the centreline: handover to the tower.
     List<Msg> Established(Telemetry t, bool direct = false)
     {
@@ -779,9 +873,10 @@ public partial class Tower
                 return Say($"{c}, {(HdgDiff(t.Hdg * 180 / Math.PI, LandHdg(rw)) > 5 ? TurnTo(t, LandHdg(rw)) + ", " : "")}{MilesTxt(Dist(t.X, t.Z, thr.X, thr.Z))} from touchdown, expect visual approach runway {RwSay(rw)}, report field in sight.", "Approach");
             }
             if (clr) return Say($"{c}, {(Dist(t.X, t.Z, thr.X, thr.Z) < 9 * NM || AheadR >= 0 ? "reduce to final approach speed, " : "")}{Qnh(t)}, contact {Contact("Tower")}.", "Approach");   // R353: cleared with the turn-in vector: handover only
-            // R220: position before heading, "until established on the localizer" (FAA JO 7110.65 5-9-4); R271: PAR without lost-comm instruction (R221) – it promises calls every 5 s on final that do not exist without talk-down (N13); R217: practice approach with climb-out
-            return Say($"{c}, {MilesTxt(Dist(t.X, t.Z, thr.X, thr.Z))} from touchdown, {(HdgDiff(t.Hdg * 180 / Math.PI, LandHdg(rw)) > 5 ? TurnTo(t, LandHdg(rw)) + ", " : "")}" +
-                       (Proc(rw) is var p && p != "" && !wantVisual ? $"{(HdgDiff(t.Hdg * 180 / Math.PI, LandHdg(rw)) > 5 || Math.Abs(AL(t.X, t.Z, rw).L) > 0.3 * NM ? $"maintain {Alt(vecFt)} until established{(p == "ILS" ? " on the localizer" : "")}, " : "")}cleared {p} approach runway {RwSay(rw)}" : $"on course, {(wantVisual ? "cleared visual approach" : "proceed straight in")} runway {RwSay(rw)}") + OnTheGo(rw) + (Dist(t.X, t.Z, thr.X, thr.Z) < 9 * NM || AheadR >= 0 ? ", reduce to final approach speed, " : ", ") +   // R46: with preceding traffic also at the 10 NM gate (otherwise he catches up with the speed from radar vectoring)
+            // R220: position before heading, "until established on the localizer" (FAA JO 7110.65 5-9-4); R271: PAR without lost-comm instruction here – it comes with the talk-down setup (ParSetup, first call to Tower); R217: practice approach with climb-out
+            double fb = Proc(rw) == "P A R" ? FinalBrg(t, rw) : LandHdg(rw);   // PAR: converging, wind corrected (the plain runway heading diverges from an offset in a crosswind)
+            return Say($"{c}, {MilesTxt(Dist(t.X, t.Z, thr.X, thr.Z))} from touchdown, {(HdgDiff(t.Hdg * 180 / Math.PI, fb) > 5 ? TurnTo(t, fb) + ", " : "")}" +
+                       (Proc(rw) is var p && p != "" && !wantVisual ? $"{(HdgDiff(t.Hdg * 180 / Math.PI, fb) > 5 || Math.Abs(AL(t.X, t.Z, rw).L) > 0.3 * NM ? $"maintain {Alt(vecFt)}{Until(p)}, " : "")}cleared {p} approach runway {RwSay(rw)}" : $"on course, {(wantVisual ? "cleared visual approach" : "proceed straight in")} runway {RwSay(rw)}") + OnTheGo(rw) + (Dist(t.X, t.Z, thr.X, thr.Z) < 9 * NM || AheadR >= 0 ? ", reduce to final approach speed, " : ", ") +   // R46: with preceding traffic also at the 10 NM gate (otherwise he catches up with the speed from radar vectoring)
                        $"{Qnh(t)}, contact {Contact("Tower")}.", "Approach");   // R314: "report four mile final" is given by the tower (first call), not Approach
         }
         // Visual: to initial or overhead (reciprocal), never lower than 500 ft above terrain on the rest of the path
@@ -794,7 +889,7 @@ public partial class Tower
         {
             nav = null; navName = "circle";
             return Say($"{c}, {MilesTxt(d)} from the field, {(HdgDiff(t.Hdg * 180 / Math.PI, LandHdg(vrw)) > 5 ? TurnTo(t, LandHdg(vrw)) + ", " : "")}" +
-                       (CircleIfr ? $"maintain {Alt(ft)} until established{(Proc(vrw) == "ILS" ? " on the localizer" : "")}, cleared {Proc(vrw)} approach runway {RwSay(vrw)}, circle to runway {RwSay(rw)}"
+                       (CircleIfr ? $"maintain {Alt(ft)}{Until(Proc(vrw))}, cleared {Proc(vrw)} approach runway {RwSay(vrw)}, circle to runway {RwSay(rw)}"
                                   : $"on course, maintain {Alt(ft)}, expect {Hand(rw)} downwind runway {RwSay(rw)}") +   // Review R212: without procedure no approach clearance to the reciprocal runway, the tower gives the pattern
                        $", {Qnh(t)}, contact {Contact("Tower")}.", "Approach");
         }

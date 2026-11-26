@@ -12,13 +12,13 @@ class Carrier
     public record Boat(string Unit, string Group, string Type, double X, double Z, double Hdg, double Speed, int Coalition,
                        double Freq, string Tacan, string Icls, double Wx = 0, double Wz = 0, double Pa = 0, bool NoTurn = false)   // Wx, Wz: wind at the deck (toward, m/s); Pa: sea-level pressure; NoTurn: mission does not turn into the wind (land ahead)
     {
-        public bool Angled => !Type.Contains("Tarawa");   // Angled deck 9.1° (Nimitz/Ford/Forrestal/Kuznetsov)
+        /// Deck of the ship class (angle, height, start of the landing area, wires); unknown types count as Nimitz class.
+        public DeckDef Deck => Type.Contains("Tarawa") ? Tarawa : Type.Contains("Forrestal") ? Forrestal : Type.Contains("KUZNECOW") || Type.Contains("CV_1143") ? Kuznetsov : Nimitz;
         /// R4: centerline of the landing area at the stern, m right of the ship axis; straight deck on the axis.
-        /// ponytail: 7 m is the Stennis; add other types here per "[LSO] … Lat beim Trap" (atc-log.txt)
-        public double SternLat => Angled ? 7 : 0;
+        public double SternLat => Deck.Lat;
         /// Base Recovery Course and Final Bearing, true in degrees.
         public double Brc => Hdg * 180 / Math.PI;
-        public double Fb => (Brc - (Angled ? 9.1 : 0) + 360) % 360;
+        public double Fb => (Brc - Deck.Angle + 360) % 360;
         /// Into the wind: heading (true °) at which the wind runs along the landing area, and speed (kt) for 27 kt wind over deck.
         /// Below 3 kt wind: heading stays.
         public (double Brc, double Kt) IntoWind
@@ -26,13 +26,26 @@ class Carrier
             get
             {
                 double w = Math.Sqrt(Wx * Wx + Wz * Wz) / Kt, from = Math.Atan2(-Wz, -Wx) * 180 / Math.PI;
-                return w < 3 ? (Brc, 27) : ((from + (Angled ? 9.1 : 0) + 360) % 360, Math.Clamp(27 - w, 5, 30));
+                return w < 3 ? (Brc, 27) : ((from + Deck.Angle + 360) % 360, Math.Clamp(27 - w, 5, 30));
             }
         }
         /// Expected BRC/FB for Marshal: into the wind, with land ahead the heading the ship is sailing.
         public double ExpBrc => NoTurn ? Brc : IntoWind.Brc;
-        public double ExpFb => (ExpBrc - (Angled ? 9.1 : 0) + 360) % 360;
+        public double ExpFb => (ExpBrc - Deck.Angle + 360) % 360;
     }
+
+    /// Deck per ship class. Angle: landing area left of the bow (°); H: deck height for the hook (DCS DeckLevel - 0.65 m, as calibrated on the Nimitz);
+    /// Stern/Lat: start of the landing area in the ship frame (m along the bow, m right of the axis); Wires: m from there along the landing area (none = no arresting gear); Gs: glide slope of the lens.
+    public record DeckDef(double Angle, double H, double Stern, double Lat, double[] Wires, double Gs = 3.5)
+    {
+        public double Aim => Wires.Length >= 3 ? Wires[2] - 4 : 75;   // aim point: just before wire 3
+    }
+    static readonly DeckDef Nimitz = new(9.1, 19.5, -164, 7, new double[] { 55, 67, 79, 96 });   // CVN-71..75, Stennis: calibrated in the game (traps)
+    // ponytail: the three below come from the DCS ship definitions (landing strip, DeckLevel, ArrestingGears), not from traps;
+    // correct Lat/H/Wires here per "[LSO] … Lat beim Trap" and the wire in the grade (atc-log.txt)
+    static readonly DeckDef Forrestal = new(9.4, 17.8, -135.5, 7.2, new double[] { 44, 54, 64, 74 });
+    static readonly DeckDef Kuznetsov = new(7.7, 15.5, -115.5, -0.9, new double[] { 46, 58, 70, 82 }, Gs: 4);   // Luna lens 4°; old KUZNECOW model taken as the same deck
+    static readonly DeckDef Tarawa = new(0, 19.3, -125, 0, Array.Empty<double>());   // straight deck, no wires: no wire in the grade, no bolter call
 
     public static List<Boat> Boats = new();
     /// Red Crown ship (R line): cruiser / destroyer with air search radar, Freq MHz from the mission (0 = Config "RedCrown").
@@ -153,8 +166,8 @@ class Carrier
     static (double Hi, double Rt) Dev(Boat b, Telemetry t)
     {
         var (deck, lat) = Landing(b, t);
-        double d = -deck + Aim;
-        return (Math.Atan2(t.AltMsl - Hook - DeckH, d) * 180 / Math.PI - Gs, Math.Atan2(lat, d) * 180 / Math.PI);
+        double d = -deck + b.Deck.Aim;
+        return (Math.Atan2(t.AltMsl - Hook - b.Deck.H, d) * 180 / Math.PI - b.Deck.Gs, Math.Atan2(lat, d) * 180 / Math.PI);
     }
     /// R230: wind over deck for "Roger ball" (Case III): strength in kt, "axial" (within 5° of the landing area) or from port/starboard.
     static string Wod(Boat b)
@@ -165,17 +178,22 @@ class Carrier
     }
     static int Sgn(double dev) => dev > 0.5 ? 1 : dev < -0.5 ? -1 : 0;   // up to 0.5° = "on"
     static string DevText(double hi, double rt) => $"{(Sgn(hi) > 0 ? "above glidepath" : Sgn(hi) < 0 ? "below glidepath" : "on glidepath")}, {(Sgn(rt) > 0 ? "right of course" : Sgn(rt) < 0 ? "left of course" : "on course")}";
-    /// Needle call "up and on", "down and left", "on and on" -> (glide path, course) each -1/0/+1 (up/right positive); null = not recognized.
+    /// Needle call "up and on", "down and left", "on and on" -> (glide path, course) each -1/0/+1 (up/right positive); null = not recognized. #13: also course first ("right and up").
     static (int V, int H)? Needles(string n)
     {
+        int V(string w) => Array.IndexOf(new[] { "down", "on", "up" }, w) - 1;
+        int H(string w) => Array.IndexOf(new[] { "left", "on", "right" }, w) - 1;
+        if (System.Text.RegularExpressions.Regex.IsMatch(n, @"\bcent(?:ere|re)d\b")) return (0, 0);   // "needles centered" = on and on
         var m = System.Text.RegularExpressions.Regex.Match(n, @"\b(up|down|on) and (left|right|on)\b");
-        return m.Success ? (Array.IndexOf(new[] { "down", "on", "up" }, m.Groups[1].Value) - 1, Array.IndexOf(new[] { "left", "on", "right" }, m.Groups[2].Value) - 1) : null;
+        if (m.Success) return (V(m.Groups[1].Value), H(m.Groups[2].Value));
+        m = System.Text.RegularExpressions.Regex.Match(n, @"\b(left|right|on) and (up|down|on)\b");
+        return m.Success ? (V(m.Groups[2].Value), H(m.Groups[1].Value)) : null;
     }
 
     /// Radio call to the carrier? (Marshal/Paddles by name, ball call; "initial"/"see you at" only if already checked in)
     public bool Wants(string n) => Boats.Count > 0 &&
-        (Has(n, "marshal", "mother", "paddles", "ball", "clara", "carrier", "pigeons", "strike", "red crown") ||
-         Stage >= 1 && Has(n, "initial", "see you at", "commencing", "charlie", "platform", "state", "needles", "up and", "down and", "on and on") ||
+        (Has(n, "marshal", "mother", @"moms?\b", "paddles", "ball", "clara", "carrier", "pigeons", "strike", "red crown") ||
+         Stage >= 1 && Has(n, "initial", "see you at", "commencing", "charlie", "platform", "state", "radial", "dme", "needles", "up and", "down and", "left and", "right and", "on and on") ||
         launch == 2 && Has(n, "airborne", "on top", "departure", "passing", "arcing", "outbound", "kilo"));
 
     /// Next radio call to the carrier (selection wheel: Enter), texts like the wheel entries. null = none (ball only after "call the ball", nothing on the deck).
@@ -220,7 +238,7 @@ class Carrier
             Stage = 4; OffStack();
             return new() { Say("Paddles", caseNo == 3 ? $"Roger ball, {Wod(b)}." : "Roger ball.", b) };   // R230: Case III/night with wind over deck
         }
-        if (needlesAsked && Has(n, "needles", "up and", "down and", "on and") && Needles(n) is { } nd)
+        if (needlesAsked && Has(n, "needles", "up and", "down and", "on and", "left and", "right and") && Needles(n) is { } nd)
         {
             needlesAsked = false;
             // A129: needles are fly-to (up = aircraft too low, left = right of the line); if the report is wrong, Approach states the offset
@@ -274,11 +292,11 @@ class Carrier
             var icls = b.Icls != "" ? $", ICLS channel {Digits(b.Icls)}" : "";
             return new() { Say("Marshal", $"{c}, {pos}expected BRC {Mag(b.ExpBrc)}{tac}{icls}.", b) };
         }
-        if (caseNo >= 2 && Stage == 1 && Has(n, "radial", "dme", "angels") && !Has(n, "check in", "checking in", "inbound", "recovery", "state"))   // R226/A25: readback of the Marshal instruction, no new check-in
+        if (Stage == 1 && Has(n, "radial", "dme", "angels") && !Has(n, "check in", "checking in", "inbound", "state"))   // R226/A25: readback of the Marshal instruction, no new check-in; #27: also Case I ("hold angels 2") and with "case three recovery" read back
         {
             string? Num(string re, int keep) => System.Text.RegularExpressions.Regex.Match(n, re) is { Success: true } m && m.Groups[1].Value.Replace(" ", "") is var d ? d[Math.Max(0, d.Length - keep)..] : null;   // strip the callsign digits in front
             var wrong = new[] { (Num(@"(\d+(?: \d+)*) radial", 3), MagNum(b.ExpFb + 180), $"{Mag(b.ExpFb + 180)} radial"), (Num(@"(\d+(?: \d+)*) dme", 2), angels + 15, $"{angels + 15} DME"),
-                                (Num(@"\bangels (\d+)", 2), angels,$"angels {angels}") }
+                                (Num(@"\bangels (\d+(?: \d+)*)", 2), angels,$"angels {angels}") }   // "angels one seven" arrives as "angels 1 7"
                         .Where(e => e.Item1 != null && int.Parse(e.Item1) != e.Item2).Select(e => e.Item3).ToList();
             return new() { Say("Marshal", wrong.Count == 0 ? OneOf($"{c}, readback correct.", $"{c}, readback is correct.") : $"{c}, negative, {string.Join(", ", wrong)}.", b) };
         }
@@ -291,9 +309,9 @@ class Carrier
             if (Signal(me, b, "Marshal", false, state * 1000) is { } sg) return sg;   // R23: reported fuel below bingo
             return new() { Say("Marshal", $"{c}, Marshal, {OneOf("roger", "copy")}{(fuel != "" ? ", state " + fuel : "")}.", b) };
         }
-        if (Stage == 1 && Has(n, "marshal", "mother") && !Has(n, "check in", "checking in", "inbound", "recovery"))   // R368: repeated call in holding -> Marshal repeats the assignment, stack and EAT stay
+        if (Stage == 1 && Has(n, "marshal", "mother", @"moms?\b") && !Has(n, "check in", "checking in", "inbound", "recovery"))   // R368: repeated call in holding -> Marshal repeats the assignment, stack and EAT stay
             return Instr(me, b);
-        if (Has(n, "marshal", "mother", "check in", "checking in", "inbound", "recovery", "state"))
+        if (Has(n, "marshal", "mother", @"moms?\b", "check in", "checking in", "inbound", "recovery", "state"))
         {
             state = FuelSlot(n) ?? double.NaN;
             if (Signal(me, b, "Marshal", false, state * 1000) is { } sg) return sg;   // R23: already below bingo at check-in
@@ -431,12 +449,13 @@ class Carrier
     /// Fuel in lb: fuel gauge (mission) times tank capacity per type, otherwise the reported; NaN = unknown.
     double Lb(Ops.Me me) => me.Fuel >= 0 && CvType(me.Type).Lb is > 0 and var l ? me.Fuel * l : state * 1000;
     /// R23/N18: fuel below bingo (distance to the alternate) or divert (third bolter/waveoff) -> signal with bearing/distance, recovery ends (Gone).
-    /// Without own airfield no signal. ponytail: bingo = 1500 lb reserve + 20 lb/NM (Hornet, high); calibrate per type if players are sent too early/late.
+    /// Without own airfield no signal. ponytail: bingo = 1500 lb reserve + 20 lb/NM (Hornet, high), other types by tank size; calibrate per type if players are sent too early/late.
     List<Ops.Call>? Signal(Ops.Me me, Boat b, string station, bool divert, double lb)
     {
         if (me.Tel is not { } t || Alternate(t, me.Coalition) is not { } f) return null;
         double d = Dist(t.X, t.Z, f.X, f.Z) / NM, brg = Bearing(t.X, t.Z, f.X, f.Z);
-        bool bingo = lb < 1500 + 20 * d;   // NaN: unknown, no bingo
+        double k = CvType(me.Type).Lb is > 0 and var tank ? tank / 10800 : 1;   // reserve and burn scaled by tank size (Tomcat 2250 lb + 30 lb/NM, Goshawk 400 lb + 5 lb/NM)
+        bool bingo = lb < k * (1500 + 20 * d);   // NaN: unknown, no bingo
         if (!bingo && !divert) return null;
         var name = f.StationOf("").Trim();
         int nm = Math.Max(1, (int)Math.Round(d));
@@ -482,7 +501,7 @@ class Carrier
         var c = cs;
         var (al, lat) = Rel(b, t, b.Brc);
         double rel = Math.Sqrt(Sq(Math.Cos(t.Hdg) * t.Ias - Math.Cos(b.Hdg) * b.Speed) + Sq(Math.Sin(t.Hdg) * t.Ias - Math.Sin(b.Hdg) * b.Speed));
-        if (Dist(t.X, t.Z, b.X, b.Z) < 300 && t.AltMsl < DeckH + 4 && rel < 15)   // Trap: stands on the deck
+        if (Dist(t.X, t.Z, b.X, b.Z) < 300 && t.AltMsl < b.Deck.H + 4 && rel < 15)   // Trap: stands on the deck
         {
             if (WireEvents && dcsWire == 0 && touchAt > 0 && now - touchAt < 5) return new();   // R27: wait for the mission's wire event (comes after the catch), otherwise the own estimate
             if (dcsWire > 0) wire = dcsWire;
@@ -639,7 +658,7 @@ class Carrier
             }
             return res;
         }
-        if (Stage >= 3 && touchAt > 0 && !bolterTold && (Landing(b, t).Deck > Wires[^1] + 60 && rel > 40 || t.AltMsl > DeckH + 10 && Rel(b, t, b.Fb).Along > 0))   // touched down: 60 m behind wire 4 still fast (slides through; an arrested aircraft is long since slower after ~100 m rollout) or airborne again
+        if (Stage >= 3 && touchAt > 0 && !bolterTold && (b.Deck.Wires.Length > 0 && Landing(b, t).Deck > b.Deck.Wires[^1] + 60 && rel > 40 || t.AltMsl > b.Deck.H + 10 && Rel(b, t, b.Fb).Along > 0))   // touched down: 60 m behind wire 4 still fast (slides through; an arrested aircraft is long since slower after ~100 m rollout) or airborne again
         {
             bolterTold = true;
             return new() { Say("Paddles", "Bolter, bolter, bolter.", b) };
@@ -648,16 +667,17 @@ class Carrier
     }
 
     // ------------------------------------------------------------ LSO (M5 step 3)
-    // ponytail: Nimitz-class dimensions for all carriers (Tarawa/Kuznetsov differ); error against 3.5° from the hook
-    const double DeckH = 19.5, SternAlong = -164, Gs = 3.5, Hook = 2.5, Aim = 75;   // Aim: m behind the stern, just before wire 3
+    // Deck dimensions per ship class: DeckDef above; error against the glide slope from the hook
+    const double Hook = 2.5;
     const double GrooveIas = 100;   // m/s (195 kt): faster is initial/flyby, not a landing approach
-    static readonly double[] Wires = { 55, 67, 79, 96 };   // m behind the stern, along the landing runway (FB)
     public static readonly string[] LsoLines = { "Roger ball.", "A little power.", "Power.", "Power, power.", "Don't settle.", "Easy with it.", "You're high.", "You're slow.", "You're fast.", "Right for lineup.", "Come left.", "Wave off, wave off.", "Bolter, bolter, bolter.", "Wave off, wave off, foul deck." };
     readonly List<(double R, double Gs, double Lu, double Ao, double T)> groove = new();   // R: NM before the stern; error in degrees (high/right/slow positive, Ao NaN = unknown)
-    /// On-speed AoA in degrees (Export.lua delivers degrees from rad); ponytail: Hornet only, F-14 computes in units
-    /// Table: type prefix -> degrees (config.jsonc OnSpeedAoa), the longest prefix wins, unknown type NaN = no speed calls
-    /// ponytail: F-14/T-45 not in the default (F-14 computes in units, value unchecked) -> add to config.jsonc once measured (log "[LSO] AoA im Mittel")
-    public static Dictionary<string, double> OnSpeedAoa = new() { ["FA-18"] = 8.1 };
+    /// On-speed AoA in degrees (Export.lua delivers degrees from rad).
+    /// Table: type prefix -> degrees (config.jsonc OnSpeedAoa adds to it or replaces a value), the longest prefix wins, unknown type NaN = no speed calls
+    /// ponytail: only the Hornet is measured in the game; F-14 (15 units = 0.918 * 15 - 3.411), T-45 (17 units), A-4E (17.5 units) and AV-8B are book values,
+    /// correct them in config.jsonc per the log "[LSO] AoA im Mittel"
+    public static readonly IReadOnlyDictionary<string, double> OnSpeedDefault = new Dictionary<string, double> { ["FA-18"] = 8.1, ["EA-18"] = 8.1, ["F-14"] = 10.4, ["T-45"] = 8.5, ["A-4E"] = 8.75, ["AV8B"] = 10.0 };
+    public static Dictionary<string, double> OnSpeedAoa = new(OnSpeedDefault);
     static double OnSpeed(string type) => OnSpeedAoa.Where(kv => kv.Key != "" && type.StartsWith(kv.Key, StringComparison.OrdinalIgnoreCase)).OrderByDescending(kv => kv.Key.Length)
         .Select(kv => kv.Value).DefaultIfEmpty(double.NaN).First();
     double lsoAt = -99, touchAt = -1, wire, prevA = -1e9, prevH, slope, prevHdg, hdgT = 1e9;   // prevHdg/hdgT: heading of the last sample (turn rate, R3)
@@ -672,7 +692,7 @@ class Carrier
     static (double Deck, double Lat) Landing(Boat b, Telemetry t)
     {
         double r = b.Brc * Math.PI / 180;
-        return Rel(b with { X = b.X + SternAlong * Math.Cos(r) - b.SternLat * Math.Sin(r), Z = b.Z + SternAlong * Math.Sin(r) + b.SternLat * Math.Cos(r) }, t, b.Fb);
+        return Rel(b with { X = b.X + b.Deck.Stern * Math.Cos(r) - b.SternLat * Math.Sin(r), Z = b.Z + b.Deck.Stern * Math.Sin(r) + b.SternLat * Math.Cos(r) }, t, b.Fb);
     }
 
     /// With every state (mission writes every 0.5 s, R27: player under 2 NM from the carrier every 0.25 s): groove samples from 0.75 NM, touchdown point -> wire.
@@ -680,13 +700,14 @@ class Carrier
     {
         if (Stage < 3 || t == null || Mine is not { } b) return;
         var (deck, lat) = Landing(b, t);
-        double hook = t.AltMsl - Hook - DeckH, hdg = t.Hdg * 180 / Math.PI;
+        double hook = t.AltMsl - Hook - b.Deck.H, hdg = t.Hdg * 180 / Math.PI;
+        var w = b.Deck.Wires;
         bool straight = HdgDiff(hdg, b.Fb) <= 15 && (now <= hdgT || HdgDiff(hdg, prevHdg) / (now - hdgT) < 3);   // R3: in the groove, not in the 180° turn (heading ±15° to FB, under 3°/s)
         (prevHdg, hdgT) = (hdg, now);
         if (!waved && straight && deck is > -0.75 * NM and < 0 && Math.Abs(lat) < 0.3 * NM && hook < 1000 * Ft && t.Ias < GrooveIas)   // after the waveoff nothing counts anymore; initial (fast) is not groove
         {
-            double d = -deck + Aim;
-            groove.Add((-deck / NM, Math.Atan2(hook, d) * 180 / Math.PI - Gs, Math.Atan2(lat, d) * 180 / Math.PI, aoa - OnSpeed(type), now));
+            double d = -deck + b.Deck.Aim;
+            groove.Add((-deck / NM, Math.Atan2(hook, d) * 180 / Math.PI - b.Deck.Gs, Math.Atan2(lat, d) * 180 / Math.PI, aoa - OnSpeed(type), now));
             if (!double.IsNaN(aoa)) { aoaSum += aoa; aoaN++; }
         }
         // Hook at the deck (≤ 1.5 m, height on the deck fluctuates): touchdown point from the last sample in the air and its descent angle
@@ -695,7 +716,7 @@ class Carrier
         {
             double at = slope < 0 ? prevA - prevH / slope : deck;
             touchAt = now;
-            wire = at is > 40 and < 110 ? Array.IndexOf(Wires, Wires.MinBy(w => Math.Abs(w - at))) + 1 : 0;
+            wire = w.Length > 0 && at > w[0] - 15 && at < w[^1] + 14 ? Array.IndexOf(w, w.MinBy(x => Math.Abs(x - at))) + 1 : 0;
         }
         if (hook > 1.5)
         {
@@ -744,7 +765,7 @@ class Carrier
             var ao = s.Select(g => g.Ao).Where(a => !double.IsNaN(a)).DefaultIfEmpty(0).ToList();
             if (s.Count == 0) continue;
             bool m = lo < 0.25;   // R4: IC/AR lineup in meters (0.5° is only 1-4 m there), otherwise degrees
-            Func<(double R, double Gs, double Lu, double Ao, double T), double> lu = g => m ? Math.Tan(g.Lu * Math.PI / 180) * (g.R * NM + Aim) : g.Lu;
+            Func<(double R, double Gs, double Lu, double Ao, double T), double> lu = g => m ? Math.Tan(g.Lu * Math.PI / 180) * (g.R * NM + (Mine?.Deck ?? Nimitz).Aim) : g.Lu;
             var (lu1, lu2, lu3) = m ? (1.5, 3.0, 6.0) : (0.5, 1.0, 3.0);
             foreach (var (v, small, mid, big, sym) in new[] { (s.Max(g => g.Gs), 0.4, 0.8, 1.5, "H"), (-s.Min(g => g.Gs), 0.3, 0.6, 0.9, "LO"),
                                                               (-s.Min(lu), lu1, lu2, lu3, "LUL"), (s.Max(lu), lu1, lu2, lu3, "LUR"),
@@ -785,7 +806,7 @@ class Carrier
     /// AI in the landing pattern (5 NM, under 2000 ft): from 2 no Charlie for players.
     static int AiPattern(Boat b) => Air.Count(a => a.Flag == "cv" && a.InAir && a.Coalition == b.Coalition && Dist(a.X, a.Z, b.X, b.Z) < 5 * NM && a.AltMsl < 2000 * Ft);
     /// Landing area occupied (AI or player on the angled deck up to 250 m before the stern).
-    static bool FoulDeck(Boat b) => Air.Concat(Decks).Any(a => a.Coalition == b.Coalition && a.AltMsl < DeckH + 8 &&
+    static bool FoulDeck(Boat b) => Air.Concat(Decks).Any(a => a.Coalition == b.Coalition && a.AltMsl < b.Deck.H + 8 &&
                                                  Landing(b, AsTel(a)) is var (d, l) && d is > -10 and < 250 && Math.Abs(l) < 15);
     static readonly Dictionary<int, (bool Astern, int Passes, bool Foul)> aiPass = new();
     /// Guard against endless waveoffs: AI that goes around three times from the groove over the bow -> divert (Program: DIVERT); go-arounds at foul deck do not count (R363).
@@ -809,8 +830,10 @@ class Carrier
     static readonly Dictionary<int, int> aiBall = new();   // AI -> 1 ball reported, 2 bolter reported (once per approach)
     /// Aircraft type -> (name on the radio, tank capacity in lb) for the ball call; ponytail: carrier types only, otherwise without fuel state
     internal static (string Name, double Lb) CvType(string type) =>
+        type.StartsWith("FA-18E") ? ("Rhino", 14400) : type.StartsWith("FA-18F") ? ("Rhino", 13550) : type.StartsWith("EA-18") ? ("Growler", 13940) :   // Super Hornet mod
         type.StartsWith("FA-18") ? ("Hornet", 10800) : type.StartsWith("F-14") ? ("Tomcat", 16200) : type.StartsWith("S-3") ? ("Viking", 15000) :
-        type.StartsWith("E-2") ? ("Hawkeye", 12400) : type.StartsWith("AV8") ? ("Harrier", 7500) : (type.Split('_')[0], 0);
+        type.StartsWith("E-2") ? ("Hawkeye", 12400) : type.StartsWith("AV8") ? ("Harrier", 7500) : type.StartsWith("T-45") ? ("Goshawk", 2900) :
+        type.StartsWith("A-4E") ? ("Skyhawk", 5500) : type.StartsWith("Su-33") ? ("Flanker", 20900) : (type.Split('_')[0], 0);
     /// Radio of the mission AI in the groove (nothing spawned, N30): once per approach "<callsign>, Hornet ball, 5.4." with "Roger ball." from Paddles,
     /// on bolter "Bolter, bolter, bolter."; callsign and fuel per unit (Traffic.Cs/Fuel), player: a player is in the groove on this ship (then the AI is silent).
     public static List<(Boat B, string Group, string Cs, string Pilot, string Lso)> AiCalls(Func<Boat, bool> player)
@@ -834,7 +857,7 @@ class Carrier
                 res.Add((b, a.Group, a.Cs, $"{(m.Success ? SpokenCallsign($"{m.Groups[1].Value} {m.Groups[2].Value}-{m.Groups[3].Value}") + ", " : "")}{kind} ball" +
                                      $"{(lb > 0 ? $", {Digits((tenth / 10).ToString())} point {Digits((tenth % 10).ToString())}" : "")}.", CaseNow() == 3 ? $"Roger ball, {Wod(b)}." : "Roger ball."));   // R230
             }
-            else if (st == 1 && d > 260 && Math.Abs(l) < 100 && a.AltMsl < DeckH + 40)   // beyond the deck still airborne, low: bolter
+            else if (st == 1 && d > 260 && Math.Abs(l) < 100 && a.AltMsl < b.Deck.H + 40)   // beyond the deck still airborne, low: bolter
             {
                 aiBall[a.Id] = 2;
                 if (!player(b)) res.Add((b, a.Group, a.Cs, "", "Bolter, bolter, bolter."));
@@ -847,6 +870,8 @@ class Carrier
     // ======================================================================= Self-test
     public static void SelfTest(Action<bool, string> check)
     {
+        check(Needles("up and right") == (1, 1) && Needles("right and up") == (1, 1) && Needles("left and down") == (-1, -1) && Needles("on and left") == (0, -1)
+              && Needles("left and on") == (0, -1) && Needles("on and on") == (0, 0) && Needles("needles centered") == (0, 0) && Needles("on speed") == null, "#13 Needles in beiden Reihenfolgen");
         var b = new Boat("CVN-73", "CVN", "CVN_73", 0, 0, 0, 10, 2, 127.5, "73X", "11");   // sails north
         Boats = new() { b };
         var altOld = Alternate;
@@ -861,6 +886,8 @@ class Carrier
         var m2 = S(c2, "Enfield 1-2", "Marshal, Enfield 1-2, checking in", far, 10);
         check(m1 == "Marshal: Enfield one one, Marshal, case one recovery, expected BRC three five four, altimeter two niner niner two, hold angels 2, expected Charlie zero eight, report see me. | : Träger: Holding über dem Schiff in Angels 2, Linkskreise (ca. 5 NM Ø). Warten auf „signal Charlie“."
               && m2.Contains("hold angels 3, expected Charlie one zero") && c1.Wants(Normalize("Enfield 1-1, see you at 2")), $"Träger: Marshal -> {m1} | {m2}");
+        var rbC1 = S(c1, "Enfield 1-1", "Enfield 1-1, case one recovery, BRC 354, hold angels 2", far, 12);   // #27: Case I readback is no new check-in
+        check(rbC1.Contains("readback") && rbC1.Contains("correct") && c1.Stage == 1 && new Carrier().Wants(Normalize("Mom's 360 for 35, Enfield 1-1")), "#27 Träger: Case-I-Readback 'hold angels 2', Mom's -> " + rbC1);
         // #12/#13 (issues): board number instead of the call sign; check-in as in the CV NATOPS ("marking mom's 345 for 55, angels 17, low state 11.6")
         var c12 = new Carrier();
         var m12 = string.Join(" | ", c12.OnTranscript("Marshal, 103, marking mom's 345 for 55, angels 17, low state 11.6", M("Enfield 1-4", far) with { Modex = "103" }, 15).Select(x => $"{x.Station}: {x.Text}"));
@@ -922,7 +949,7 @@ class Carrier
         check(early == "/", "Träger: kein \"call the ball\" vor dem Break -> " + early);
         var grv = Tk(c1, "Enfield 1-1", g34 with { Ias = 70, Gear = 1 }, 660) + "/" + Tk(c1, "Enfield 1-1", g50 with { Ias = 70, Gear = 1 }, 661);   // Case I: only at 0.5 NM, not at 0.75
         var ball = S(c1, "Enfield 1-1", "Enfield 1-1, Hornet ball, 5.1", At(-0.45 * NM, 0, 330), 662);
-        var trap = Tk(c1, "Enfield 1-1", new Telemetry(DeckH + 2, 0, 10, 0, -50, 0, 0, 0, 0), 680);   // stands on the deck, sails along
+        var trap = Tk(c1, "Enfield 1-1", new Telemetry(Nimitz.H + 2, 0, 10, 0, -50, 0, 0, 0, 0), 680);   // stands on the deck, sails along
         check(ini.StartsWith(": Träger: Initial: zip lip") && grv == "/Paddles: Enfield one one, call the ball." && ball == "Paddles: Roger ball."
               && trap.Contains("gelandet") && c1.Stage == 0, $"Träger: Initial, Ball, Landung -> {ini} | {grv} | {ball} | {trap}");
         // R2: after the trap "call the ball" comes again in the next recovery (ballAsked/foul reset); R4: Lat at the trap in the log
@@ -1007,27 +1034,45 @@ class Carrier
         var c3 = new Carrier { Stage = 3, boat = "CVN", cs = "Enfield one one" };
         double fb = b.Fb * Math.PI / 180;
         Telemetry G(double deck, double err, double spd) =>
-            new(DeckH + Hook + (deck < Aim ? (Aim - deck) * Math.Tan((Gs + err) * Math.PI / 180) : 0), 0, spd, fb,
-                SternAlong + deck * Math.Cos(fb), b.SternLat + deck * Math.Sin(fb), 0, 0, 0);
+            new(Nimitz.H + Hook + (deck < Nimitz.Aim ? (Nimitz.Aim - deck) * Math.Tan((Nimitz.Gs + err) * Math.PI / 180) : 0), 0, spd, fb,
+                Nimitz.Stern + deck * Math.Cos(fb), b.SternLat + deck * Math.Sin(fb), 0, 0, 0);
         var calls = new List<string>();
         double now3 = 100;
         bool balled = false;
-        for (double d = -NM; d < Aim + 20; d += 17.5, now3 += 0.25)
+        for (double d = -NM; d < Nimitz.Aim + 20; d += 17.5, now3 += 0.25)
         {
             var tg = G(d, d is > -0.5 * NM and < -0.25 * NM ? 1.0 : 0, 70);
             if (!balled && d >= -0.7 * NM) { balled = true; calls.Add(S(c3, "Enfield 1-1", "Enfield 1-1, Hornet ball, 5.1", tg, now3)); }
             c3.Sample(tg, now3, 8.1 + (d is > -0.25 * NM and < -0.04 * NM ? 1.5 : 0), "FA-18C_hornet");   // in IC 1.5° too slow
             if (now3 % 1 == 0) calls.Add(Tk(c3, "Enfield 1-1", tg, now3));
         }
-        calls.Add(Tk(c3, "Enfield 1-1", G(Aim, 0, 10), now3 + 1));
+        calls.Add(Tk(c3, "Enfield 1-1", G(Nimitz.Aim, 0, 10), now3 + 1));
         calls.RemoveAll(x => x == "");
         check(calls.Count(x => x == "Paddles: You're high.") >= 1 && calls.Contains("Paddles: You're slow.") && calls[^1] == ": LSO: (OK) 3-wire, groove 14 s, HIM SLOIC NESA (3 Punkte)" && c3.Stage == 0,
               "Träger LSO: Calls + Note -> " + string.Join(" / ", calls));
+        // Deck per ship class: on glide slope and centerline of its own deck -> 3-wire on Kuznetsov (7.7°, 4°) and Forrestal, Tarawa (straight, no wires) without a wire; ball call names
+        string Trap(string type)
+        {
+            var s = b with { Type = type };
+            Boats = new() { s };
+            var c = new Carrier { Stage = 4, boat = "CVN", cs = "Enfield one one" };
+            double f = s.Fb * Math.PI / 180, tt = 100;
+            Telemetry P(double deck, double spd) => new(s.Deck.H + Hook + (deck < s.Deck.Aim ? (s.Deck.Aim - deck) * Math.Tan(s.Deck.Gs * Math.PI / 180) : 0), 0, spd, f,
+                                                        s.Deck.Stern + deck * Math.Cos(f), s.Deck.Lat + deck * Math.Sin(f), 0, 0, 0);
+            for (double d = -NM; d < s.Deck.Aim + 20; d += 17.5, tt += 0.25) c.Sample(P(d, 70), tt);
+            var r = Tk(c, "Enfield 1-1", P(s.Deck.Aim, 10), tt + 1);
+            Boats = new() { b };
+            return $"{s.Fb:0.0} {r}";
+        }
+        var (dKz, dFo, dTa) = (Trap("CV_1143_5"), Trap("Forrestal"), Trap("LHA_Tarawa"));
+        check(dKz.StartsWith("352.3 ") && dKz.Contains("OK 3-wire") && !dKz.Contains("LO") && dFo.StartsWith("350.6 ") && dFo.Contains("OK 3-wire") && dTa.StartsWith("0.0 ") && dTa.Contains("LSO: ") && !dTa.Contains("-wire")
+              && CvType("FA-18E") == ("Rhino", 14400) && CvType("T-45") == ("Goshawk", 2900) && CvType("FA-18C_hornet").Name == "Hornet" && Math.Abs(OnSpeed("F-14B") - 10.4) < 0.01 && double.IsNaN(OnSpeed("Su-33")),
+              $"Träger: Deck je Schiffsklasse -> {dKz} | {dFo} | {dTa}");
         // Calibration log: raw AoA mean also for a type without on-speed (otherwise NaN, nothing for OnSpeedAoa), no line without AoA
         var ct = new Carrier { Stage = 3, boat = "CVN", cs = "Enfield one one" };
         double tc = 100;
-        for (double d = -NM; d < Aim + 20; d += 17.5, tc += 0.25) ct.Sample(G(d, 0, 70), tc, 9.0, "T-45");
-        Tk(ct, "Enfield 1-1", G(Aim, 0, 10), tc + 1);
+        for (double d = -NM; d < Nimitz.Aim + 20; d += 17.5, tc += 0.25) ct.Sample(G(d, 0, 70), tc, 9.0, "Su-33");
+        Tk(ct, "Enfield 1-1", G(Nimitz.Aim, 0, 10), tc + 1);
         check(ct.AoaLog("Enfield 1-1") == "[LSO] Enfield 1-1: AoA im Mittel 9.0° (on-speed unbekannt)" && (c3.AoaLog("Enfield 1-1") ?? "").Contains("° zu on-speed)") && new Carrier().AoaLog("x") == null,
               $"LSO: AoA-Log zum Kalibrieren -> {ct.AoaLog("Enfield 1-1")} | {c3.AoaLog("Enfield 1-1")}");
         // P3-T3: _OK_ only with very small errors (here 0.1° too high) and groove 15-18 s from 0.5 NM (60 m/s, ball at 0.7 NM as in a real approach); 0.3° too high (under the OK threshold) -> OK; 82 m/s -> NESA, 48 m/s -> LIG, no LIG in Case III
@@ -1035,13 +1080,13 @@ class Carrier
         {
             var c = new Carrier { Stage = 3, boat = "CVN", cs = "Enfield one one", caseNo = cn };
             double tt = 100; bool bl = false; string last = "";
-            for (double d = -NM; d < Aim + 20; d += step, tt += 0.25)
+            for (double d = -NM; d < Nimitz.Aim + 20; d += step, tt += 0.25)
             {
                 var tg = G(d, d is > -0.5 * NM and < -0.25 * NM ? err : 0, 70);
                 if (!bl && d >= -0.7 * NM) { bl = true; S(c, "Enfield 1-1", "Enfield 1-1, Hornet ball, 5.1", tg, tt); }
                 c.Sample(tg, tt, 8.1, "FA-18C_hornet");
             }
-            return Tk(c, "Enfield 1-1", G(Aim, 0, 10), tt + 1);
+            return Tk(c, "Enfield 1-1", G(Nimitz.Aim, 0, 10), tt + 1);
         }
         string nOk = TrapNote(15, 0.1), nOk2 = TrapNote(15, 0.3), nShort = TrapNote(20.5, 0.1), nLong = TrapNote(12, 0.1), nLong3 = TrapNote(12, 0.1, 3);
         check(nOk.Contains("LSO: _OK_ ") && !nOk.Contains("NESA") && !nOk.Contains("LIG") && nOk2.Contains("LSO: OK ") && nShort.Contains("NESA") && nShort.Contains("LSO: OK ") && nLong.Contains("LIG") && !nLong3.Contains("LIG") && nLong3.Contains("LSO: _OK_ "),
@@ -1075,8 +1120,8 @@ class Carrier
         c4.groove.AddRange(new[] { (0.1, 0.0, 3.0, double.NaN, 900.0), (0.03, 0.0, 0.6, double.NaN, 901.0) });
         var nr4 = c4.Note("wo");
         check(nr4.Contains("_LUR_IC") && !nr4.Contains("AR"), "LSO R4: Lineup in Metern -> " + nr4);
-        // On-speed per type from the table: default Hornet 8.1 only, unknown NaN, longest prefix wins
-        check(OnSpeed("FA-18C_hornet") == 8.1 && double.IsNaN(OnSpeed("T-45")) && double.IsNaN(OnSpeed("")), "LSO: On-speed-AoA Vorgabe nur Hornet");
+        // On-speed per type from the table: default table (Hornet 8.1 measured, others book values), unknown NaN, longest prefix wins
+        check(OnSpeed("FA-18C_hornet") == 8.1 && OnSpeed("T-45") == 8.5 && double.IsNaN(OnSpeed("Su-33")) && double.IsNaN(OnSpeed("")), "LSO: On-speed-AoA Vorgabe je Typ");
         var osOld = OnSpeedAoa;
         OnSpeedAoa = new() { ["FA-18"] = 8.1, ["FA-18C_x"] = 7.5, ["F-14"] = 10.0 };
         check(OnSpeed("FA-18C_hornet") == 8.1 && OnSpeed("FA-18C_x1") == 7.5 && OnSpeed("F-14B") == 10.0 && double.IsNaN(OnSpeed("Su-33")), "LSO: On-speed-AoA je Typ aus der Tabelle");
@@ -1103,7 +1148,7 @@ class Carrier
         var nbx = Tk(new Carrier { Stage = 3, boat = "CVN", cs = "Enfield one one" }, "Enfield 1-1", G(-0.2 * NM, 0, 70), 600);   // turned in late, never heard "call the ball": no consequence without warning
         check(nb.StartsWith("Paddles: Enfield one one, call the ball. / Paddles: Wave off, wave off.") && !nb.Contains("Power") && nb.Contains(": LSO: WO (kein Ball-Call), groove ") && nbx == "", $"Träger #16: ohne Ball-Call -> {nb} | ohne call the ball {nbx}");
         // M6 AI at the carrier: foul deck -> waveoff without grade; 2 AI in the pattern -> no Charlie; three go-arounds over the bow -> divert
-        Traffic Ai(int id, Telemetry p) => new(id, "FA-18C_hornet", p.X, p.Z, p.AltMsl, p.Hdg, p.Ias, "AI " + id, "cv", p.AltMsl > DeckH + 8, 2);
+        Traffic Ai(int id, Telemetry p) => new(id, "FA-18C_hornet", p.X, p.Z, p.AltMsl, p.Hdg, p.Ias, "AI " + id, "cv", p.AltMsl > Nimitz.H + 8, 2);
         Air = new[] { Ai(91, G(120, 0, 5)) };   // stands on the landing area
         var fd = Pass(d => G(d, 0, 70));
         var ch = new Carrier { Stage = 1, boat = "CVN", cs = "Enfield one one", charlieAt = 990 };   // Charlie time just reached, not exceeded (A20)
@@ -1186,13 +1231,13 @@ class Carrier
             Decks = fl ? new[] { Ai(95, G(120, 0, 5)) } : Array.Empty<Traffic>();
             var l = new List<string>();
             double tt = 500;
-            for (double d = -NM; d < Aim + 20; d += 17.5, tt += 0.25)
+            for (double d = -NM; d < Nimitz.Aim + 20; d += 17.5, tt += 0.25)
             {
                 var tg = G(d, !fl && d is > -0.25 * NM and < -0.1 * NM ? -1.5 : 0, 70);
                 c.Sample(tg, tt);
                 if (tt % 1 == 0) l.Add(Tk(c, "Enfield 1-1", tg, tt));
             }
-            l.Add(Tk(c, "Enfield 1-1", G(Aim, 0, 10), tt + 1));
+            l.Add(Tk(c, "Enfield 1-1", G(Nimitz.Aim, 0, 10), tt + 1));
             Decks = Array.Empty<Traffic>();
             return string.Join(" | ", l.Where(x => x != ""));
         }
@@ -1263,7 +1308,7 @@ class Carrier
         check(e3 % 60 == 0 && e3 > 36010 && mk3.Contains($"Expected approach time {mm3}.") && neg3 == $"Marshal: Enfield one three, negative, your expected approach time is {mm3}./1"
               && ok3.StartsWith("Marshal: Enfield one three, radar contact, final bearing") && ok3.EndsWith("/2"), $"Träger R365/R366: EAT Missionszeit -> {e3} {mk3} | {neg3} | {ok3}");
         // A129: needles against the offset (1.5° too high, 1° right of the line: fly-to needles "down and left"); wrong report -> disregard + offset
-        double off = (5 * NM + Aim) * Math.Tan(Math.PI / 180);
+        double off = (5 * NM + Nimitz.Aim) * Math.Tan(Math.PI / 180);
         var hiRt = G(-5 * NM, 1.5, 70);
         hiRt = hiRt with { X = hiRt.X - off * Math.Sin(fb), Z = hiRt.Z + off * Math.Cos(fb) };
         k1.needlesAsked = true;
@@ -1279,6 +1324,8 @@ class Carrier
         var (rbEat, rbAng) = (rbk.charlieAt, rbk.angels);
         var rbOk = S(rbk, "Enfield 1-9", $"Enfield 1-9, Marshal 165 radial, {rbAng + 15} DME, angels {rbAng}, time 07", far, 3110);
         var rbBad = S(rbk, "Enfield 1-9", $"Marshal, Enfield 1-9, 165 radial, {rbAng + 15} DME, angels {rbAng + 3}", far, 3120);
+        var rbC3 = S(rbk, "Enfield 1-9", $"Enfield 1-9, case three recovery, mother's 165 radial, {rbAng + 15} DME, angels {string.Join(" ", rbAng.ToString().ToCharArray())}", far, 3125);
+        check(rbC3.Contains("readback") && rbC3.Contains("correct") && rbk.charlieAt == rbEat, "#27 Träger: Readback mit 'case three recovery', Angels in Einzelziffern -> " + rbC3);
         rbk.Leave();
         check(rbOk == "Marshal: Enfield one niner, readback correct." && rbBad == $"Marshal: Enfield one niner, negative, angels {rbAng}." && rbk.charlieAt == rbEat, $"Träger R226: Readback -> {rbOk} | {rbBad}");
         // R368: "Marshal, …, say again" in holding repeats the assignment (EAT, angels), no new check-in (EAT and stack slot stay)
@@ -1413,7 +1460,7 @@ class Carrier
             var c = new Carrier { Stage = 3, boat = "CVN", cs = "Enfield one one" };
             double tt = 1500;
             for (double d = -NM; d < 140; d += 17.5, tt += 0.25) c.Sample(G(d, 0, 70), tt);
-            return Tk(c, "Enfield 1-1", G(180, 0, ias) with { AltMsl = DeckH + 3 }, tt);
+            return Tk(c, "Enfield 1-1", G(180, 0, ias) with { AltMsl = Nimitz.H + 3 }, tt);
         }
         var (slide, trapped) = (Roll(70), Roll(30));
         check(slide == "Paddles: Bolter, bolter, bolter." && !trapped.Contains("Bolter") && bo.Contains("Paddles: Bolter"), $"Träger P3-T2: Bolter-Call beim Durchrutschen -> {slide} | gefangen {trapped}");
@@ -1468,7 +1515,7 @@ class Carrier
         Sky = (false, 0, 80000);
         // R24: takeoff from the deck: there no suggestion and no radio (advisory only), ship into the wind (BoatGroup); Case I after takeoff text only;
         // Case III "airborne" -> radar contact, "on top" -> frequency change, without a report at 20 NM
-        var dkT = new Telemetry(DeckH + 1, 0, 10, 0, 50, 0, 0, 0, 0);
+        var dkT = new Telemetry(Nimitz.H + 1, 0, 10, 0, 50, 0, 0, 0, 0);
         var upT = At(NM, 0, 500);
         var l1 = new Carrier();
         var dk1 = Tk(l1, "Enfield 3-1", dkT, 100) + "/" + (l1.Suggest(dkT)?.Text ?? "-") + "/" + l1.BoatGroup + "/" + S(l1, "Enfield 3-1", "Ground, Enfield 3-1, request startup", dkT, 101);
@@ -1493,7 +1540,7 @@ class Carrier
         var (l364, t364) = (new Carrier(), new Carrier { Stage = 3, boat = "CVN", cs = "Enfield three six" });
         var bg364 = new List<string>();
         foreach (var (tel, now) in new[] { (dkT, 100.0), (dkT, 701), (dkT with { X = dkT.X + 60 }, 702) }) { Tk(l364, "Enfield 3-5", tel, now); bg364.Add(l364.BoatGroup); }
-        var trT = new Telemetry(DeckH + 2, 0, 10, 0, -50, 0, 0, 0, 0);
+        var trT = new Telemetry(Nimitz.H + 2, 0, 10, 0, -50, 0, 0, 0, 0);
         bg364.Add(Tk(t364, "Enfield 3-6", trT, 800) + "/" + Tk(t364, "Enfield 3-6", trT, 801) + "/" + t364.BoatGroup + "/" + t364.OnDeck);
         check(string.Join("|", bg364) == "CVN||CVN|: Träger: gelandet auf CVN-73.///True", "Träger R364: Deck geparkt/rollend/nach Trap -> " + string.Join("|", bg364));
         // R26: wingman in formation takes over check-in (not in the stack, no own Delta) and Charlie of the lead, then flies himself (initial, LSO);
@@ -1561,11 +1608,11 @@ class Carrier
         {
             var c = new Carrier { Stage = 3, boat = "CVN", cs = "Enfield one one" };
             double tt = 100;
-            for (double d = -NM; d < Aim + 20; d += 15, tt += 0.25) c.Sample(G(d, 0, 70), tt, 8.1, "FA-18C_hornet");
+            for (double d = -NM; d < Nimitz.Aim + 20; d += 15, tt += 0.25) c.Sample(G(d, 0, 70), tt, 8.1, "FA-18C_hornet");
             WireEvents = true;
-            var r = Tk(c, "Enfield 1-1", G(Aim, 0, 10), tt + 1);
+            var r = Tk(c, "Enfield 1-1", G(Nimitz.Aim, 0, 10), tt + 1);
             if (w > 0) c.OnWire(w);
-            r += "/" + Tk(c, "Enfield 1-1", G(Aim, 0, 10), tt + late);
+            r += "/" + Tk(c, "Enfield 1-1", G(Nimitz.Aim, 0, 10), tt + late);
             WireEvents = false;
             return r;
         }

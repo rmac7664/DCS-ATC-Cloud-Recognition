@@ -42,6 +42,8 @@ public class Airfield
     };
     /// Forum request: own frequencies from frequencies.jsonc (Program.ApplyFreqs): role (ATIS, Ground, Tower, Departure, Approach) -> MHz, override the map.
     public Dictionary<string, double[]> Own = new();
+    /// frequencies.jsonc "OnlyListed": no own entry -> DCS-ATC is silent here (Program.Served is false: not picked, no calls, no ATIS, not offered). Reset on every ApplyFreqs.
+    public bool Off;
     public static readonly string[] Roles = { "Ground", "Tower", "Approach", "Departure" };
     /// Frequencies of a controller: own (Own), otherwise the map frequencies (UHF, VHF; Ground/Tower/Approach shared), Departure without own like Approach;
     /// "*" = all controllers of the airfield (locked?). null = none (without Radio.lua: config per controller).
@@ -58,6 +60,8 @@ public class Airfield
     public List<RwyEnd> Ends = new();
     public Dictionary<string, (double X, double Z)> Crp = new();   // Compulsory reporting points (map only)
     public Ramp[] Ramps = Array.Empty<Ramp>();
+    public string Icao = "";   // #32: chart "icao" (built in for the Caucasus), destination by ICAO code ("request IFR clearance to Echo Tango Mike November")
+    public bool RampOnly;   // forum (Lt_Jaeger): chart "ground": { "ramp_only": true }: after landing Ground names only the ramp here, no stand (all airfields: config AssignParkingSpot false)
     public Rollnetz? Net;                     // DCS taxi network (Rollnetz.LoadAll, from the user's DCS installation), null = none
     public Dictionary<string, (double X, double Z, string[] Rwy)> Holds = new();   // Named holding points (map)
     public Dictionary<string, string> HandOf = new();                          // Runway -> "right hand"/"left hand" (map)
@@ -70,6 +74,16 @@ public class Airfield
     public HashSet<string> Backtrack = new();                                  // Runways whose holding point leads only to the middle: backtrack on the runway
     public List<string> Notes = new();                                         // Airfield notes (English) from the chart
     public Dictionary<string, string> StandChart = new();                      // DCS stand (Term_Index) -> stand name on the chart, only where unambiguous
+    public record Route(string Name, string[] Rwy, string To, (string Fix, double X, double Z, double Ft, string Cross, double Ft2)[] Pts, string[]? Say = null);   // Say: other spoken names (#23: "ECHO" for ARCOE, which the speech recognition does not get)   // Cross: "at or above", "at", "at or below", "between" (Ft..Ft2) (Ft 0 = none)
+    public Dictionary<string, Route> Routes = new();                           // Forum (Lt_Jaeger): named arrival chains (charts.jsonc "routes"), after the last point the CRP "to" = handover to Tower
+    public Dictionary<string, Route> Departures = new();                       // Forum: named departure chains (charts.jsonc "departures"), after the last fix own navigation (To unused)
+    /// Chart point written in capitals ("CRAIG", "GASS_PEAK") = named fix, said by its name ("Gass Peak"); otherwise "C R P north".
+    public static string Say(string k) => k.Any(char.IsLower) || !k.Any(char.IsLetter) ? "C R P " + k.Replace('_', ' ')
+        : string.Join(' ', k.Replace('_', ' ').Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(w => w[0] + w[1..].ToLowerInvariant()));
+    /// The same point as written on the F10 map and the kneeboard: "CRP north", "GASS PEAK".
+    public static string Label(string k) => ((k.Any(char.IsLower) || !k.Any(char.IsLetter) ? "CRP " : "") + k.Replace('_', ' ')).Trim();
+    /// #57 (LtJaeger): a route point named "_ARC_SOUTH" (or "silent": true in the chart) is flown, monitored and drawn, but never said.
+    public static bool Silent(string k) => k.StartsWith('_');
     double? ctrTopFt;
     public List<(double X, double Z, int Num, int Type)> Spots = new();   // Parking positions from DCS (Airbase:getParking): Term_Index, Term_Type (16 runway, 40 helicopter)
     public bool Charted => Crp.Count > 0;     // procedures per DCS kneeboard chart (charts/caucasus.jsonc)
@@ -83,6 +97,14 @@ public class Airfield
     {
         double along = (x - e.CX) * e.Dx + (z - e.CZ) * e.Dz, lat = Math.Abs((x - e.CX) * e.Dz - (z - e.CZ) * e.Dx);
         return Math.Abs(along) < e.Len / 2 + beyond && lat < halfWidth;
+    });
+    /// Issue #62: taxi edge that runs ALONG a runway (both nodes on its rectangle, longer than 10 m, within 30 deg of its axis). Crossing pieces (steep) and tiny pieces
+    /// (direction is noise) are no along-runway edges: a crossing often consists of several edges, dropping the short middle one would make the runway impassable.
+    public bool AlongRunway((double X, double Z) a, (double X, double Z) b) => Ends.Any(e =>
+    {
+        bool In((double X, double Z) p) => Math.Abs((p.X - e.CX) * e.Dx + (p.Z - e.CZ) * e.Dz) < e.Len / 2 + 50 && Math.Abs((p.X - e.CX) * e.Dz - (p.Z - e.CZ) * e.Dx) < 30;
+        double dx = b.X - a.X, dz = b.Z - a.Z, l = Math.Sqrt(dx * dx + dz * dz);
+        return l > 10 && In(a) && In(b) && Math.Abs(dx * e.Dz - dz * e.Dx) / l < 0.5;   // sin(30 deg) = 0.5, direction-insensitive
     });
     public Ramp? RampAt(double x, double z) => Ramps.OrderBy(r => (r.X - x) * (r.X - x) + (r.Z - z) * (r.Z - z)).FirstOrDefault();
     public Dictionary<int, string> Stands = new();   // DCS stand name by Term_Index ("F125" as in the ME/kneeboard), from the hook
@@ -107,7 +129,7 @@ public class Airfield
     /// Emergency (R37, A15 AWACS): nearest own/neutral airfield with a runway, preferably from 1800 m; null = none.
     public static Airfield? Emergency(IEnumerable<Airfield> fields, double x, double z, int side)
     {
-        var own = fields.Where(f => f.Ends.Count > 0 && (f.Side == 0 || f.Side == side)).ToList();
+        var own = fields.Where(f => f.Ends.Count > 0 && !f.Off && (f.Side == 0 || f.Side == side)).ToList();
         return (own.Any(f => f.Ends.Max(e => e.Len) >= 1800) ? own.Where(f => f.Ends.Max(e => e.Len) >= 1800) : own).MinBy(f => (f.X - x) * (f.X - x) + (f.Z - z) * (f.Z - z));
     }
 
@@ -140,16 +162,27 @@ public class Airfield
     /// wx, wz: wind vector at the airfield (toward, m/s).
     /// Parallel runways: landing is on the runway matching the main runway (Main or its reciprocal, Program learns it from the AI), otherwise the first from getRunways.
     /// FI5: closed runways (NOTAM) are skipped; dcs = as the DCS AI picks it, it ignores NOTAMs.
-    public string BestRunway(double wx, double wz, bool dcs = false)
+    /// Forum (Lt_Jaeger): charts.jsonc land_rwy/dep_rwy picks the parallel runway (the strip, either end) for landing/departure, not for the AI (dcs).
+    /// Forum (RedeyeStorm, log Nellis): dep = departure: in light wind DepMain (learned from AI takeoffs, e.g. Nellis 03R out / 21L in) if set, otherwise Main; above 3.5 m/s the headwind decides for both.
+    public string BestRunway(double wx, double wz, bool dcs = false, bool dep = false)
     {
         var open = dcs || Ends.All(e => Closed.Contains(e.Name)) ? Ends : Ends.Where(e => !Closed.Contains(e.Name)).ToList();
+        // forum (Nellis): with tailwind_kt the chart end (land_rwy/dep_rwy) is used as named while its tailwind is within the limit
+        if (!dcs && TailwindKt is { } tk && Ends.FirstOrDefault(e => e.Name == (dep ? DepRwy : LandRwy)) is { } ce && !Closed.Contains(ce.Name)
+            && wx * ce.Dx + wz * ce.Dz <= tk * 0.514444) return ce.Name;
         var m = open.FirstOrDefault(e => e.Name == Main);
+        if (dep && open.FirstOrDefault(e => e.Name == DepMain) is { } md) m = md;
         var b = Math.Sqrt(wx * wx + wz * wz) < 3.5 && m != null ? m : open.MaxBy(e => -(wx * e.Dx + wz * e.Dz))!;
-        return open.Where(e => Diff(e.Hdg, b.Hdg) < 10).OrderBy(e => m != null && e.CX == m.CX && e.CZ == m.CZ ? 0 : 1).First().Name;
+        var pref = (dcs ? null : Ends.FirstOrDefault(e => e.Name == (dep ? DepRwy : LandRwy))) ?? m;
+        return open.Where(e => Diff(e.Hdg, b.Hdg) < 10).OrderBy(e => pref != null && e.CX == pref.CX && e.CZ == pref.CZ ? 0 : 1).First().Name;
     }
+    public string LandRwy = "", DepRwy = "";
+    public double? TailwindKt;
     /// DCS main runway = named direction from Airbase:getRunways (correct at all test airfields). Program corrects it
     /// when an AI takes off/lands differently in light wind.
     public string Main = "";
+    /// Forum (RedeyeStorm, log Nellis): main departure runway learned from AI takeoffs only ("" = same as Main, which is learned from AI landings only).
+    public string DepMain = "";
 
     /// FI5: NOTAMs of the day as the ATIS speaks them; Closed = runway ends out of use (whole strip), IlsOut = runways whose ILS is unserviceable.
     public List<string> Notams = new();
@@ -266,38 +299,82 @@ public class Airfield
     static JsonDocument? chart;
     internal static string? ChartFile;   // --charttest <file>
     internal static JsonElement? OwnChart;   // forum 0.15: charts.jsonc in the DCS-ATC folder, an airfield in there replaces the built-in entry (own procedures)
+    internal static Dictionary<string, string> OwnAlias = new();   // #28: DCS name -> charts.jsonc name ("Nellis AFB" for DCS "Nellis"), Program.ChartAlias
     internal static readonly JsonDocumentOptions ChartOpts = new() { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
     internal static JsonElement Chart => (chart ??= JsonDocument.Parse(ChartFile != null ? File.OpenRead(ChartFile) : typeof(Airfield).Assembly.GetManifestResourceStream("caucasus.jsonc")!,
         ChartOpts)).RootElement;
 
     /// Procedures from the chart data if the airfield is in there; without entry everything stays as before (E5). Built-in data Caucasus only, charts.jsonc on every map (forum 0.20).
-    public Airfield ApplyChart()
+    /// The airfield's chart entry as written: charts.jsonc, otherwise built in (Caucasus); null = none.
+    public JsonElement? ChartEntry()
     {
         JsonElement a = default;
-        if (OwnChart?.TryGetProperty(Name, out a) != true && (Theatre != "Caucasus" || !Chart.TryGetProperty(Name, out a))) return this;
+        return OwnChart?.TryGetProperty(OwnAlias.GetValueOrDefault(Name, Name), out a) == true || Theatre == "Caucasus" && Chart.TryGetProperty(Name, out a) ? a : null;
+    }
+    /// False for the Kutaisi that Load puts first on every map (placeholder outside the Caucasus).
+    public bool OnMap => Name != "Kutaisi" || Theatre == "Caucasus";
+
+    public Airfield ApplyChart()
+    {
+        if (ChartEntry() is not { } a) return this;
         static Dictionary<string, string> Strs(JsonElement e, string key) =>
             e.TryGetProperty(key, out var v) ? v.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetString()!) : new();
+        if (a.TryGetProperty("icao", out var ic)) Icao = ic.GetString()!.Trim().ToUpperInvariant();
         if (a.TryGetProperty("pattern_ft", out var p)) PatternFt = p.GetDouble();
         if (a.TryGetProperty("arrdep_max_ft", out var m)) MaxFt = m.GetDouble();
         if (a.TryGetProperty("ctr_top_ft", out var ct)) ctrTopFt = ct.GetDouble();
         if (a.TryGetProperty("crp", out var crp)) foreach (var c in crp.EnumerateObject()) Crp[c.Name] = Pos(c.Value);
         if (a.TryGetProperty("exit_only", out var eo)) ExitOnly = eo.EnumerateArray().Select(v => v.GetString()!).ToHashSet();
         if (a.TryGetProperty("notes", out var nt)) Notes = nt.EnumerateArray().Select(v => v.GetString()!).ToList();
+        foreach (var (key, set) in new (string, Action<string>)[] { ("land_rwy", v => LandRwy = v), ("dep_rwy", v => DepRwy = v) })
+            if (a.TryGetProperty(key, out var pr))
+                set(Ends.Count == 0 || Ends.Any(e => e.Name == pr.GetString()) ? pr.GetString()! : throw new FormatException($"{Name}: \"{key}\": \"{pr.GetString()}\" ({string.Join(", ", Ends.Select(e => e.Name))})"));
+        if (a.TryGetProperty("tailwind_kt", out var twk)) TailwindKt = twk.GetDouble();
         if (a.TryGetProperty("rwy", out var rwy))
             foreach (var r in rwy.EnumerateObject())
             {
-                if (r.Value.TryGetProperty("hand", out var h)) HandOf[r.Name] = h.GetString() + " hand";
+                if (r.Value.TryGetProperty("hand", out var h)) HandOf[r.Name] = h.GetString() is "left" or "right" ? h.GetString() + " hand" : throw new FormatException($"{Name} {r.Name}: \"hand\": \"{h.GetString()}\" (left or right)");
                 if (r.Value.TryGetProperty("side", out var sd)) SideOf[r.Name] = sd.GetString()!;
                 if (r.Value.TryGetProperty("initial_nm", out var ini)) InitialNm[r.Name] = ini.GetDouble();
                 if (r.Value.TryGetProperty("backtrack", out var bt) && bt.GetBoolean()) Backtrack.Add(r.Name);
                 if (r.Value.TryGetProperty("entry", out var en))
-                    Entry[r.Name] = en.EnumerateObject().Select(e => (e.Name, e.Value.GetProperty("via").GetString()!, e.Value.TryGetProperty("wp", out var wp) ? Pos(wp) : ((double X, double Z)?)null)).ToList();
+                    Entry[r.Name] = en.EnumerateObject().Select(e => (e.Name, e.Value.GetProperty("via").GetString() is var v && v is "overhead" or "initial" ? v!
+                        : throw new FormatException($"{Name} {r.Name} entry {e.Name}: \"via\": \"{v}\" (overhead or initial)"),
+                        e.Value.TryGetProperty("wp", out var wp) ? Pos(wp) : ((double X, double Z)?)null)).ToList();
                 if (r.Value.TryGetProperty("exit", out var ex))
                 {
                     Exit[r.Name] = ex.EnumerateObject().Select(e => e.Name).ToList();
                     foreach (var e in ex.EnumerateObject()) if (e.Value.TryGetProperty("note", out var nn)) ExitNote[(r.Name, e.Name)] = nn.GetString()!;
                 }
             }
+        if (Entry.Values.SelectMany(e => e.Select(x => x.Crp)).Concat(Exit.Values.SelectMany(x => x)).FirstOrDefault(k => !Crp.ContainsKey(k)) is { } miss)
+            throw new FormatException($"{Name}: entry/exit \"{miss}\" is not in \"crp\"");
+        foreach (var (key, dep) in new[] { ("routes", false), ("departures", true) })
+            if (a.TryGetProperty(key, out var rts))
+                foreach (var r in rts.EnumerateObject())
+                foreach (var (rv, vi) in (r.Value.ValueKind == JsonValueKind.Array ? r.Value.EnumerateArray().ToArray() : new[] { r.Value }).Select((v, i) => (v, i)))   // Forum (Lt_Jaeger): "STRYK": [ {...}, {...} ] = one name, one variant per runway
+                {
+                    var (to, rws) = (dep ? "" : rv.GetProperty("to").GetString()!, rv.GetProperty("rwy").EnumerateArray().Select(v => v.GetString()!).ToArray());
+                    var pts = rv.GetProperty("pts").EnumerateArray().Select(p =>
+                    {
+                        var (x, z) = Pos(p.GetProperty("pos"));
+                        var (cross, ft) = new[] { ("above", "at or above"), ("at", "at"), ("below", "at or below") }
+                            .Select(k => p.TryGetProperty(k.Item1, out var v) ? (k.Item2, v.GetDouble()) : default).FirstOrDefault(k => k.Item1 != null, ("", 0));
+                        double ft2 = 0;
+                        if (p.TryGetProperty("above", out var lo) && p.TryGetProperty("below", out var hi))   // #31 (LtJaeger): both keys = between
+                        {
+                            (cross, ft, ft2) = ("between", lo.GetDouble(), hi.GetDouble());
+                            if (ft > ft2) throw new FormatException($"{Name} {key} {r.Name}: fix \"{p.GetProperty("fix").GetString()}\": \"above\" {ft:0} is higher than \"below\" {ft2:0}");
+                        }
+                        var fix = p.GetProperty("fix").GetString()!;
+                        return (p.TryGetProperty("silent", out var sl) && sl.ValueKind == JsonValueKind.True && !Silent(fix) ? "_" + fix : fix, x, z, ft, cross, ft2);   // #57
+                    }).ToArray();
+                    if (pts.Length == 0) throw new FormatException($"{Name} {key} {r.Name}: \"pts\" is empty");
+                    if (!dep && rws.FirstOrDefault(rw => !(Entry.TryGetValue(rw, out var en) && en.Any(e => e.Crp == to))) is { } bad)
+                        throw new FormatException($"{Name} route {r.Name}: \"to\": \"{to}\" is no entry of runway {bad}");
+                    var say = rv.TryGetProperty("say", out var sy) ? (sy.ValueKind == JsonValueKind.Array ? sy.EnumerateArray().Select(v => v.GetString()!).ToArray() : new[] { sy.GetString()! }) : null;
+                    (dep ? Departures : Routes)[vi == 0 ? r.Name : $"{r.Name}#{vi}"] = new(r.Name, rws, to, pts, say);
+                }
         if (a.TryGetProperty("ground", out var g) && g.TryGetProperty("holds", out var holds))
             foreach (var h in holds.EnumerateObject()) { var (x, z) = Pos(h.Value.GetProperty("pos")); Holds[h.Name] = (x, z, h.Value.GetProperty("rwy").EnumerateArray().Select(v => v.GetString()!).ToArray()); }
         if (a.TryGetProperty("ground", out g) && g.TryGetProperty("ramps", out var ramps))
@@ -307,6 +384,7 @@ public class Airfield
                 var (note, inNote) = (Strs(r.Value, "note"), Strs(r.Value, "in_note"));
                 return r.Value.GetProperty("pts").EnumerateArray().Select(q => { var (x, z) = Pos(q); return new Ramp(r.Name, x, z, to, hold, vac, inb, note, inNote); });
             }).ToArray();
+        if (a.TryGetProperty("ground", out g) && g.TryGetProperty("ramp_only", out var ro)) RampOnly = ro.GetBoolean();
         // K32: chart stand name only for a single DCS stand (a range "23-43" = "1-21" does not give the order)
         if (a.TryGetProperty("ground", out g) && g.TryGetProperty("stands", out var stands))
             foreach (var s in stands.EnumerateArray())
@@ -409,9 +487,13 @@ public class Airfield
         return f;
     }
 
+    /// Chart entries of the last Load that failed with the runways known (airfield, message); those airfields are loaded without chart data.
+    public static readonly List<(string Name, string Message)> ChartFaults = new();
+
     /// File from the mission script: "A;Name;x;z;elev" followed by "R;Name;course;x;z;length". Kutaisi always from the map, Caucasus airfields with chart data get it (ApplyChart).
     public static List<Airfield> Load(string? file)
     {
+        ChartFaults.Clear();
         var list = new List<Airfield> { Kutaisi() };
         if (file == null || !File.Exists(file)) return list;
         string? name = null;
@@ -422,7 +504,19 @@ public class Airfield
         void Flush()
         {
             if (name == "Kutaisi") list[0].Spots = spots.ToList();
-            else if (name != null && rw.Count > 0) { var f = FromDcs(name, ax, az, el, rw).ApplyChart(); f.Id = id; f.Side = side; f.Spots = spots.ToList(); list.Add(f); }
+            else if (name != null && rw.Count > 0)
+            {
+                Airfield f;
+                // (#48, LtJaeger) a faulty chart entry that only shows with the runways (land_rwy not on this airfield) must not end the program
+                try { f = FromDcs(name, ax, az, el, rw).ApplyChart(); }
+                catch (Exception e)
+                {
+                    // ponytail: the airfield then has no procedures at all, also not the built-in Caucasus ones; fall back to the built-in entry if that ever matters
+                    ChartFaults.Add((name, e.Message));
+                    f = FromDcs(name, ax, az, el, rw);
+                }
+                f.Id = id; f.Side = side; f.Spots = spots.ToList(); list.Add(f);
+            }
             spots.Clear();
             rw.Clear();
         }

@@ -20,10 +20,10 @@ public sealed class Rollnetz
         }
     }
 
-    /// Corridor from start to goal (positions within `near` m of a node; stand and holding point need not be exact nodes). Edges for which skip(x, z) holds at both ends
-    /// are left out (runway edge: the shortest way must not lead along the runway). Detour allowance 20 % + 150 m: the corridor shall include the way the chart names, not only the shortest.
+    /// Corridor from start to goal (positions within `near` m of a node; stand and holding point need not be exact nodes). Edges for which skip(nodeA, nodeB) holds
+    /// are left out (runway edge: the shortest way must not lead along the runway, see Airfield.AlongRunway). Detour allowance 20 % + 150 m: the corridor shall include the way the chart names, not only the shortest.
     /// null: no node near start or goal, or no connection.
-    public Route? RouteTo((double X, double Z) from, (double X, double Z) to, Func<double, double, bool> skip, double near = 100)
+    public Route? RouteTo((double X, double Z) from, (double X, double Z) to, Func<(double X, double Z), (double X, double Z), bool> skip, double near = 100)
     {
         if (Spread(from, skip, near) is not { } ds || Spread(to, skip, near) is not { } dg) return null;
         double best = Enumerable.Range(0, Nodes.Length).Min(i => ds[i] + dg[i]);
@@ -35,7 +35,7 @@ public sealed class Rollnetz
     }
 
     /// Distance of every node to p along the network (nodes within `near` of p start with their straight distance); null: no node near p.
-    public double[]? Spread((double X, double Z) p, Func<double, double, bool> skip, double near = 100)
+    public double[]? Spread((double X, double Z) p, Func<(double X, double Z), (double X, double Z), bool> skip, double near = 100)
     {
         var d = Enumerable.Repeat(double.MaxValue, Nodes.Length).ToArray();
         bool any = false;
@@ -54,7 +54,7 @@ public sealed class Rollnetz
     }
 
     /// Shortest way along the network from `from` to `to` (dg = Spread(to)): ordered points from the best node near `from`, ending at `to`; null: no node near `from` or no connection.
-    public List<(double X, double Z)>? PathTo((double X, double Z) from, (double X, double Z) to, double[] dg, Func<double, double, bool> skip, double near = 100)
+    public List<(double X, double Z)>? PathTo((double X, double Z) from, (double X, double Z) to, double[] dg, Func<(double X, double Z), (double X, double Z), bool> skip, double near = 100)
     {
         // start on the nearest edge, not the nearest node: nodes can lie several hundred meters apart on long taxiways
         int cur = -1;
@@ -93,15 +93,14 @@ public sealed class Rollnetz
         return pts;
     }
 
-    bool Skipped((int A, int B, (double X, double Z)[] Poly, double Len) e, Func<double, double, bool> skip) =>
-        skip(Nodes[e.A].X, Nodes[e.A].Z) && skip(Nodes[e.B].X, Nodes[e.B].Z);
+    bool Skipped((int A, int B, (double X, double Z)[] Poly, double Len) e, Func<(double X, double Z), (double X, double Z), bool> skip) => skip(Nodes[e.A], Nodes[e.B]);
 
     /// Tolerance chart holding point to the nearest taxi edge: taxiway half width up to 25 m (code E) plus 15 m for reading the position from the map. Measured on 21 airfields:
     /// 17 of 42 holds lie within 30 m, all others beyond 63 m, so every value between 30 and 60 m gives the same result.
     public const double HoldTol = 40;
 
     /// Distance from a point to the nearest edge (edges inside the skip area do not count).
-    public double EdgeDist(double x, double z, Func<double, double, bool> skip) =>
+    public double EdgeDist(double x, double z, Func<(double X, double Z), (double X, double Z), bool> skip) =>
         Edges.Where(e => !Skipped(e, skip)).SelectMany(e => e.Poly.Zip(e.Poly.Skip(1), (p, q) => Tower.SegDist(x, z, p, q))).DefaultIfEmpty(double.MaxValue).Min();
 
     /// Assigns every charted airfield its network: found by the stands (P lines) and runway ends against the nodes, not by file name (the names differ: Nalchick, TbilisiMilitary).
@@ -136,7 +135,7 @@ public sealed class Rollnetz
         {
             if (D(p + 24) != 1.0 || D(p - 8) != 0.0 || D(p - 24) != 0.0 || Math.Abs(D(p - 56) - 1.0) > 1e-9) continue;
             double s = D(p - 32), c = D(p - 16), x = D(p), y = D(p + 8), z = D(p + 16);
-            if (Math.Abs(s * s + c * c - 1) > 1e-3 || !(Math.Abs(x) > 1e3 && Math.Abs(z) > 1e3 && Math.Abs(y) < 1e5)) continue;
+            if (Math.Abs(s * s + c * c - 1) > 1e-3 || !(Math.Abs(x) + Math.Abs(z) > 1 && Math.Abs(y) < 1e5)) continue;
             if (Math.Abs(D(p - 96) - c) > 1e-6 || Math.Abs(D(p - 80) + s) > 1e-6) continue;
             if (nodes.Count > 0 && (Math.Abs(x - nodes[0].X) > 50000 || Math.Abs(z - nodes[0].Z) > 50000)) continue;
             if (nodes.Count == 0) firstNode = p;
@@ -145,16 +144,19 @@ public sealed class Rollnetz
         }
         if (nodes.Count < 2) return null;
         // Edges lie before the first node. Header directly before the point array: u16 class, u32 a, u32 b, u32 0, u32 n, then n * (x, y, z) as double
-        bool Near(int o) => o + 24 <= b.Length && Math.Abs(D(o) - nodes[0].X) < 20000 && Math.Abs(D(o + 16) - nodes[0].Z) < 20000 && Math.Abs(D(o + 8)) < 1e5;
+        bool Near(int o) => o + 24 <= b.Length && Math.Abs(D(o) - nodes[0].X) < 20000 && Math.Abs(D(o + 16) - nodes[0].Z) < 20000 && Math.Abs(D(o + 8)) < 1e5 && Math.Abs(D(o)) + Math.Abs(D(o + 16)) > 1;   // #60: zero-filled blocks are (0,0) points, "near" for fields close to the origin (Andersen)
         var edges = new List<(int, int, (double, double)[], double)>();
         for (int p = 24; p < firstNode - 24; p++)
         {
             uint n = U(p - 4);
             if (n < 2 || n > 200 || p + 24 * (int)n > firstNode || !Near(p)) continue;
-            int a = (int)U(p - 16), bb = (int)U(p - 12);
-            if (a >= nodes.Count || bb >= nodes.Count || !Enumerable.Range(1, (int)n - 1).All(k => Near(p + 24 * k))) continue;
+            uint a = U(p - 16), bb = U(p - 12);   // unsigned: >= 0x80000000 as int is negative and would pass the range check
+            if (a >= (uint)nodes.Count || bb >= (uint)nodes.Count || !Enumerable.Range(1, (int)n - 1).All(k => Near(p + 24 * k))) continue;
             var poly = Enumerable.Range(0, (int)n).Select(k => (D(p + 24 * k), D(p + 24 * k + 16))).ToArray();
-            edges.Add((a, bb, poly, Enumerable.Range(1, poly.Length - 1).Sum(k => Tower.Dist(poly[k - 1].Item1, poly[k - 1].Item2, poly[k].Item1, poly[k].Item2))));
+            double len = Enumerable.Range(1, poly.Length - 1).Sum(k => Tower.Dist(poly[k - 1].Item1, poly[k - 1].Item2, poly[k].Item1, poly[k].Item2));
+            double nd = Tower.Dist(nodes[(int)a].X, nodes[(int)a].Z, nodes[(int)bb].X, nodes[(int)bb].Z);
+            if (len < 0.5 * nd && nd > 20) { p += 24 * (int)n - 1; continue; }   // issue #62: a polyline cannot be shorter than the straight line between its end nodes: misread, would act as a shortcut (tiny mismatches stay)
+            edges.Add(((int)a, (int)bb, poly, len));
             p += 24 * (int)n - 1;
         }
         return edges.Count == 0 ? null : new Rollnetz { Nodes = nodes.ToArray(), Edges = edges.ToArray() };

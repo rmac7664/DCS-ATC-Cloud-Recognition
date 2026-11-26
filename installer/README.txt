@@ -1,4 +1,4 @@
-DCS-ATC 0.20.1 ALPHA – talking air traffic control for DCS World (all maps, tested on Caucasus)
+DCS-ATC 0.23.29 ALPHA – talking air traffic control for DCS World (all maps, tested on Caucasus)
 ========================================================================
 
 !! ALPHA VERSION !!
@@ -20,7 +20,8 @@ Requirements
   - SRS (DCS-SimpleRadio-Standalone) in the default folder C:\Program Files\DCS-SimpleRadio-Standalone.
     DCS-ATC starts the SRS server and client itself (different folder: "SrsPath" in the settings).
     An SRS client that is not yet connected is connected to the local SRS server automatically
-    (via SRS's own auto-connect; to turn it off: "SrsAutoConnect": false in config.jsonc).
+    (via SRS's own auto-connect; to turn it off: "SrsAutoConnect": false in config.jsonc;
+    to stop DCS-ATC from starting SRS at all: "SrsStart": false).
   - Microphone; radio calls are in English
   - approx. 1.2 GB disk space. Speech recognition runs on a dedicated graphics card (under 1 second
     per radio call, about 1 GB video memory), otherwise on the CPU (a few seconds per radio call).
@@ -43,7 +44,7 @@ Usage
      The radio wheel shows the frequency of the current airfield. Also: ATIS 263.5 · AWACS 251.5 · Tanker 255.5 · JTAC 133.5
   3. Talk: SRS push-to-talk on the frequency, in English, e.g.
        "Kutaisi Ground, Enfield 1-1, request startup"  ·  "Overlord, Enfield 1-1, request picture"
-     Or without talking: radio wheel with the ' (apostrophe) key or F10 menu -> ATC.
+     Or without talking: radio wheel with the ' (apostrophe) key or F10 menu -> DCS-ATC.
      Radio menu: 1–9 to select, Enter = suggested radio call, Backspace back, Esc close.
      While the radio wheel is open, Print Screen saves a screenshot with the wheel to Pictures\DCS-ATC.
      In VR the radio wheel is shown as text in the game (Settings -> "Radio wheel in game (VR)").
@@ -59,7 +60,7 @@ Usage
   After landing, Ground guides you back to your start position with direction and distance.
 
 Settings
-  In the game: F10 -> ATC -> Settings (ground crew).
+  In the game: F10 -> DCS-ATC -> Settings (ground crew).
   Default for all missions: Saved Games\DCS\Scripts\DcsAtc\DcsAtcOptions.lua
   Callsign, volume, radio, radio wheel, language: Start menu -> DCS-ATC -> Settings (window, applies immediately)
   Voices, frequencies and everything else: "All options (config.jsonc)" in the settings window
@@ -107,6 +108,9 @@ Known limitations
   - Detailed arrival and departure procedures only for Kutaisi; all other airfields generic (runways, altitude, terrain from DCS).
   - Multiplayer only if you host the mission.
   - Speech recognition does not understand everything – if in doubt, use the radio wheel or F10 menu.
+
+Support
+  DCS-ATC is free and will always stay free. If you want to support it anyway: https://ko-fi.com/christianwagner
 
 Licenses
   DCS-ATC: GNU GPL 3.0 (LICENSE.txt), source code: https://github.com/Iceman1991/DCS-ATC-Release

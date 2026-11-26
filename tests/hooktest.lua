@@ -1,101 +1,108 @@
--- DcsAtcHook.lua wingman commands against the real DCS radio menus (F-16C, FA-18C, Su-25T = LockOnAirplane, TF-51D = FighterWWII).
--- luae.exe tests\hooktest.lua mod\Scripts\Hooks\DcsAtcHook.lua "C:\Program Files\Eagle Dynamics\DCS World"
-local hook, dcs = arg[1], arg[2]
-local tmp = os.getenv('TEMP') .. '\\DcsAtcHookTest'
-os.execute('mkdir "' .. tmp .. '" 2>nul')
+-- DcsAtcHook.lua, radio wheel window (#30): show.txt -> window created once, picture and size set, hidden when show.txt is gone; a GUI error switches it off.
+-- luae.exe tests\hooktest.lua mod\Scripts\Hooks\DcsAtcHook.lua
+local hook = arg[1]
+local tmp = os.getenv('TEMP') .. '\\DcsAtcHookTest2'
+local dir = tmp .. '\\DcsAtc-Wheel'
+os.execute('mkdir "' .. dir .. '" 2>nul')
 local getenv, clock = os.getenv, 0
 os.getenv = function(k) if k == 'TMP' or k == 'TEMP' then return tmp end return getenv(k) end
 os.clock = function() clock = clock + 1 return clock end
-local cb
-lfs = { mkdir = function(d) os.execute('mkdir "' .. d .. '" 2>nul') end, attributes = function() return nil end, writedir = function() return tmp .. '\\' end, currentdir = function() return dcs end,
-        dir = function() return function() end end }
+lfs = { mkdir = function() end, attributes = function() return nil end, writedir = function() return tmp .. '\\' end, currentdir = function() return tmp end, dir = function() return function() end end }
 package.loaded.lfs = lfs
-net = { log = function() end }
-DCS = { setUserCallbacks = function(c) cb = c end, isServer = function() return false end, isMultiplayer = function() return false end }
-Message = setmetatable({}, { __index = function(t, k) return k:match('^wMsgLeader') and k or nil end })   -- ids = names; unknown names nil
+local logs = {}
+net = { log = function(s) logs[#logs + 1] = s end }
+local cb
+DCS = { setUserCallbacks = function(c) cb = c end, isServer = function() return true end }
+local spawned, fail = 0, false
+local win = { visible = false, pic = { skin = { skinData = { states = { released = { {} } } } } } }
+function win:setHasCursor(v) self.cursor = v end
+function win:setVisible(v) self.visible = v end
+function win:setBounds(x, y, w, h) self.bounds = { x, y, w, h } end
+function win.pic:getSkin() return self.skin end
+function win.pic:setSkin(s) self.set = s.skinData.states.released[1].picture end
+function win.pic:setBounds(x, y, w, h) self.bounds = { x, y, w, h } end
+package.loaded.DialogLoader = { spawnDialogFromFile = function(f) if fail then error('no gui') end spawned = spawned + 1 assert(loadfile(f)) return win end }
+package.loaded.dxgui = { GetScreenSize = function() return 1920, 1080 end }
+package.loaded.SkinUtils = { setStaticPicture = function(file, skin) skin.skinData.states.released[1].picture = { file = file } return skin end }
 dofile(hook)
+local function show(s) local h = assert(io.open(dir .. '\\show.txt', 'w')) h:write(s) h:close() end
+local function check(ok, what) if not ok then print('FAIL ' .. what) os.exit(1) end end
 
-local fails, sent, tuned = 0, {}, nil
-local function check(ok, what) print((ok and 'OK   ' or 'FAIL ') .. what) if not ok then fails = fails + 1 end end
+os.remove(dir .. '\\show.txt')
+cb.onSimulationFrame()
+check(spawned == 0 and not win.visible, 'ohne show.txt kein Fenster')
+show('0123456789abcdef.png|0.50')
+cb.onSimulationFrame()
+local p = win.pic.set
+check(spawned == 1 and win.visible and win.cursor == false and p and p.file == dir .. '\\0123456789abcdef.png' and p.size.horz == 540 and p.size.vert == 540, 'Bild und Groesse gesetzt')
+check(win.bounds[1] == 690 and win.bounds[2] == 270 and win.bounds[3] == 540 and win.pic.bounds[3] == 540, 'Fenster mittig 540 px')
+show('fedcba9876543210.png|0.50')
+cb.onSimulationFrame()
+check(spawned == 1 and win.pic.set.file == dir .. '\\fedcba9876543210.png', 'neues Bild, selbes Fenster')
+show('..\\evil.png|0.50')
+cb.onSimulationFrame()
+check(win.pic.set.file == dir .. '\\fedcba9876543210.png', 'fremder Pfad in show.txt ignoriert')
+os.remove(dir .. '\\show.txt')
+cb.onSimulationFrame()
+check(not win.visible, 'show.txt weg -> versteckt')
 
--- Menu config of a module in a stub of the RadioCommandDialogsPanel environment, wingmen present: 2..units
-local function load(file, units, ...)
-  local group = { getUnit = function(_, i) return i <= units and { getCommunicator = function() return 'comm' .. i end } or nil end }
-  local data = { menus = { ['Ground Crew'] = { items = {} } }, showingOnlyPresentRecepients = true, menuOther = { submenu = { items = {} } }, menuEmbarkToTransport = { submenu = { items = {} } },
-                 pUnit = { isExist = function() return true end, getGroup = function() return group end } }
-  local sm = {}
-  sm.__index = sm
-  function sm.perform(self, p)
-    local all = {}
-    for _, v in ipairs(p) do all[#all + 1] = tostring(v) end
-    for _, v in ipairs(self.parameters or {}) do all[#all + 1] = tostring(v) end
-    sent[#sent + 1] = self.command .. '(' .. table.concat(all, ',') .. ')'
-  end
-  local env = setmetatable({ data = data, _ = function(s) return s end, Message = Message, Airbase = { Category = { AIRDROME = 0, SHIP = 2 } },
-    sendMessage = { new = function(c, ...) return setmetatable({ command = c, parameters = { ... } }, sm) end, new2 = function() return setmetatable({}, sm) end, new3 = function(c) return setmetatable({ command = c }, sm) end },
-    staticParamsEvent = function() return { perform = function() end } end, getRecepientColor = function() end, selectAndTuneCommunicator = function(c) tuned = c end,
-    db = { Formations = {}, FormationID = setmetatable({}, { __index = function() return 1 end }) },
-    utils = { verifyChunk = function(f) return f end } }, { __index = _G })
-  env.utils.loadfileIn = function(path, e)   -- module config -> LockOnAirplane/FighterWWII for real, Common (ATC, Tanker …) left out
-    if path:find('/Common/') then return function() end end
-    return setfenv(assert(loadfile(dcs .. '\\' .. path)), e)
-  end
-  local chunk = assert(loadfile(dcs .. '\\' .. file))
-  setfenv(chunk, env)(...)
-  package.loaded.RadioCommandDialogsPanel = { getDataParameter = function(k) return data[k] end }
-end
+-- no GUI (dedicated server): one log line, then quiet
+dofile(hook)
+fail = true
+show('0123456789abcdef.png|0.50')
+local n = #logs
+cb.onSimulationFrame() cb.onSimulationFrame()
+show('fedcba9876543210.png|0.50')
+cb.onSimulationFrame()
+os.remove(dir .. '\\show.txt')
+local off = 0
+for i = n + 1, #logs do if logs[i]:find('abgeschaltet') then off = off + 1 end end
+check(off == 1, 'GUI-Fehler schaltet das Rad-Fenster einmal ab (' .. off .. ')')
+print('OK   #30 Hook Rad-Fenster: anlegen, Bild/Groesse, wechseln, verstecken, fremder Pfad, GUI-Fehler')
 
-local function wing(cmd)
-  sent, tuned = {}, nil
-  local f = io.open(tmp .. '\\DcsAtc-Wing.txt', 'w') f:write(cmd) f:close()
-  cb.onSimulationFrame()
-  local res
-  local p = io.popen('dir /b "' .. tmp .. '\\DcsAtc-Menu\\*.evt" 2>nul')
-  for name in p:lines() do
-    local h = io.open(tmp .. '\\DcsAtc-Menu\\' .. name) res = h:read('*a') h:close()
-    os.remove(tmp .. '\\DcsAtc-Menu\\' .. name)
-  end
-  p:close()
-  return (res or 'nothing'):match('^WING;([^;]*)'), table.concat(sent, ' '), tuned
-end
+-- Version check in multiplayer: server names its version once per player and mission; client compares, hints, reports "ATC>~version"
+local sdir = tmp .. '\\Scripts\\DcsAtc'
+os.execute('mkdir "' .. sdir .. '" 2>nul')
+local function put(name, text) local f = assert(io.open(sdir .. '\\' .. name, 'w')) if text then f:write(text) end f:close() if not text then os.remove(sdir .. '\\' .. name) end end
+local isServer, sent, chatTo, shown, showFail, serverId = true, {}, {}, {}, false, 1
+DCS.isServer = function() return isServer end
+DCS.isMultiplayer = function() return true end
+net.get_my_player_id = function() return isServer and 1 or 7 end
+net.get_server_id = function() return serverId end
+net.send_chat_to = function(t, id) chatTo[#chatTo + 1] = { t, id } end
+net.send_chat = function(t, all) sent[#sent + 1] = t end
+net.recv_chat = function(t) if showFail then error('no chat') end shown[#shown + 1] = t end
+local LINE = 'This server runs DCS-ATC 0.23.20-alpha. Talk to its controllers over SRS. If you have DCS-ATC installed, use the same version.'
+local function reset() chatTo, sent, shown = {}, {}, {} end
 
-local r, s, t = wing('1;wMsgLeaderJoinUp')
-check(r == 'no radio menu' and s == '', 'ohne Funkmenue: ' .. tostring(r))
+dofile(hook)
+put('DcsAtcVersion.txt', '0.23.20-alpha')
+cb.onPlayerChangeSlot(2) cb.onPlayerChangeSlot(2) cb.onPlayerChangeSlot(3) cb.onPlayerChangeSlot(1)
+check(#chatTo == 2 and chatTo[1][1] == LINE and chatTo[1][2] == 2 and chatTo[2][2] == 3, 'Server nennt Version je Spieler einmal, nicht sich selbst (' .. #chatTo .. ')')
+cb.onSimulationStop() cb.onPlayerChangeSlot(2)
+check(#chatTo == 3, 'neue Mission, neuer Hinweis')
+reset() put('DcsAtcVersion.txt', nil) cb.onSimulationStop() cb.onPlayerChangeSlot(5)
+check(#chatTo == 0, 'ohne Versionsdatei nichts gesendet')
 
-load('Mods\\aircraft\\F-16C\\comm.lua', 4)
-r, s, t = wing('1;wMsgLeaderJoinUp')
-check(r == 'ok' and s == 'wMsgLeaderJoinUp(1)' and t == 'comm2', 'F-16C Two rejoin -> ' .. tostring(r) .. ' ' .. s .. ' ' .. tostring(t))
-r, s = wing('5;wMsgLeaderGoTrail')
-check(r == 'ok' and s == 'wMsgLeaderGoTrail(5)', 'F-16C Flight go trail (Formation per getSubmenu) -> ' .. tostring(r) .. ' ' .. s)
-r, s = wing('5;wMsgLeaderEngageBandits')
-check(r == 'ok' and s == 'wMsgLeaderEngageBandits(5,false,false)', 'F-16C Flight engage bandits mit Menue-Parametern -> ' .. tostring(r) .. ' ' .. s)
-r, s = wing('1;wMsgLeaderGoTrail')
-check(r and r:find('not in the radio menu') and s == '', 'F-16C Two go trail (Wingman ohne Formationsmenue) -> ' .. tostring(r))
-r = wing('1;wMsgNoSuch')
-check(r and r:find('unknown message'), 'unbekannte Nachricht -> ' .. tostring(r))
-r, s = wing('3;wMsgLeaderJoinUp')
-check(r and r:find('not in the radio menu') and s == '', 'F-16C Four im Vierer (DCS listet Wingman 4 nicht) -> ' .. tostring(r))
-
-load('Mods\\aircraft\\F-16C\\comm.lua', 2)
-r, s, t = wing('1;wMsgLeaderGoTrail')
-check(r == 'ok' and s == 'wMsgLeaderGoTrail(5)' and t == 'comm2', 'F-16C Zweier: Two go trail ueber Flight -> ' .. tostring(r) .. ' ' .. s)
-
-load('Mods\\aircraft\\FA-18C\\comm.lua', 2)
-r, s = wing('1;wMsgLeaderCoverMe')
-check(r == 'ok' and s == 'wMsgLeaderCoverMe(5)', 'FA-18C Zweier: Two cover me ueber Flight -> ' .. tostring(r) .. ' ' .. s)
-r, s = wing('2;wMsgLeaderJoinUp')
-check(r and r:find('not in the radio menu') and s == '', 'FA-18C Three ohne Nummer 3 in der Gruppe -> ' .. tostring(r))
-
-load('Mods\\aircraft\\Su-25T\\comm.lua', 4)
-r, s, t = wing('2;wMsgLeaderJoinUp')
-check(r == 'ok' and s == 'wMsgLeaderJoinUp(2)' and t == 'comm3', 'Su-25T Three rejoin -> ' .. tostring(r) .. ' ' .. s .. ' ' .. tostring(t))
-r, s = wing('5;wMsgLeaderEchelonRight')
-check(r == 'ok' and s == 'wMsgLeaderEchelonRight(5)', 'Su-25T Flight echelon right (Go Formation) -> ' .. tostring(r) .. ' ' .. s)
-
-load('Mods\\aircraft\\TF-51D\\comm.lua', 2)
-r, s = wing('1;wMsgLeaderJoinUp')
-check(r == 'ok' and s:find('^wMsgLeaderJoinUp%(1'), 'TF-51D (FighterWWII) Two rejoin -> ' .. tostring(r) .. ' ' .. s)
-
-os.execute('rmdir /s /q "' .. tmp .. '" 2>nul')
-if fails > 0 then print('FAIL ' .. fails .. ' Fehler') os.exit(1) end
-print('hooktest OK')
+isServer = false
+put('DcsAtcVersion.txt', '0.23.18-alpha') put('DcsAtcLang.txt', 'en')
+cb.onChatMessage(LINE, 4) cb.onChatMessage('hello', 1)
+check(#sent == 0 and #shown == 0, 'fremde Absender/anderer Text ignoriert')
+cb.onChatMessage(LINE, 1)
+check(sent[1] == 'ATC>~version 0.23.18-alpha' and #shown == 1 and shown[1]:find('Please update') and shown[1]:find('0.23.18%-alpha') and shown[1]:find('0.23.20%-alpha'), 'aelter: Hinweis und Meldung')
+cb.onChatMessage(LINE, 1)
+check(#sent == 1 and #shown == 1, 'nur einmal pro Mission')
+reset() cb.onSimulationStop() put('DcsAtcVersion.txt', '0.23.20-alpha') cb.onChatMessage(LINE, 1)
+check(#sent == 1 and #shown == 0, 'gleiche Version: Meldung, kein Hinweis')
+reset() cb.onSimulationStop() put('DcsAtcVersion.txt', '0.24.0-alpha') put('DcsAtcLang.txt', 'de') cb.onChatMessage(LINE, 1)
+check(#shown == 1 and shown[1]:find('Funkrad') and shown[1]:find('Du hast 0.24.0'), 'neuer: deutscher Hinweis')
+reset() cb.onSimulationStop() put('DcsAtcVersion.txt', '0.23.18-alpha') showFail = true
+cb.onChatMessage(LINE, 1)
+check(#sent == 1, 'recv_chat-Fehler: Meldung trotzdem')
+showFail = false reset() cb.onSimulationStop() serverId = 9 cb.onChatMessage(LINE, 1)
+check(#sent == 0, 'Server-ID aus net.get_server_id')
+cb.onChatMessage(LINE, 9)
+check(#sent == 1, 'Server-ID 9 akzeptiert')
+reset() cb.onSimulationStop() put('DcsAtcVersion.txt', nil) cb.onChatMessage(LINE, 9)
+check(#sent == 0 and #shown == 0, 'ohne Versionsdatei nichts')
+print('OK   Mehrspieler-Versionsabgleich: Server nennt Version, Client Hinweis aelter/neuer + Meldung')

@@ -1,4 +1,4 @@
-DCS-ATC 0.20.1 ALPHA – sprechende Flugsicherung für DCS World (alle Karten, getestet im Kaukasus)
+DCS-ATC 0.23.29 ALPHA – sprechende Flugsicherung für DCS World (alle Karten, getestet im Kaukasus)
 =====================================================================
 
 !! ALPHA-VERSION !!
@@ -20,7 +20,8 @@ Voraussetzungen
   - SRS (DCS-SimpleRadio-Standalone) im Standardordner C:\Program Files\DCS-SimpleRadio-Standalone.
     DCS-ATC startet SRS-Server und -Client selbst (anderer Ordner: "SrsPath" in den Einstellungen).
     Ein noch nicht verbundener SRS-Client wird automatisch mit dem lokalen SRS-Server verbunden
-    (über die Auto-Connect-Funktion von SRS; abschalten: "SrsAutoConnect": false in config.jsonc).
+    (über die Auto-Connect-Funktion von SRS; abschalten: "SrsAutoConnect": false in config.jsonc;
+    SRS gar nicht von DCS-ATC starten lassen: "SrsStart": false).
   - Mikrofon; gefunkt wird auf Englisch
   - ca. 1,2 GB Platz. Die Spracherkennung läuft auf einer eigenen Grafikkarte (unter 1 Sekunde pro
     Funkspruch, ca. 1 GB Grafikspeicher), sonst auf der CPU (ein paar Sekunden pro Funkspruch).
@@ -44,7 +45,7 @@ Benutzung
      Das Funkrad zeigt die Frequenz des aktuellen Platzes. Dazu: ATIS 263.5 · AWACS 251.5 · Tanker 255.5 · JTAC 133.5
   3. Sprechen: SRS-Sprechtaste auf der Frequenz, englisch, z. B.
        "Kutaisi Ground, Enfield 1-1, request startup"  ·  "Overlord, Enfield 1-1, request picture"
-     Oder ohne Sprechen: Funkrad mit Taste ' (Apostroph) bzw. F10-Menü -> ATC.
+     Oder ohne Sprechen: Funkrad mit Taste ' (Apostroph) bzw. F10-Menü -> DCS-ATC.
      Funkrad: 1–9 wählen, Enter = vorgeschlagener Funkspruch, Rücktaste zurück, Esc zu.
      Bei offenem Funkrad speichert die Druck-Taste einen Screenshot mit Rad unter Bilder\DCS-ATC.
      In VR wird das Funkrad als Text im Spiel angezeigt (Einstellungen -> "Funkrad im Spiel (VR)").
@@ -60,7 +61,7 @@ Benutzung
   Nach der Landung lotst Ground mit Richtung und Entfernung zurück zu deiner Startposition.
 
 Einstellungen
-  Im Spiel: F10 -> ATC -> Einstellungen (Bodenpersonal).
+  Im Spiel: F10 -> DCS-ATC -> Einstellungen (Bodenpersonal).
   Standard für alle Missionen: Saved Games\DCS\Scripts\DcsAtc\DcsAtcOptions.lua
   Rufzeichen, Lautstärke, Funk, Funkrad, Sprache: Startmenü -> DCS-ATC -> Einstellungen (Fenster, wirkt sofort)
   Stimmen, Frequenzen und alles andere: im Einstellungen-Fenster "Alle Optionen (config.jsonc)"
@@ -109,6 +110,9 @@ Bekannte Grenzen
   - Genaue An- und Abflugverfahren nur für Kutaisi; alle anderen Plätze generisch (Bahnen, Höhe, Gelände aus DCS).
   - Mehrspieler nur, wenn du die Mission hostest.
   - Die Spracherkennung versteht nicht alles – im Zweifel Funkrad oder F10-Menü.
+
+Unterstützen
+  DCS-ATC ist kostenlos und bleibt es. Wer es trotzdem unterstützen möchte: https://ko-fi.com/christianwagner
 
 Lizenzen
   DCS-ATC: GNU GPL 3.0 (LICENSE.txt), Quellcode: https://github.com/Iceman1991/DCS-ATC-Release

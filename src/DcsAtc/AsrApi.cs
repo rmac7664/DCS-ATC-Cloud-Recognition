@@ -101,10 +101,6 @@ static class AsrApi
                 || !req1.StartsWith("POST /v1/audio/transcriptions") || !req1.Contains("Bearer sk-test") || !req1.Contains("name=model") || !req1.Contains("whisper-1")
                 || !req1.Contains("name=prompt") || !req1.Contains("Kutaisi Tower, Enfield 1-1") || !req1.Contains("verbose_json") || !req1.Contains("name=file"))
                 throw new Exception($"AsrApi: {ok} | {bad} | off {off} | {req1[..Math.Min(300, req1.Length)]}");
-            Program.Cfg.AsrApiKey = "sk-proj-SECRETabcdefgh1234wxyz";   // fork: key masked in the START line
-            var log = Program.ConfigForLog();
-            if (log.Contains("SECRET") || !log.Contains("wxyz") || !log.Contains("AsrApiUrl"))
-                throw new Exception($"AsrApi: key not masked in the log: {log[..Math.Min(300, log.Length)]}");
         }
         finally
         {

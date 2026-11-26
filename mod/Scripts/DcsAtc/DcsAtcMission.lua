@@ -10,7 +10,7 @@
     DcsAtc-Menu\*.txt      F10 requests "unit|text"                 -> App
     DcsAtc-Menu\*.evt      events (C;unit;crew|back|fuel|stopped, X;shot|guns|hit|kill|eject|pitbull|maddog|trashed;… AI radio, R/H/K range)  -> app
     DcsAtc-Menu\*.out      Controller texts "gid|sec|text" (0 = all)   <- App (old: "gid|text")
-    DcsAtc-Menu\*.cmd      Commands START/WAIT/RESUME, WHEEL;unit;text (VR radio wheel)   <- App
+    DcsAtc-Menu\*.cmd      Commands START/WAIT/RESUME, WHEEL;unit;text (VR radio wheel), DRAW;… (F10 map)   <- App
 
   Plus: AI traffic at the airfields near the players, ground crew with fuel/ammo trucks and fire brigade,
   tanker and AWACS (if the mission has none), cleanup of wrecks.
@@ -26,6 +26,7 @@ DCSATC = { ai = {} }   -- ai[groupName] = "dep|dep-go|arr|arr-hold:airfield"
 -- Groups with a player stay unmuted (wingman replies). Birth handler before mission start -> also the starting lineup immediately
 -- (otherwise "Overlord, on station" / "passing waypoint 1" came before the first pass); plus every 0.5 s in the first 10 s, then every 60 s.
 local SILENCE, NO_WP_REPORT = 7, 19
+local loud = {}   -- group name -> mission time until which the group stays audible (DCS tanker during refuelling)
 local function silenceGroup(g) pcall(function()
   local c = g:getController()
   c:setOption(SILENCE, true)
@@ -33,6 +34,7 @@ local function silenceGroup(g) pcall(function()
 end) end
 local function silenceAi(g)
   for _, u in ipairs(g:getUnits() or {}) do if u:getPlayerName() then return false end end
+  if (loud[g:getName()] or 0) > timer.getTime() then return false end
   silenceGroup(g)
   return true
 end
@@ -101,7 +103,7 @@ local function start()
     local p = t:match("^(%a+):")
     if p == "Range" then return on("range") elseif p == "AWACS" then return on("awacs") and (not t:find("tanker") or on("tanker"))
     elseif p == "Tanker" then return on("tanker") elseif p == "Carrier" then return on("carrier") elseif p == "JTAC" then return on("jtac") elseif p == "Center" then return on("center") end
-    return t == "radio check" or t == "say again" or t == "debrief" or on("atc")
+    return t == "radio check" or t == "say again" or t == "debrief" or t == "mark log" or on("atc")
   end
   local onOpt = {}   -- [name] = function() – apply immediately
 
@@ -265,7 +267,8 @@ local function start()
     { L("Allgemein", "General"), nil, {
       { "Radio check", "radio check" }, { "Say again", "say again" }, { "QNH / weather", "request weather" },
       { L("ATIS hören", "Listen to ATIS"), "atis" }, { "Request zone transit", "Approach: request zone transit" },
-      { L("Prüfflug an/aus", "Checkride on/off"), "checkride" }, { "Debriefing", "debrief" } } },
+      { L("Prüfflug an/aus", "Checkride on/off"), "checkride" },
+      { "Debriefing / Log", nil, { { "Debriefing", "debrief" }, { L("Log markieren", "Mark log"), "mark log" } } } } },   -- "mark log": time stamp in atc-log.txt for bug reports
   }
   local function prune(items)   -- modules: drop entries of deselected modules, then empty groups
     for j = #items, 1, -1 do
@@ -312,7 +315,7 @@ local function start()
     end
     missionCommands.addCommandForGroup(gid, L("Anzeigen", "Show"), m, showOpt, gid)
   end
-  local built, roots = {}, {}
+  local built, roots, subs = {}, {}, {}
   local function addItems(gid, parent, items, gname, unit, u)
     for _, c in ipairs(items) do
       local a = { gid = gid, gname = gname, unit = unit, text = c[2] }
@@ -352,16 +355,24 @@ local function start()
     if (slots[gname] or 1) <= 1 then
       if not built[gid] then
         built[gid] = true
-        addMenu(gid, missionCommands.addSubMenuForGroup(gid, "ATC"), gname, nil, u)
+        addMenu(gid, missionCommands.addSubMenuForGroup(gid, "DCS-ATC"), gname, nil, u)
       end
       return
     end
     local key = u:getName()   -- several players in a group: one submenu per player
+    for k, s in pairs(subs) do   -- player changed aircraft: group menus are shared, so drop the submenu of a unit that has no player any more (forum Killg0re NL)
+      if s.gid == gid and k ~= key then
+        local o = Unit.getByName(k)
+        if not (o and o:isExist() and o:getPlayerName()) then missionCommands.removeItemForGroup(gid, s.path); subs[k], built[k] = nil, nil end
+      end
+    end
     if built[key] then return end
     built[key] = true
-    if not roots[gid] then roots[gid] = missionCommands.addSubMenuForGroup(gid, "ATC"); if on("crew") then optMenu(gid, roots[gid]) end end
+    if not roots[gid] then roots[gid] = missionCommands.addSubMenuForGroup(gid, "DCS-ATC"); if on("crew") then optMenu(gid, roots[gid]) end end
     local cs = (tostring(u:getCallsign() or key):gsub("^(%a+)(%d)(%d)$", "%1 %2-%3"))
-    addMenu(gid, missionCommands.addSubMenuForGroup(gid, cs, roots[gid]), gname, key, u)
+    local path = missionCommands.addSubMenuForGroup(gid, cs, roots[gid])
+    subs[key] = { gid = gid, path = path }
+    addMenu(gid, path, gname, key, u)
   end
 
   -- Weather, Bullseye, tanker TACAN -------------------------------------------------------------------
@@ -602,27 +613,36 @@ local function start()
     g:getController():setTask({ id = "Mission", params = { route = { points = pts } } })
   end
 
-  -- Range (A17, from KutaisiATC.lua): first trigger zone "Range…" of the mission (circle or quad: farthest corner point) -> Z line; without a zone no range controller.
+  -- Range (A17, from KutaisiATC.lua): trigger zone with the word "Range" in its name (circle or quad: farthest corner point) -> Z line; without a zone no range controller.
   -- Impacts of players' bombs/missiles/air-to-ground guided weapons in it: distance and clock position (12 = approach direction) to the nearest ground, ship or static target of the opposing side in the zone,
   -- flight time (the app checks the clearance for the drop, R58); gun hits and kills in the zone -> R/H/K events. Only measure, spawn nothing.
-  local RZ
+  -- #56: every zone with the word Range is one range (RZS, 0-based index in the events); the zone name gives name and frequency in the app ("Range 62 268.5").
+  local RZS = {}
   for _, z in ipairs(env.mission.triggers and env.mission.triggers.zones or {}) do
-    if not RZ and tostring(z.name or ""):lower():find("^range") then
+    if tostring(z.name or ""):lower():find("%f[%a]range%f[%A]") then   -- the word "range" anywhere ("Dogbone Range 268.5"), not "Orange"/"Ranger"
       local r = z.radius or 0
       for _, v in ipairs(z.verticies or {}) do r = math.max(r, math.sqrt((v.x - z.x) ^ 2 + (v.y - z.y) ^ 2)) end
-      RZ = { x = z.x, z = z.y, r = r }
+      RZS[#RZS + 1] = { x = z.x, z = z.y, r = r, name = clean(z.name) }
     end
   end
-  HAS.range = RZ ~= nil   -- R390: F10 shows Range only then
-  if RZ then
-    local function inRange(p) return (p.x - RZ.x) ^ 2 + (p.z - RZ.z) ^ 2 < (RZ.r + 1500) ^ 2 end
-    local function nearestTarget(p, side)   -- R369: ground groups, ships and static objects of the opposing side
+  HAS.range = #RZS > 0   -- R390: F10 shows Range only then
+  if #RZS > 0 then
+    local function zoneOf(p)   -- index (0-based) of the zone whose centre is nearest among those the point is in (r + 1500 m), else nil
+      local best, bd
+      for i, z in ipairs(RZS) do
+        local d = (p.x - z.x) ^ 2 + (p.z - z.z) ^ 2
+        if d < (z.r + 1500) ^ 2 and (not bd or d < bd) then best, bd = i - 1, d end
+      end
+      return best
+    end
+    local function inRange(p) return zoneOf(p) ~= nil end
+    local function nearestTarget(p, side, zi)   -- R369: ground groups, ships and static objects of the opposing side; #56: only targets in the same zone
       local best, bd = nil, 1e9
       local function scan(units)
         for _, u in ipairs(units) do
           local q = u:getPoint()
           local d = math.sqrt((p.x - q.x) ^ 2 + (p.z - q.z) ^ 2)
-          if d < bd and inRange(q) then best, bd = u, d end
+          if d < bd and zoneOf(q) == zi then best, bd = u, d end
         end
       end
       for _, cat in ipairs({ Group.Category.GROUND, Group.Category.SHIP }) do
@@ -639,12 +659,13 @@ local function start()
         local ip = last
         local sp = math.sqrt(vel.x ^ 2 + vel.y ^ 2 + vel.z ^ 2)
         if sp > 1 then ip = land.getIP(last, { x = vel.x / sp, y = vel.y / sp, z = vel.z / sp }, sp * 0.1 + 30) or last end
-        if not inRange(ip) then return end
-        local tgt, d = nearestTarget(ip, side)
-        if not tgt or d > 500 then evt(string.format("R;%s;%s;-1;0;;%.1f", unit, wname, t - t0)) return end
+        local zi = zoneOf(ip)
+        if not zi then return end
+        local tgt, d = nearestTarget(ip, side, zi)
+        if not tgt or d > 500 then evt(string.format("R;%s;%s;-1;0;;%.1f;%d", unit, wname, t - t0, zi)) return end
         local q = tgt:getPoint()
         local clock = math.floor(((math.deg(math.atan2(ip.z - q.z, ip.x - q.x)) - hdg) % 360) / 30 + 0.5) % 12
-        evt(string.format("R;%s;%s;%.0f;%d;%s;%.1f", unit, wname, d, clock == 0 and 12 or clock, clean(tgt:getTypeName()), t - t0))
+        evt(string.format("R;%s;%s;%.0f;%d;%s;%.1f;%d", unit, wname, d, clock == 0 and 12 or clock, clean(tgt:getTypeName()), t - t0, zi))
       end, nil, timer.getTime() + 0.05)
     end
     world.addEventHandler({ onEvent = function(_, e) pcall(function()
@@ -658,11 +679,11 @@ local function start()
           track(e.weapon, clean(u:getName()), math.deg(math.atan2(pos.x.z, pos.x.x)), u:getCoalition())
         end
       elseif e.id == E.S_EVENT_HIT and e.target and e.target.getPoint and inRange(e.target:getPoint()) and e.weapon and (e.weapon:getDesc() or {}).category == Weapon.Category.SHELL then
-        evt(string.format("H;%s;%s", clean(u:getName()), clean(e.target:getTypeName())))
+        evt(string.format("H;%s;%s;%d", clean(u:getName()), clean(e.target:getTypeName()), zoneOf(e.target:getPoint())))
       elseif e.id == E.S_EVENT_KILL and e.target and e.target.getPoint and inRange(e.target:getPoint()) then
         local tc = 0   -- R369: coalition of the destroyed object (the app scores only the opposing side)
         pcall(function() tc = e.target:getCoalition() end)
-        evt(string.format("K;%s;%s;%d", clean(u:getName()), clean(e.target:getTypeName()), tc))
+        evt(string.format("K;%s;%s;%d;%d", clean(u:getName()), clean(e.target:getTypeName()), tc, zoneOf(e.target:getPoint())))
       end
     end) end })
   end
@@ -688,7 +709,7 @@ local function start()
       if b then W[#W + 1] = string.format("B;%.0f;%.0f;%d", b.x, b.y, n) end
     end
     for _, k in ipairs(beacons) do W[#W + 1] = k end
-    if RZ then W[#W + 1] = string.format("Z;%.0f;%.0f;%.0f", RZ.x, RZ.z, RZ.r) end   -- Range (A17)
+    for _, z in ipairs(RZS or {}) do W[#W + 1] = string.format("Z;%.0f;%.0f;%.0f;%s", z.x, z.z, z.r, z.name) end   -- Range (A17); #56: one line per zone with its name
     if not LL or #LL == 0 then   -- FI2: lat/lon grid 7x7 over the airfields +-150 km for the SRS transmitter positions (coord.LOtoLL once, the app interpolates)
       LL = {}
       local x0, x1, z0, z1 = math.huge, -math.huge, math.huge, -math.huge
@@ -1128,7 +1149,8 @@ local function start()
   -- Ground crew ------------------------------------------------------------------------------------------
   -- When an aircraft stands at a parking spot for 10 s: crew chief front left, fire watch front right. After a landing
   -- fuel and ammunition trucks drive up from the next free parking spot (4 min, scenery only – refueling/arming continues via F8).
-  -- When it starts rolling: soldiers step back, trucks drive away, then all disappear. Crash/crash landing: fire brigade.
+  -- When it starts rolling: each soldier (own group) walks 15 m sideways away from the centreline, trucks stay, then all disappear.
+  -- Trucks leave after their turn by driving 40 m sideways outward (never across the aircraft). Crash/crash landing: fire brigade.
   local GC = {
     [2] = { soldier = "Soldier M4", fuel = "M978 HEMTT Tanker", ammo = "M 818", fire = "HEMTT TFFT" },
     [1] = { soldier = "Infantry AK", fuel = "ATZ-10", ammo = "KAMAZ Truck", fire = "Ural ATsP-6" },
@@ -1153,6 +1175,11 @@ local function start()
   local function drive(name, from, to, speed)
     local g = Group.getByName(name)
     if g then g:getController():setTask({ id = "Mission", params = { route = { points = { wp(from, speed), wp(to, speed) } } } }) end
+  end
+  -- walk/drive from p 'dist' m sideways (aircraft lateral axis pos.z) away from the centreline on p's own side
+  local function sideStep(pos, p, dist)
+    local s = ((p.x - pos.p.x) * pos.z.x + (p.z - pos.p.z) * pos.z.z) < 0 and -1 or 1
+    return { x = p.x + pos.z.x * s * dist, z = p.z + pos.z.z * s * dist }
   end
   local function kill(names) for _, nm in ipairs(names) do local g = Group.getByName(nm) if g then g:destroy() end end end
   local function clear(c) kill(c.soldiers); for _, t in ipairs(c.trucks) do kill({ t.name }) end end
@@ -1217,27 +1244,29 @@ local function start()
             local types = GC[side] or GC[2]
             if not c and spd < 0.5 then
               local atSpot = false
-              for _, s in ipairs(f.spots) do if d2(s, pos.p) < 30 ^ 2 then atSpot = true break end end
+              -- #26: Term_Type 16 = spawn point on the runway (takeoff from runway), no crew there: the soldiers stood in front of the wing
+              for _, s in ipairs(f.spots) do if s.t ~= 16 and d2(s, pos.p) < 30 ^ 2 then atSpot = true break end end
               still[name] = atSpot and (still[name] or now) or nil
               if atSpot and now - still[name] >= 10 then   -- 10 s standstill: parked, not just briefly stopped
                 still[name] = nil
                 local b = u:getDesc().box or { max = { x = 8, z = 5 }, min = { x = -8 } }
                 local cc, fg = rel(pos, b.max.x + 5, -b.max.z * 0.7), rel(pos, b.max.x * 0.4, b.max.z + 5)
                 local function face(q) return math.atan2(pos.p.z - q.z, pos.p.x - q.x) end
-                c = { soldiers = { spawnGround(u:getCountry(), { { type = types.soldier, x = cc.x, z = cc.z, hdg = face(cc) },
-                                                                 { type = types.soldier, x = fg.x, z = fg.z, hdg = face(fg) } }) },
+                c = { soldiers = { spawnGround(u:getCountry(), { { type = types.soldier, x = cc.x, z = cc.z, hdg = face(cc) } }),
+                                   spawnGround(u:getCountry(), { { type = types.soldier, x = fg.x, z = fg.z, hdg = face(fg) } }) },
                       trucks = {}, box = b, ctry = u:getCountry(), types = types, field = f, player = u:getPlayerName() ~= nil }
                 if landed[name] then c.trucksAt = now + 20 end
                 if c.player then evt("C;" .. clean(name) .. (landed[name] and ";back" or ";crew")) end
                 landed[name] = nil
                 crew[name] = c
               end
-            elseif c and not c.leaving and spd > 1.5 then
-              c.leaving = now   -- starts rolling
-              local s = Group.getByName(c.soldiers[1])
-              local q = s and s:getUnit(1) and s:getUnit(1):getPoint()
-              if q then drive(c.soldiers[1], q, { x = q.x + (q.x - pos.p.x), z = q.z + (q.z - pos.p.z) }, 3) end
-              for _, t in ipairs(c.trucks) do drive(t.name, t.at, t.home, 8) end
+            elseif c and not c.leaving and spd > 0.7 then
+              c.leaving = now   -- starts rolling: soldiers step aside (sideways, not along the taxi path), trucks stay until clear() removes them
+              for _, nm in ipairs(c.soldiers) do
+                local s = Group.getByName(nm)
+                local q = s and s:getUnit(1) and s:getUnit(1):getPoint()
+                if q then drive(nm, q, sideStep(pos, q, 15), 3) end
+              end
             elseif c and not c.leaving and c.trucksAt and now >= c.trucksAt and #c.trucks == 0 then
               if taxiingNear(pos.p, 200) then
                 c.trucksAt = now + 10   -- drive only when nobody is taxiing here
@@ -1253,7 +1282,7 @@ local function start()
               end
             elseif c and not c.leaving and c.doneAt and now >= c.doneAt then
               c.doneAt = nil
-              for _, t in ipairs(c.trucks) do drive(t.name, t.at, t.home, 8) end
+              for _, t in ipairs(c.trucks) do drive(t.name, t.at, sideStep(pos, t.at, 40), 8) end
               c.trucksGone = now   -- Trucks drive away silently (A37: nothing refueled, so no "done" message)
             end
           end
@@ -1352,6 +1381,19 @@ local function start()
       end
     end
   end
+  local function jAdd(name, kind, side, acc, src, cs)   -- new leader; src = leader it is a copy of (inherits callsign, frequency, code); cs = callsign of the spawned aircraft
+    local f = tonumber(acc.frequency)
+    if f and f > 1e6 then f = f / 1e6 end   -- editor stores Hz
+    local L = { name = name, kind = kind, side = side, range = kind == "faca" and 15000 or 8000,
+      cs = FACCS[tonumber(acc.callname) or 0] or FACCS[(#jLeaders % #FACCS) + 1],
+      freq = f and f > 0 and string.format("%.3f", f) or "", mod = f and f > 0 and (tonumber(acc.modulation) == 1 and "FM" or "AM") or "",
+      code = tostring(tonumber(acc.laserCode or acc.code) or "") }
+    if cs then L.cs = cs end
+    if src then L.cs, L.freq, L.mod, L.code = src.cs, src.freq, src.mod, src.code end
+    jLeaders[#jLeaders + 1] = L
+    jBy[clean(name)] = L
+    log(string.format("JTAC/FAC(A): %s %s '%s' side %d freq %s code %s", kind, L.cs, name, side, L.freq, L.code))
+  end
   if on("jtac") then pcall(function()
     for sideName, coa in pairs(env.mission.coalition or {}) do
       local side = sideName == "red" and 1 or sideName == "blue" and 2
@@ -1366,17 +1408,7 @@ local function start()
               elseif up:find("FACA") then kind = "faca"
               elseif ground then kind = (acc.has or up:find("JTAC")) and "jtac" or nil
               else kind = (acc.has or g.task == "AFAC" or up:find("JTAC")) and "faca" or nil end
-              if kind and not jBy[clean(name)] then
-                local f = tonumber(acc.frequency)
-                if f and f > 1e6 then f = f / 1e6 end   -- editor stores Hz
-                local L = { name = name, kind = kind, side = side, range = kind == "faca" and 15000 or 8000,
-                  cs = FACCS[tonumber(acc.callname) or 0] or FACCS[(#jLeaders % #FACCS) + 1],
-                  freq = f and f > 0 and string.format("%.3f", f) or "", mod = f and f > 0 and (tonumber(acc.modulation) == 1 and "FM" or "AM") or "",
-                  code = tostring(tonumber(acc.laserCode or acc.code) or "") }
-                jLeaders[#jLeaders + 1] = L
-                jBy[clean(name)] = L
-                log(string.format("JTAC/FAC(A): %s %s '%s' side %d freq %s code %s", kind, L.cs, name, side, L.freq, L.code))
-              end
+              if kind and not jBy[clean(name)] then jAdd(name, kind, side, acc) end
             end
           end
         end
@@ -1386,7 +1418,33 @@ local function start()
         if nm and n.x and n.y then jNav[#jNav + 1] = string.format("N;%d;%s;%.1f;%.1f", side, clean(nm), n.x, n.y) end   -- editor y = DCS z
       end
     end
-  end) end
+  end)
+  -- Leaders that appear during the mission (forum Killg0re NL: UAV spawned by a script). DCS gives a script no way to read the task of a
+  -- spawned group, so the name is all there is: "FACA"/"JTAC" in it, or a copy of a leader of the mission ("Reaper#001", "Reaper-1").
+  -- ponytail: the F10 JTAC menu is built per player at spawn (HAS.jtac), so a later leader shows there only for players who spawn afterwards; voice and radio wheel work at once.
+  world.addEventHandler({ onEvent = function(_, e)
+    if e.id ~= world.event.S_EVENT_BIRTH or not e.initiator then return end
+    pcall(function()
+      local u = e.initiator
+      if not (u.getGroup and u.getPlayerName) or u:getPlayerName() then return end   -- units only (statics have no group); not via getCategory, whose meaning for units changed between DCS versions
+      local name = u:getGroup():getName()
+      if slots[name] or jBy[clean(name)] then return end
+      local up, kind, src = name:upper()
+      for _, L in ipairs(jLeaders) do   -- longest leader name that is a prefix, followed by a non-letter/digit; also with FACA/JTAC in the name, else "FACA-UAV#001" loses callsign and frequency of its template (forum Killg0re NL)
+        if name:sub(1, #L.name) == L.name and name:sub(#L.name + 1):find("^[^%w]") and (not src or #L.name > #src.name) then src = L end
+      end
+      if up:find("FACA") then kind = "faca"
+      elseif up:find("JTAC") then kind = air(u) and "faca" or "jtac"
+      else kind = src and src.kind end
+      local own   -- ponytail: the name can equal a player's callsign word (default "Enfield11"); the app skips a controller named like the caller in its name match
+      if kind and not src and air(u) then   -- aircraft only: what DCS gives as callsign of a ground unit is no name to call it by
+        local ok, c = pcall(u.getCallsign, u)
+        own = ok and type(c) == "string" and c:match("^%a%a%a+") or nil   -- "Pontiac11" -> "Pontiac"; "101" or empty keeps the JTAC-list name
+      end
+      if kind then jAdd(name, kind, u:getCoalition(), {}, src, own) end
+    end)
+  end })
+  end
   HAS.jtac = function(side)   -- F10 JTAC group: own side has a leader that is not dead
     for _, L in ipairs(jLeaders) do if L.side == side and not L.dead then return true end end
     return false
@@ -1430,7 +1488,11 @@ local function start()
           local d = d2(L.p, e.p)
           if d < L.range ^ 2 then cand[#cand + 1] = { e = e, d = d } end
         end
-        table.sort(cand, function(a, b) return a.d < b.d end)
+        -- sticky list (forum Killg0re NL): an orbiting FAC(A) would else swap the 5 nearest all the time and the app drops the target of a running 9-line;
+        -- groups listed last run come first, then nearest. ponytail: a listed group that stays visible keeps its slot for good, a nearer newcomer waits for a free one.
+        local prev, q = L.q or {}, {}
+        for _, c in ipairs(cand) do c.k = prev[c.e.g:getName()] and true or false end
+        table.sort(cand, function(a, b) if a.k ~= b.k then return a.k end return a.d < b.d end)
         local n = 0
         for _, c in ipairs(cand) do
           if n >= 5 then break end
@@ -1454,11 +1516,13 @@ local function start()
               if d < fd then fd, fx, fz = d, string.format("%.1f", f.p.x), string.format("%.1f", f.p.z) end
             end
             n = n + 1
+            q[g:getName()] = true
             jQ[#jQ + 1] = string.format("Q;%s;%s;%s;%d;%.1f;%.1f;%.1f;%d;%d;%s %s %05d %05d;%.6f;%.6f;%s;%s",
               clean(L.name), clean(g:getName()), clean(u1:getTypeName()), cnt, p.x, p.z, land.getHeight({ x = p.x, y = p.z }),
               v.x * v.x + v.z * v.z > 1 and 1 or 0, flak, m.UTMZone, m.MGRSDigraph, math.floor(m.Easting), math.floor(m.Northing), lat, lon, fx, fz)
           end
         end
+        L.q = q
       end
     end
   end
@@ -1518,7 +1582,7 @@ local function start()
     if not grp or not Group.getByName(grp) then return end
     if f[1] == "LASE" then spotOn(L, grp, false, tonumber(f[4]) or tonumber(L.code) or 1688) return end
     if f[1] ~= "MARK" then return end
-    local kind, delay = f[4] or "", tonumber(f[5]) or 0
+    local kind, delay, ox, oz = f[4] or "", tonumber(f[5]) or 0, tonumber(f[6]) or 0, tonumber(f[7]) or 0   -- ox/oz: smoke beside the target, metres north/east
     local sm, SM = trigger.smokeColor or {}, { smoke_green = "Green", smoke_red = "Red", smoke_white = "White", smoke_orange = "Orange", smoke_blue = "Blue", wp = "White" }
     local col = SM[kind] and (sm[SM[kind]] or ({ Green = 0, Red = 1, White = 2, Orange = 3, Blue = 4 })[SM[kind]])
     if not col and kind ~= "ir" and kind ~= "illum" then return end
@@ -1527,7 +1591,7 @@ local function start()
       pcall(function()
         local p = jTarget(grp) or p0   -- target may have moved or died during the delay
         if not p then return end
-        local gp = { x = p.x, y = land.getHeight({ x = p.x, y = p.z }), z = p.z }
+        local gp = { x = p.x + ox, y = land.getHeight({ x = p.x + ox, y = p.z + oz }), z = p.z + oz }
         if col then trigger.action.smoke(gp, col)
         elseif kind == "illum" then trigger.action.illuminationBomb({ x = gp.x, y = gp.y + 500, z = gp.z }, 1000000)
         else spotOn(L, grp, true) end
@@ -1622,6 +1686,12 @@ local function start()
     local h = io.open(lfs.writedir() .. "Config\\options.lua", "r")
     if h then easy = h:read("*a"):match('%["easyCommunication"%]%s*=%s*(%a+)') ~= "false" h:close() end
   end)
+  -- Bug reports: the app logs map, mission and Easy Communication once per mission ("SESSION;map;mission;easy 1|0")
+  pcall(function()
+    local m, name = env.mission, ""
+    pcall(function() name = tostring(m.sortie or "") if env.getValueDictByKey and name:find("^DictKey_") then name = env.getValueDictByKey(name) end end)
+    evt(string.format("SESSION;%s;%s;%d", clean(tostring(m.theatre)), clean(name), easy and 1 or 0))
+  end)
   -- Open DCS-ATC dialog (hot start/runway, answer to our request) shows its entries on opening instead of F5 ATC: the keys would hit "Abort ..."
   local dlg = {}
   world.addEventHandler({ onEvent = function(_, e)
@@ -1666,10 +1736,16 @@ local function start()
             timer.scheduleFunction(function() pcall(f.ab.setRadioSilentMode, f.ab, true) end, nil, timer.getTime() + 15)
           end
           dlg[unit] = true   -- the answer opens the DCS dialog (until takeoff or shutdown)
-        elseif not fl:find("s") then   -- R304 tanker: s = stays silent (our controller speaks), without s audible for 15 s like the airfields
+        elseif not fl:find("s") then   -- R304 tanker: a muted DCS tanker ignores "Intent to refuel" (forum jojojung, Hornet/KC-130 log), so it is audible while refuelling
           local g = o:getGroup()
-          pcall(function() g:getController():setOption(SILENCE, false) end)
-          timer.scheduleFunction(function() silence(g) end, nil, timer.getTime() + 15)
+          -- ponytail: fixed 15 min window after the last menu press; let the app report the end of the refuelling if that ever matters
+          local was = (loud[g:getName()] or 0) <= timer.getTime()
+          loud[g:getName()] = timer.getTime() + 900
+          pcall(function() g:getController():setOption(SILENCE, false) end)   -- the periodic silenceAll mutes it again after the window
+          if was then   -- DCS ignores "Intent to refuel" right after un-muting, a later press works (jojo, Discord, 0.23.19 log): the app presses 5 s later
+            local msg = string.format("M;%s;%s;%d;%d", clean(unit), kind, i, #list)
+            return timer.scheduleFunction(function() evt(msg) end, nil, timer.getTime() + 5)
+          end
         end
         return evt(string.format("M;%s;%s;%d;%d", clean(unit), kind, i, #list))
       end
@@ -1677,8 +1753,37 @@ local function start()
     no((f and "Platz " or "Tanker ") .. target .. " nicht in der DCS-Liste (Koalition)")
   end
 
+  -- F10 map: control zones, reporting points and named routes of the airfields. App: "DRAW;C;style;x;z;r|T;style;x;z;text|L;style;x1;z1;x2;z2|…",
+  -- style 1 zone/reporting point (blue), 2 arrival route (green), 3 departure route (orange, dashed). Every DRAW replaces the previous drawing (app restart).
+  local drawIds, DRAW0 = {}, 7730000   -- mark ids share one number range with the players' own marks and other scripts
+  local STYLE = { { 0.2, 0.5, 1, 0.9 }, { 0.1, 0.7, 0.2, 0.9 }, { 0.95, 0.5, 0.1, 0.9 } }
+  local function draw(line)
+    for _, id in ipairs(drawIds) do trigger.action.removeMark(id) end
+    drawIds = {}
+    for part in line:sub(6):gmatch("[^|]+") do
+      local f = {}
+      for v in part:gmatch("[^;]+") do f[#f + 1] = v end
+      local s, p, id = tonumber(f[2]), { x = tonumber(f[3]), y = 0, z = tonumber(f[4]) }, DRAW0 + #drawIds + 1
+      local c = STYLE[s] or STYLE[1]
+      if f[1] == "C" then trigger.action.circleToAll(-1, id, p, tonumber(f[5]), c, { 0, 0, 0, 0 }, 1, true)
+      elseif f[1] == "L" then trigger.action.lineToAll(-1, id, p, { x = tonumber(f[5]), y = 0, z = tonumber(f[6]) }, c, s == 3 and 2 or 1, true)
+      elseif f[1] == "T" then trigger.action.textToAll(-1, id, p, c, { 0, 0, 0, 0 }, 11, true, f[5]) end
+      drawIds[#drawIds + 1] = id
+    end
+    log("F10-Karte: " .. #drawIds .. " Zeichnungen")
+  end
+
   local function command(line)
     if line:match("^MENU;") then pcall(menuIndex, line) return end
+    local lg = line:match("^LOUD;(.+)$")   -- issue #45: tanker of another player (dedicated server) un-muted, he presses "Intent to refuel" himself
+    if lg then
+      pcall(function()
+        loud[lg] = timer.getTime() + 900
+        Group.getByName(lg):getController():setOption(SILENCE, false)
+      end)
+      return
+    end
+    if line:match("^DRAW;") then draw(line) return end
     local wu, wt = line:match("^WHEEL;([^;]+);(.*)$")   -- VR: radio wheel as text to the player, empty = wheel closed
     if wu then
       local u = Unit.getByName(wu)

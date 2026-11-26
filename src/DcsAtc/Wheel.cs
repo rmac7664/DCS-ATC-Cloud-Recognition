@@ -107,8 +107,8 @@ sealed class Wheel : Form
         {
             new(L("Platz wählen", "Select airfield"), Sub: Array.Empty<Item>()),   // content on opening: nearest airfields (Near)
             new("Radio check", "radio check"), new("Say again", "say again"), new("QNH / weather", "request weather"), new(L("ATIS hören", "Listen to ATIS"), "atis"),
-            new("Request zone transit", "Approach: request zone transit"),   // N3: transit through the control zone
-            new(L("Prüfflug an/aus", "Checkride on/off"), "checkride"), new("Debriefing", "debrief"), new(L("Einstellungen", "Settings"), "settings"),
+            new(L("Prüfflug an/aus", "Checkride on/off"), "checkride"), new("Debriefing / Log", Sub: new Item[] { new("Debriefing", "debrief"), new(L("Log markieren", "Mark log"), "mark log") }), new(L("Einstellungen", "Settings"), "settings"),
+            new("Request zone transit", "Approach: request zone transit"),   // N3: transit through the control zone; last and the only phase-filtered entry here, so the other keys stay fixed (VoiceAttack)
         }),
     };
     /// A30: type of emergency; Program adds position, altitude and heading (PilotCall), Approach picks the nearest suitable airfield.
@@ -127,7 +127,8 @@ sealed class Wheel : Form
         get
         {
             var (aw, tk) = Up();
-            var t = Vis(Mod(All.Where(i => i.Label switch { "Range" => Ops.Range != null, "Carrier" => Cv(), "AWACS" => aw, "Tanker" => tk, "JTAC" => Jtac(), "Center" => Cen(), _ => true })), Fits(), 2);
+            var fix = Program.Cfg.WheelFixed;   // #52: fixed numbers, only the module selection removes entries (no presence or phase filter)
+            var t = Vis(Mod(All.Where(i => fix || i.Label switch { "Range" => Ops.Range != null, "Carrier" => Cv(), "AWACS" => aw, "Tanker" => tk, "JTAC" => Jtac(), "Center" => Cen(), _ => true })), fix ? _ => true : Fits(), 2);
             if (top == null || !t.SequenceEqual(top)) top = t;
             return top;
         }
@@ -136,7 +137,7 @@ sealed class Wheel : Form
     public static Func<bool> Jtac = () => true;   // J11: own side has a living JTAC / FAC(A), Program sets it (fellow players, preview: yes)
     public static Func<bool> Cv = () => true;   // the mission has a carrier, Program sets it (fellow players: the host has the mission, preview: yes)
     public static Func<bool> Cen = () => true;   // the map has a Center for the own side (module on), Program sets it (fellow players, preview: yes)
-    public static Func<string[]> Jtacs = Array.Empty<string>;   // callsigns of the own JTAC / FAC(A), Program sets it; with two or more "Check in" asks which one
+    public static Func<(string Cs, double Freq)[]> Jtacs = Array.Empty<(string, double)>;   // callsigns of the own JTAC / FAC(A), Program sets it; with two or more "Check in" asks which one
     /// R307: does this radio call fit right now (Program.WheelFits: phase, open question, traffic advisory, Range/Tanker/Carrier)? Fellow players/preview: no state, everything.
     public static Func<Func<string, bool>> Fits = () => _ => true;
     /// R307: visible with text if it fits; submenu if one in it fits; with neither (Platz wählen) always. At most 9 (keys 1–9); if nothing fits, everything.
@@ -156,10 +157,16 @@ sealed class Wheel : Form
     {
         foreach (var (name, n) in All.Where(i => i.Sub != null).SelectMany(i => i.Sub!.Where(s => s.Sub != null).Select(s => ($"{i.Label}/{s.Label}", s.Sub!.Length)).Prepend((i.Label, i.Sub!.Length))).Prepend(("Top", All.Length)))
             check(n <= 9 || name is "Approach" or "Carrier" or "Top", $"Funkrad {name}: {n} Einträge (max. 9)");   // R307: Approach has 12, visible at most 9 (Vis); Top 10 with JTAC (only shown with a leader)
-        var oj = Jtacs; Jtacs = () => new[] { "Axeman 1-1", "Pontiac 1-1" };
+        int b32 = 1 << 31;
+        check(!Pressed(null, b32, b32) && !Pressed(b32, b32, b32) && Pressed(0, b32, b32) && !Pressed(b32, 0, b32), "#25 Funkrad: Joystick-Taste beim Start schon gedrückt öffnet nicht, erst ein neuer Druck");
+        check(Program.NewPress(null, b32) == 0 && Program.NewPress(b32, b32) == 0 && Program.NewPress(0, b32) == b32 && Program.NewPress(b32, 0) == 0 && Program.NewPress(0 | b32, b32) == 0, "#37 Tasten festlegen: beim Start schon gedrückter Joystick-Knopf (auch erst im Einschwingfenster gesehen) wird nicht übernommen, erst ein neuer Druck");
+        int? lb = null;   // switch on, device silent at first, a dropout in between: no press; released and pressed again: one press
+        var ed = new int?[] { null, b32, null, b32, 0, b32, b32 }.Select(r => Edge(ref lb, r, b32)).ToArray();
+        check(ed.SequenceEqual(new[] { false, false, false, false, false, true, false }), "#25 Funkrad: ausgefallene Joystick-Abfrage zählt nicht als losgelassen: " + string.Join(",", ed));
+        var oj = Jtacs; Jtacs = () => new[] { ("Axeman 1-1", 133.5), ("Pontiac 1-1", 135.4) };
         var jp = JtacPick(new("Check in", "JTAC: checking in"));
-        check(jp?.Length == 2 && jp[1].Text == "JTAC: Pontiac 1-1, checking in" && JtacPick(new("In", "JTAC: in")) == null, "Funkrad: zwei JTAC -> Check in fragt welcher");
-        Jtacs = () => new[] { "Axeman 1-1" }; check(JtacPick(new("Check in", "JTAC: checking in")) == null, "Funkrad: ein JTAC -> Check in direkt"); Jtacs = oj;
+        check(jp?.Length == 2 && jp[1].Text == "JTAC: Pontiac 1-1, checking in" && jp[1].Label == "Pontiac 1-1 135.4" && jp[0].Label == "Axeman 1-1 133.5" && JtacPick(new("In", "JTAC: in")) == null, "Funkrad: zwei JTAC -> Check in fragt welcher, Name + Frequenz -> " + jp?[1].Label);
+        Jtacs = () => new[] { ("Axeman 1-1", 133.5) }; check(JtacPick(new("Check in", "JTAC: checking in")) == null, "Funkrad: ein JTAC -> Check in direkt"); Jtacs = oj;
         // R307: without state (fellow players, preview) everything as before: Approach the first 9, without Say again/Request higher
         var apC = string.Join(",", Vis(All.First(i => i.Label == "Approach").Sub!, _ => true).Select(i => i.Label));
         check(apC == $"{L("Airborne (nach Start)", "Airborne (after takeoff)")},Inbound for landing,Inbound, pattern work,Request ILS / straight in,Flight following,{L("Abmelden (cancel approach)", "Cancel approach")},{L("Verkehr", "Traffic")},C R P,{L("Fahrt melden", "Report airspeed")}",
@@ -173,6 +180,20 @@ sealed class Wheel : Form
         var cl = string.Join(",", Top.Select(i => i.Label));
         Jtac = jt;
         check(!tl.Contains("AWACS") && tl.Contains("Tanker") && cl.Contains("AWACS") && cl.Contains("Carrier"), "Funkrad ohne AWACS / Mitspieler mit AWACS und Carrier: " + tl + " / " + cl);
+        {   // #52: WheelFixed: nothing present, any phase -> same entries in the same order, only the module selection removes; the cut keeps Emergency/General last
+            var (wf, up0, jt0, cv0, cen0, fits0) = (Program.Cfg.WheelFixed, Up, Jtac, Cv, Cen, Fits);
+            (Up, Jtac, Cv, Cen, Fits) = (() => (false, false), () => false, () => false, () => false, () => _ => false);
+            Program.Cfg.WheelFixed = false; var free = string.Join(",", Top.Select(i => i.Label));
+            Program.Cfg.WheelFixed = true; var fx = string.Join(",", Top.Select(i => i.Label));
+            var want = Vis(Mod(All), _ => true, 2);
+            (Program.Cfg.WheelFixed, Up, Jtac, Cv, Cen, Fits) = (wf, up0, jt0, cv0, cen0, fits0);
+            check(fx == string.Join(",", want.Select(i => i.Label)) && fx.Contains("AWACS") && fx.Contains("Range") && fx.Contains("JTAC") && fx.StartsWith("Ground,Tower") && fx.EndsWith($"{L("Notfall", "Emergency")},{L("Allgemein", "General")}") && fx.Split(',').Length == Math.Min(9, All.Length) && !free.Contains("AWACS"),
+                  $"#52 Funkrad fest: {fx} (ohne: {free})");
+            // Allgemein: "Debriefing / Log" keeps its key on the ground and airborne (zone transit is last)
+            var gn = All.First(i => i.Label == L("Allgemein", "General"));
+            int KeyOf(bool air) => Array.FindIndex(Vis(Mod(gn.Sub!), x => air || x != "Approach: request zone transit"), i => i.Label == "Debriefing / Log") + 1;
+            check(KeyOf(false) == KeyOf(true) && KeyOf(true) == 7, $"#52 Allgemein: Debriefing / Log Taste am Boden {KeyOf(false)}, in der Luft {KeyOf(true)}");
+        }
         // R13: AWACS "Nächster Tanker" names the tanker (with frequency), not the nearest airfield
         var tkText = All.First(i => i.Label == "AWACS").Sub!.First(i => i.Label == L("Nächster Tanker", "Nearest tanker")).Text!;
         var me = new Ops.Me("Enfield 1-1", new Telemetry(6000, 6000, 200, 0, 0, 0, 0, 0, 0), "FA-18C_hornet", 2);
@@ -223,8 +244,16 @@ sealed class Wheel : Form
         InGame = sent.Add;
         w.sug = ("Tower", "ready for departure"); w.Choose(Array.FindIndex(Top, i => i.Label == "Tower")); w.mark = 1;
         var vt = w.VrText();
+        var png = Web = w.Png();
         w.Close2();
         InGame = ig;
+        check(png.Length > 5000 && png.AsSpan(0, 4).SequenceEqual(new byte[] { 0x89, 0x50, 0x4E, 0x47 }) && Web == null, $"#30 Funkrad als PNG für /wheel ({png.Length} Bytes), Schließen leert es");
+        ToGame(png, 0.55); ToGame(png, 0.55);
+        var show = File.ReadAllText(Path.Combine(GameDir, "show.txt"));
+        bool same = w.Png().AsSpan().SequenceEqual(w.Png()), file = Directory.GetFiles(GameDir, "*.png") is [var pf] && show == Path.GetFileName(pf) + "|0.55" && new FileInfo(pf).Length == png.Length;
+        ToGame(null, 0);
+        check(file && same && !File.Exists(Path.Combine(GameDir, "show.txt")), $"#30 Funkrad-Fenster im Spiel: eine PNG je Radbild, show.txt \"{show}\", gleiches Rad = gleiche Bytes {same}, Schließen löscht show.txt");
+        Directory.Delete(GameDir, true);
         check(vt.StartsWith("ENTER ▸ Tower: ready for departure\nDCS-ATC – Tower\n") && vt.Contains("\n> 2 Ready, closed pattern") && vt.Contains("\n   1 Ready for departure")
               && !vt.Contains("Suggested") && !vt.Contains("Vorschlag") && sent.SequenceEqual(new[] { "" }),
               "Funkrad VR-Text: " + vt.Replace("\n", " | ") + " / Schließen: " + string.Join(",", sent.Select(x => $"\"{x}\"")));
@@ -263,6 +292,7 @@ sealed class Wheel : Form
         {
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);   // DCS runs with 125 % scaling
             var w = new Wheel(cfg, send, suggest);
+            try { if (Directory.Exists(GameDir)) Directory.Delete(GameDir, true); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }   // no wheel left over from a crash, old pictures gone
             w.hookProc = w.Hook;
             w.hook = SetWindowsHookEx(13 /*WH_KEYBOARD_LL*/, w.hookProc, GetModuleHandle(null), 0);
             var timer = new System.Windows.Forms.Timer { Interval = 30 };
@@ -344,7 +374,43 @@ sealed class Wheel : Form
     }
     public static Action<double> SaveSize = _ => { };   // Program writes config.jsonc
 
-    void Close2() { Hide(); items = Top; InGame(""); }
+    void Close2() { Hide(); items = Top; InGame(""); Web = null; ToGame(null, 0); }
+    /// #30: the wheel as a window in the game (WheelInGame "window"): DCS's own GUI from the hook (DcsAtcHook.lua), so the headset shows it too.
+    /// PNG named by its content in %TEMP%\DcsAtc-Wheel (same wheel = same file, DCS loads each picture once), show.txt names the file and
+    /// the size as a fraction of the screen height; no show.txt = closed.
+    internal static readonly string GameDir = Path.Combine(Path.GetTempPath(), "DcsAtc-Wheel");
+    internal static void ToGame(byte[]? png, double size)
+    {
+        var show = Path.Combine(GameDir, "show.txt");
+        try
+        {
+            if (png == null) { if (File.Exists(show)) File.Delete(show); return; }
+            Directory.CreateDirectory(GameDir);
+            var name = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(png))[..16] + ".png";
+            var file = Path.Combine(GameDir, name);
+            if (!File.Exists(file)) { File.WriteAllBytes(file + ".tmp", png); File.Move(file + ".tmp", file, true); }
+            File.WriteAllText(show + ".tmp", FormattableString.Invariant($"{name}|{size:0.00}"));
+            File.Move(show + ".tmp", show, true);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Log($"[ATC] Funkrad-Fenster im Spiel: {e.Message}"); }   // hook reads show.txt right now: the next change writes it again
+    }
+    /// #30: the open wheel as PNG for the page /wheel of the map server (OpenKneeboard web dashboard tab in VR, tablet); null = closed
+    public static volatile byte[]? Web;
+    Bitmap Paint(int s)
+    {
+        var bmp = new Bitmap(s, s, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        bmp.SetResolution(96, 96);   // otherwise the bitmap takes the screen DPI (125 %) and the font becomes larger than planned
+        using var g = Graphics.FromImage(bmp);
+        g.ScaleTransform(s / 560f, s / 560f); Draw(g, 560);
+        return bmp;
+    }
+    byte[] Png()
+    {
+        using var bmp = Paint(840);   // fixed size: the DCS mirror window in VR is often small
+        using var ms = new MemoryStream();
+        bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+        return ms.ToArray();
+    }
     public static Action<string> InGame = _ => { };   // VR: wheel as text in the game (Program sets it), "" = clear
 
     /// Print key with the wheel open: screen of the wheel including the wheel (layered window is in the screenshot) as PNG to Pictures\DCS-ATC, wheel stays open.
@@ -381,7 +447,7 @@ sealed class Wheel : Form
         $"DCS-ATC – {title}\n" + string.Join("\n", Slots().Select(s => $"{(s.Mark ? "> " : "   ")}{s.Num} {s.Label}{(s.Freq != null ? "  " + s.Freq : "")}"));
 
     /// Two or more own JTAC / FAC(A): "Check in" lists them, the callsign in the call picks one (later calls stay with it).
-    internal static Item[]? JtacPick(Item it) => it.Text == "JTAC: checking in" && Jtacs() is { Length: > 1 } js ? js.Select(c => new Item(c, $"JTAC: {c}, checking in")).ToArray() : null;
+    internal static Item[]? JtacPick(Item it) => it.Text == "JTAC: checking in" && Jtacs() is { Length: > 1 } js ? js.Select(c => new Item($"{c.Cs} {c.Freq.ToString("0.0##", System.Globalization.CultureInfo.InvariantCulture)}", $"JTAC: {c.Cs}, checking in")).ToArray() : null;
 
     void Choose(int i)
     {
@@ -421,10 +487,11 @@ sealed class Wheel : Form
     {
         if (!Visible) return;
         InGame(VrText());
+        bool game = cfg.WheelInGame == "window";
+        if (cfg.MapPort > 0 || game) Web = Png();
+        if (game) ToGame(Web, Math.Clamp(cfg.WheelSize, 0.25, 0.95));
         int s = Width;
-        using var bmp = new Bitmap(s, s, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        bmp.SetResolution(96, 96);   // otherwise the bitmap takes the screen DPI (125 %) and the font becomes larger than planned
-        using (var g = Graphics.FromImage(bmp)) { g.ScaleTransform(s / 560f, s / 560f); Draw(g, 560); }
+        using var bmp = Paint(s);
         IntPtr screen = GetDC(IntPtr.Zero), mem = CreateCompatibleDC(screen), hb = bmp.GetHbitmap(Color.FromArgb(0)), old = SelectObject(mem, hb);
         var size = new SIZE { cx = s, cy = s };
         var src = new POINT();
@@ -634,7 +701,10 @@ sealed class Wheel : Form
     struct KeyInput { [FieldOffset(0)] public int Type; [FieldOffset(10)] public ushort Scan; [FieldOffset(12)] public uint Flags; }
 
     /// Operate the DCS radio menu: tap scancodes one after another, only while DCS is in front (otherwise the keys land elsewhere).
-    public static void PressDcs(params ushort[] scans) => new Thread(() =>
+    public static void PressDcs(params ushort[] scans) => new Thread(() => PressDcsSync(scans)) { IsBackground = true }.Start();
+
+    /// Same on the calling thread (blocks for the key timings).
+    public static void PressDcsSync(params ushort[] scans)
     {
         foreach (var s in scans)
         {
@@ -645,7 +715,7 @@ sealed class Wheel : Form
                 Thread.Sleep(up == 0 ? 60 : 90);   // DCS polls keys per frame (≥ 1 frame pressed, 2–3 frames until the next): menu only briefly visible
             }
         }
-    }) { IsBackground = true }.Start();
+    }
 
     static bool DcsInFront()
     {
@@ -668,15 +738,28 @@ sealed class Wheel : Form
     }
 
     // ------------------------------------------------------------ HOTAS
-    int lastButtons, lastPov = 65535;
+    int? lastButtons;
+    int lastPov = 65535;
+    /// #25: only a press seen while the app runs; a button already down at the first reading (app starts with the mission, switch or stale state) does not open the wheel
+    static bool Pressed(int? last, int now, int bit) => last is { } l && (now & bit) != 0 && (l & bit) == 0;
+    /// #25 (log 0.21.0, wheel still open at the spawn): a reading that failed (device not ready right after the mission start) used to count as "nothing pressed",
+    /// so a switch that is on looked like a new press at the next good reading. Failed readings are skipped now, the last good one stays.
+    static bool Edge(ref int? last, int? now, int bit)
+    {
+        if (now is not { } n) return false;
+        bool p = Pressed(last, n, bit);
+        last = n;
+        return p;
+    }
 
     void PollJoystick()
     {
-        if (cfg.WheelJoystick < 0) return;
-        var (b, pov) = Program.Joy(cfg.WheelJoystick);
-        int bit = 1 << (cfg.WheelButton - 1);
-        if ((b & bit) != 0 && (lastButtons & bit) == 0) { if (Visible) Close2(); else if (DcsInFront()) Open(); }
-        lastButtons = b;
+        if (cfg.WheelJoystick < 0 || Program.JoyState(cfg.WheelJoystick) is not var (b, pov)) return;
+        if (Edge(ref lastButtons, b, 1 << (cfg.WheelButton - 1)))
+        {
+            Program.Trace("RAD", $"Joystick {cfg.WheelJoystick} Knopf {cfg.WheelButton}: {(Visible ? "zu" : "auf")}");
+            if (Visible) Close2(); else if (DcsInFront()) Open();
+        }
         if (Visible && pov != lastPov && pov != 65535)
         {
             switch (pov)

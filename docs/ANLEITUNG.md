@@ -20,7 +20,7 @@ Funk ist Englisch: Alle Funksprüche, die du sagst oder hörst, stehen in diesem
 5. [AWACS, Tanker und Range](#awacs-tanker-und-range)
    - [AWACS](#awacs) · [Tanker](#tanker) · [Range](#range) · [JTAC und FAC(A)](#jtac-und-faca) · [KI-Flüge im Funk](#ki-flüge-im-funk) · [Deine KI-Rottenflieger befehlen](#deine-ki-rottenflieger-befehlen) · [CSAR (Hubschrauber)](#csar-hubschrauber) · [Bodenpersonal und Crew Chief](#bodenpersonal-und-crew-chief)
 6. [Multiplayer, Dedicated Server, eigene Frequenzen und andere Karten](#multiplayer-dedicated-server-eigene-frequenzen-und-andere-karten)
-   - [So funktioniert Multiplayer](#so-funktioniert-multiplayer) · [Dedicated Server einrichten](#dedicated-server-einrichten) · [Eigene Frequenzen je Platz](#eigene-frequenzen-je-platz) · [Eigene Platzverfahren](#eigene-platzverfahren-chartsjsonc) · [Kneeboard-Seiten](#kneeboard-seiten) · [Andere Karten als Kaukasus](#andere-karten-als-kaukasus)
+   - [So funktioniert Multiplayer](#so-funktioniert-multiplayer) · [Dedicated Server einrichten](#dedicated-server-einrichten) · [Eigene Frequenzen je Platz](#eigene-frequenzen-je-platz) · [Eigene Platzverfahren](#eigene-platzverfahren-chartsjsonc) · [Kneeboard-Seiten](#kneeboard-seiten) · [Zeichnungen auf der F10-Karte](#zeichnungen-auf-der-f10-karte) · [Andere Karten als Kaukasus](#andere-karten-als-kaukasus)
 7. [Anhang: Einstellungen, Logs und Fehlersuche](#anhang-einstellungen-logs-und-fehlersuche)
    - [Das Einstellungsfenster](#das-einstellungsfenster) · [config.jsonc-Referenz](#configjsonc-referenz) · [Lagebild im Browser](#lagebild-im-browser) · [Logdateien](#logdateien) · [Fehlersuche](#fehlersuche)
 
@@ -58,9 +58,11 @@ Setup installiert nach `%LOCALAPPDATA%\Programs\DCS-ATC` und legt diese Startmen
 | Tasten festlegen (Funkrad, Push-to-Talk) | Öffnet die Tastenabfrage aus Schritt 4. |
 | Einstellungen (Rufzeichen, Lautstärke, Funk) | Öffnet das Einstellungsfenster. |
 | Bodenpersonal (Standard) | Öffnet `DcsAtcOptions.lua` im Editor. |
-| Nach DCS-Update reparieren | Passt `MissionScripting.lua` erneut an (Admin-Abfrage). |
+| Nach DCS-Update reparieren | Passt `MissionScripting.lua` und `autoexec.lua` erneut an (Admin-Abfrage). |
 | Liesmich | Öffnet die kurze Liesmich-Datei. |
-| DCS-ATC deinstallieren | Entfernt DCS-ATC, auch die Zeilen, die es in `MissionScripting.lua` und `Export.lua` eingefügt hat. |
+| DCS-ATC deinstallieren | Entfernt DCS-ATC, auch die Zeilen, die es in `MissionScripting.lua`, `autoexec.lua` und `Export.lua` eingefügt hat. |
+
+Optional: Auf der Seite mit den Zusatzaufgaben legt das Kästchen „Desktop-Symbol für die Einstellungen“ eine Verknüpfung zum Einstellungsfenster auf den Desktop (standardmäßig nicht angehakt).
 
 #### Module wählen
 
@@ -87,9 +89,9 @@ Ein abgewähltes Modul schweigt, DCS-ATC hört seine Frequenz nicht ab, und es f
 - `Saved Games\DCS\Scripts\Hooks\DcsAtcHook.lua` startet DCS-ATC mit jeder Mission und reicht Funkrad-Anfragen anderer Spieler an den Host weiter.
 - `Saved Games\DCS\Scripts\DcsAtc\` enthält das Missionsskript, die Standardoptionen (`DcsAtcOptions.lua`), die Sprachdatei und die Modulliste (`DcsAtcModules.txt`).
 - `Saved Games\DCS\Scripts\DcsAtcExport.lua` plus eine Zeile am Ende von `Export.lua` schickt die Daten deines eigenen Flugzeugs an DCS-ATC. Andere Export-Skripte wie SRS oder Tacview bleiben unberührt.
-- Eine Zeile in `<DCS-Ordner>\Scripts\MissionScripting.lua` (siehe Schritt 3).
+- Eine Zeile in `<DCS-Ordner>\Scripts\MissionScripting.lua` (siehe Schritt 3) und eine am Ende von `<DCS-Ordner>\Scripts\autoexec.lua` (Rottenflieger-Befehle per Sprache).
 
-Ist dein Saved-Games-Ordner verschoben, etwa auf ein anderes Laufwerk, findet Setup ihn trotzdem. Findet Setup `Saved Games\DCS` gar nicht, fragt es nach deinem DCS-Ordner in Saved Games, also dem Ordner mit `Config` und `Scripts`. Gibt es nur `Saved Games\DCS.openbeta`, nimmt Setup diesen.
+Ist dein Saved-Games-Ordner verschoben, etwa auf ein anderes Laufwerk, findet Setup ihn trotzdem. Findet Setup `Saved Games\DCS` gar nicht, fragt es nach deinem DCS-Ordner in Saved Games, also dem Ordner mit `Config` und `Scripts`. Gibt es nur `Saved Games\DCS.openbeta`, nimmt Setup diesen. Gibt es beide, nehmen Setup und DCS-ATC den, in den DCS zuletzt sein Log geschrieben hat (`Logs\dcs.log`).
 
 #### Installation auf einem Dedicated Server
 
@@ -109,10 +111,11 @@ DCS-ATC läuft auch auf einem PC mit DCS Dedicated Server (`DCS_server.exe`), an
   - Erfolg: `SRS-Client mit 127.0.0.1:5002 verbunden.`
   - Fehlschlag: `SRS-Client hat sich nicht verbunden – im Client 127.0.0.1:5002 eintragen und Connect drücken.`
   - Abschalten mit `"SrsAutoConnect": false`.
+- **Eigener SRS-Server.** Startest du den SRS-Server selbst (Dedicated Server mit eigenem SRS), setze `"SrsStart": false` in `config.jsonc`. DCS-ATC startet dann weder SRS-Server noch SRS-Client und nutzt den laufenden Server. Dieselbe Option gibt es auch als Haken auf der Seite SRS der Einstellungen.
 - **Multiplayer.** Alle verbinden ihren SRS-Client mit dem SRS-Server auf dem PC des Hosts, also dem PC mit DCS-ATC.
 - **Frequenzen rasten.** Alle Frequenzen sind AM.
   - **Flugplätze** nutzen ihre eigene DCS-Frequenz, die auf der F10-Karte. Ground, Tower und Approach teilen sie sich, UHF oder VHF geht beides. Beispiele Kaukasus: Kutaisi 263.0 / 134.0, Senaki 261.0 / 132.0, Batumi 260.0 / 131.0.
-  - **Andere Stationen** haben Standardwerte: ATIS 263.5, AWACS 251.5, Tanker 255.5, Range 267.5, Carrier 127.5, JTAC 133.5. Hat ein AWACS, Tanker, Träger, JTAC oder FAC(A) in der Mission eine eigene Frequenz, gilt diese.
+  - **Andere Stationen** haben Standardwerte: ATIS 263.5, AWACS 251.5, Tanker 255.5, Range 267.5, Carrier 127.5, JTAC 133.5. Hat ein AWACS, Tanker, Träger, JTAC oder FAC(A) in der Mission eine eigene Frequenz, gilt diese. Mit `"AwacsMissionFreq": false` in der config.jsonc bleibt das AWACS von DCS-ATC auf seiner `"AWACS"`-Frequenz, egal was die Mission sagt. Das DCS-eigene AWACS behält die Missionsfrequenz, seine eingebauten Rufe mischen sich dann nicht mit DCS-ATC, und die AWACS-Wegpunktaktion (Datenlink) kann in der Mission bleiben.
   - **Das Funkrad** zeigt in der obersten Ebene die Frequenz jeder Station. Rot mit ✗ heißt: keines deiner SRS-Funkgeräte ist darauf gerastet.
 - **Du hörst nur, worauf du gerastet bist.** Lotsen senden auf ihrer Frequenz. Ein Lotsenspruch erscheint zusätzlich als Text für deine Gruppe, aber nur, wenn eines deiner Funkgeräte auf dieser Frequenz steht. Kennt SRS deine Funkgeräte nicht, siehst du allen Text.
 - **Reichweite und Sichtlinie.** Lotsen senden mit ihrem Standort: der Platz (Antenne 30 m darüber), die Einheit von AWACS, Tanker oder JTAC, KI-Flüge aus ihrem Flugzeug. Hat der SRS-Server *Sichtlinie* (line of sight) oder *Reichweite* (distance limit) an, hörst du einen Tower hinter dem Berg oder eine zu weit entfernte Station nicht. Sind beide aus, ändert sich nichts. Das Center hat keinen Standort (es steht für ein Netz aus Antennen), die Trägerstationen auch nicht. SRS prüft die Sichtlinie etwa zweimal pro Sekunde, der erste Moment eines Spruchs kann also noch durchkommen. Abschalten: **Einstellungen → Lotsen senden mit Standort** (`"StationPositions": false`).
@@ -131,7 +134,7 @@ DCS-ATC läuft auch auf einem PC mit DCS Dedicated Server (`DCS_server.exe`), an
 | HOTAS (falls belegt) | Rad-Knopf öffnet und schließt das Rad. Hat hoch/runter bewegt die Markierung, rechts wählt, links geht zurück. |
 | Push-to-Talk, Standard rechte `Strg` | Nur, wenn SRS nicht verbunden ist. Mit SRS sprichst du mit deiner normalen SRS-Sprechtaste. |
 
-Alle Funkrad-Einträge stehen unter [Funkrad](#funkrad). Das F10-Funkmenü **ATC** bietet dieselben Einträge im Spiel. In VR siehst du das Desktop-Rad nicht, deshalb erscheint es zusätzlich als Text im Spiel (siehe [Funkrad als Text im Spiel](#funkrad-als-text-im-spiel-vr)).
+Alle Funkrad-Einträge stehen unter [Funkrad](#funkrad). Das F10-Funkmenü **DCS-ATC** bietet dieselben Einträge im Spiel. In VR siehst du das Desktop-Rad nicht, deshalb erscheint es zusätzlich als Text im Spiel (siehe [Funkrad als Text im Spiel](#funkrad-als-text-im-spiel-vr)).
 
 ### Dein erster Flug: Kaltstart in Kutaisi
 
@@ -185,6 +188,7 @@ Tower: Enfield one one, after departure exit via C R P west, not above … until
 - **Bahn nicht frei.** Mit Verkehr im Endanflug oder auf der Bahn kommt „hold short runway two five, traffic …“ oder „line up and wait“. Tower gibt dich von selbst frei, sobald die Bahn frei ist.
 - **Zu früh.** Meldest du „ready“ vor dem Rollhalt, kommt „negative, you are not at the holding point“.
 - **Parallelbahn kreuzen.** Liegt zwischen Vorfeld und Startbahn eine Parallelbahn (etwa 03L vor 03R), endet die Rollfreigabe mit „hold short runway zero three left“. Am Haltepunkt dort meldest du „holding short runway 03L, request crossing“ (das Funkrad schlägt es vor; „ready for departure“ dort bekommt dieselbe Antwort): „cross runway zero three left, hold short runway zero three right“. An der Parallelbahn gibt es keine Startfreigabe. Ist sie belegt, kommt „hold short runway zero three left, traffic …“ und die Freigabe zum Kreuzen folgt von selbst, sobald sie frei ist. Wer ohne Freigabe kreuzt, bekommt „You are not cleared onto runway …“.
+- **Landebahn auf dem Weg zur Parkposition kreuzen.** Liegt deine Parkposition auf der anderen Seite der Bahn, auf der du gelandet bist (Plätze mit nur einer Bahn wie Nordholz), zählt diese Bahn als Querung, sobald du sie verlassen hast: Die Rollfreigabe endet mit „hold short runway …“, dort meldest du „holding short, request crossing“ (das Funkrad schlägt es vor).
 
 **6. Abflug (Approach).** Beim Steigen durch etwa 500 ft über Grund:
 
@@ -253,7 +257,7 @@ Ground führt dich mit Richtung und Entfernung zurück zu deiner Startposition. 
 
 Rollst du ohne Rollfreigabe weiter (schneller als 5 kt und mehr als 150 m von der Bahn), bekommst du „hold position, you are not cleared to taxi. Request taxi.“ und einen Verstoß.
 
-**10. Debriefing.** Funkrad → Allgemein → Debriefing listet deinen Flug, auch Luftraumverstöße.
+**10. Debriefing.** Funkrad → Allgemein → Debriefing / Log → Debriefing listet deinen Flug, auch Luftraumverstöße.
 
 ## Wege zu funken
 
@@ -263,7 +267,7 @@ Du kannst DCS-ATC auf vier Wegen ansprechen und sie im Flug beliebig mischen:
 |---|---|---|
 | **Sprechen über SRS** | SRS-Sprechtaste auf der Lotsenfrequenz drücken und Englisch sprechen | Alle in der Mission, auch Multiplayer-Mitspieler |
 | **Funkrad** | Rad-Taste drücken und einen Spruch mit Zifferntasten oder HOTAS wählen | Missions-Host und Einzelspieler (Mitspieler bekommen ein eingeschränktes Rad, siehe unten) |
-| **F10-Menü** | DCS-Funkmenü → **F10 Andere → ATC** | Jeder Spieler-Slot der Mission |
+| **F10-Menü** | DCS-Funkmenü → **F10 Andere → DCS-ATC** | Jeder Spieler-Slot der Mission |
 | **Chat-Text** | Im Multiplayer-Chat `ATC>` und dann den Spruch tippen | Nur Multiplayer |
 
 Egal welcher Weg: Die Lotsen antworten gleich, per Stimme über SRS auf ihrer Frequenz und als Text im Spiel.
@@ -312,7 +316,8 @@ Du hörst (und siehst) nur, worauf du gerastet bist. Lotsensprüche erscheinen a
 - **Herkunft:** DCS-ATC nimmt dein Rufzeichen aus deinem **DCS-Slot**, aus „Enfield11“ wird **Enfield 1-1**. Lotsen sprechen es „Enfield one one“, in einer Rotte „Enfield one one flight“.
 - **Slots ohne westliches Rufzeichen:** der erste solche Spieler bekommt `"Callsign"` aus config.jsonc (Standard `"Enfield 1-1"`). Weitere werden mit ihrem Spielernamen angesprochen.
 - **Eigenes Rufzeichen:** `"MyCallsign"` setzen (Standard `""` = aus DCS) oder Einstellungsfenster → *Eigenes Rufzeichen*. Format: Name und zwei Ziffern, etwa `Viper 1-1`. Es ersetzt das Slot-Rufzeichen des Spielers an diesem PC (Host); andere Spieler behalten ihres.
-- **Rufzeichen aus dem Unitnamen:** `"CallsignFromUnit": true` oder Einstellungsfenster → *Rufzeichen aus dem Unitnamen der Mission*. Heißt die Unit in der Mission wie ein Rufzeichen (`VICTORY 9-1`, `WOLF-2-1`), wirst du so gerufen („Victory 9-1“) statt mit dem DCS-Rufzeichen (etwa Pontiac). Andere Unitnamen (`Aerial-1-1`, `F-4E ADVERSARIES NELLIS 1-1`) behalten das DCS-Rufzeichen. Gilt für alle Spieler, „MyCallsign“ geht für den Host vor.
+- **Rufzeichen aus dem Unitnamen:** `"CallsignFromUnit": true` oder Einstellungsfenster → *Rufzeichen aus dem Unitnamen der Mission*. Heißt die Unit in der Mission wie ein Rufzeichen (`VICTORY 9-1`, `WOLF-2-1`), wirst du so gerufen („Victory 9-1“) statt mit dem DCS-Rufzeichen (etwa Pontiac). Andere Unitnamen (`Aerial-1-1`, `F-4E ADVERSARIES NELLIS 1-1`) behalten das DCS-Rufzeichen. Gilt für alle Spieler, „MyCallsign“ geht für den Host vor. Gilt auch für KI-Flugzeuge: Ein KI-Flug, AWACS oder Tanker, dessen Unit `SENTRY 1-1` heißt, wird Sentry gerufen, und du kannst ihn so anrufen („Sentry, Enfield 1-1, picture“).
+- **Rufzeichen aus dem Spielernamen:** `"CallsignFromPlayer": true` oder Einstellungsfenster → *Rufzeichen aus dem DCS-Spielernamen*. Steht in deinem DCS-Spielernamen vor einem „|“ ein Rufzeichen (`GUARDIAN 1-1 | Christian`, `HOWLING PUPPIES 1-1 | RedButton`) oder ist er eins (`Guardian 9-1`), wirst du so gerufen („Guardian 1-1“), egal welchen Slot du nimmst. Praktisch auf Servern mit dynamischen Slots. Ein Name, der kein Rufzeichen ist (`GUARDIAN [TaktLwG66]`), fällt auf den Unitnamen oder das DCS-Rufzeichen zurück. Geht vor „CallsignFromUnit“; „MyCallsign“ gilt für den Host weiterhin zuerst.
 - **Verhörer werden toleriert.** Dein Rufzeichen wird erkannt, wenn die Ziffern stimmen und das Wort nur leicht abweicht („Enfeld 1-1“ zählt als „Enfield 1-1“).
 - **Was du sagst, ändert dein Rufzeichen nicht.** Liefert die Mission dein Rufzeichen (oder hast du eins gesetzt), benennt dich ein anderes Rufzeichen im Gesprochenen nicht um. Ein Spruch, der mit einem anderen Rufzeichen oder einer Rottennummer beginnt und deins nicht enthält („Enfield 1-2, check fuel“, „Two, go trail“), gilt als Rottenfunk, der Lotse ignoriert ihn. Ein Befehl wie „Two, go trail“ geht an deine KI-Rottenflieger (siehe [Deine KI-Rottenflieger befehlen](#deine-ki-rottenflieger-befehlen)).
 - **Wer gesendet hat:** dein Spruch wird dir über deine SRS-/DCS-Einheit zugeordnet. Klappt das nicht, über das gesprochene Rufzeichen.
@@ -342,6 +347,7 @@ Diese Sprüche gehen bei jedem Platzlotsen:
 
 Worauf der Lotse nicht antwortet:
 
+- **„Disregard“ oder „correction“ allein nimmt deinen letzten Ruf zurück.** Der Lotse bleibt still und wartet auf deinen nächsten Ruf, kein „say again“.
 - **Readbacks bleiben unbeantwortet.** Wie im echten Funk heißt Stille: Readback in Ordnung. Als Readback gilt ein Spruch mit „wilco“, „roger“, „copy“, „cleared“, „approved“ oder „report …“, einer, der die Werte des Lotsen wiederholt (hold short, contact, squawk, QNH bzw. altimeter, heading oder nur die Zahlen: „Tower 134.0, Enfield 1-1“), oder nur dein Rufzeichen, auch mit „starting up“, „taxiing“, „lining up“, „rolling“ oder „switching“ („Start up approved, Enfield 1-1“, „Enfield 1-1“). Ein Readback einer IFR-Freigabe mit richtigem Squawk bekommt *„readback correct.“*
 - **Dieselbe Anfrage innerhalb von 30 Sekunden nach dem Ende der Lotsenantwort noch einmal gilt als Readback.**
 
@@ -571,7 +577,7 @@ Die Pilotenstimme ergänzt Position, Höhe und Kurs, und DCS-ATC wählt den näc
 | ATIS hören | Liest die aktuelle ATIS deines Platzes. Ohne Wetterdaten in der Mission kommt stattdessen ein Texthinweis. |
 | Request zone transit | `request zone transit` (an Approach) |
 | Prüfflug an/aus | Startet oder beendet einen [Prüfflug](#prüfflug) |
-| Debriefing | Zeigt dein bisheriges Debriefing als Text im Spiel |
+| Debriefing / Log | **Debriefing** zeigt dein bisheriges Debriefing als Text im Spiel. **Log markieren** schreibt eine `[MARK]`-Zeile in `atc-log.txt` mit Uhrzeit, Position, Höhe, Phase beim Lotsen und den letzten drei Funksprüchen. Nutze es in dem Moment, in dem etwas schiefgeht, und nenne die Uhrzeit im Fehlerbericht. |
 | Einstellungen | Öffnet das Einstellungsfenster |
 
 #### Funkrad im Multiplayer (Mitspieler)
@@ -598,13 +604,17 @@ DCS-ATC – Tower
 
 | Einstellung | Standard | Werte |
 |---|---|---|
-| `"WheelInGame"` | `"auto"` | `"auto"` = wenn DCS im VR-Modus läuft (VR in den DCS-Optionen oder Startparameter `--force_enable_VR`), `"on"` = immer, `"off"` |
+| `"WheelInGame"` | `"auto"` | `"auto"` = wenn DCS im VR-Modus läuft (VR in den DCS-Optionen oder Startparameter `--force_enable_VR`), `"on"` = immer, `"off"`, `"window"` = das Rad als Bild im Spiel statt des Texts (Test, siehe unten) |
 
-Dieselbe Wahl im Einstellungsfenster → *Funkrad im Spiel (VR)*: automatisch / immer / aus.
+Dieselbe Wahl im Einstellungsfenster → *Funkrad im Spiel (VR)*: Text automatisch / Text immer / aus / Rad als Bild (Test).
+
+**Das grafische Rad im Spiel (Test).** Mit `"WheelInGame": "window"` zeigt DCS selbst das Rad als Bild in der Bildschirmmitte, dasselbe Rad wie das Desktop-Overlay, anstelle des Texts. Es ist ein Fenster der DCS-Oberfläche, sollte also auch im Headset erscheinen, ohne ein weiteres Programm. Es zeigt das Rad nur an; bedient wird es mit denselben Tasten bzw. HOTAS wie bisher. DCS muss nach der Installation dieser Version gestartet worden sein. Das ist eine erste Fassung, in DCS und in VR noch nicht getestet: Erscheint nichts, steht in `dcs.log` eine Zeile, die mit `DcsAtcHook: Rad-Fenster` beginnt.
+
+**Das grafische Rad in VR (OpenKneeboard).** Die Seite `http://localhost:18600/wheel` zeigt dasselbe Rad wie das Desktop-Overlay, solange es offen ist, auf durchsichtigem Hintergrund, und nichts, solange es zu ist. In OpenKneeboard einen Tab vom Typ „Web Dashboard“ mit dieser Adresse anlegen. Bedient wird das Rad mit denselben Tasten bzw. HOTAS wie bisher. Wer es nutzt, kann *Funkrad im Spiel (VR)* auf aus stellen. Die Seite kommt vom Server des [Lagebilds](#lagebild-im-browser), `MapPort` darf also nicht 0 sein. Mit OpenKneeboard noch nicht getestet, Rückmeldungen sind willkommen.
 
 ### F10-Menü
 
-In jeder Mission mit DCS-ATC bekommt jede Spielergruppe **F10 Andere → ATC**. Teilen sich mehrere Spieler eine Gruppe, bekommt jeder ein eigenes Untermenü mit seinem Rufzeichen. Die Menüsprache folgt deiner Wahl im Setup (Deutsch oder Englisch).
+In jeder Mission mit DCS-ATC bekommt jede Spielergruppe **F10 Andere → DCS-ATC**. Teilen sich mehrere Spieler eine Gruppe, bekommt jeder ein eigenes Untermenü mit seinem Rufzeichen. Die Menüsprache folgt deiner Wahl im Setup (Deutsch oder Englisch).
 
 | Untermenü | Einträge |
 |---|---|
@@ -615,7 +625,7 @@ In jeder Mission mit DCS-ATC bekommt jede Spielergruppe **F10 Andere → ATC**. 
 | AWACS / Tanker / Center | AWACS → Check in · Picture · Bogey dope · Sort · Nächster Tanker · Vektor nächster Platz · Check out · Gefecht → Committing / Fox three / Splash / Defending / Request support / Unable / Winchester / Bingo, RTB / Say again. Tanker → Request rejoin · Visual · Observation · Pre-contact · Refuel complete · Abort · Say position · Center → Check in · Request altitude · Request direct · Leaving frequency |
 | Carrier (nur wenn die Mission einen Träger hat) | Marshal check in · See you at · Initial · Commencing · Platform · Ball · Clara · Pigeons · Strike check in/out · Red Crown check in/out (nur mit eigenem Kreuzer) |
 | Notfall | MAYDAY → Art · PAN PAN → Art · Spritmangel · Hung ordnance · Flameout, high key · Notfall beenden · CSAR übernehmen · CSAR Rauch/Leuchtkugel (Arten: Triebwerksausfall, Treibstoff (nur MAYDAY), Hydraulik, Gefechtsschaden, Medizinisch, Vogelschlag) |
-| Allgemein | Radio check · Say again · QNH / weather · ATIS hören · Request zone transit · Prüfflug an/aus · Debriefing |
+| Allgemein | Radio check · Say again · QNH / weather · ATIS hören · Request zone transit · Prüfflug an/aus · Debriefing / Log |
 | Einstellungen | Bodenpersonal an/aus · Anzeigen |
 
 F10-Sprüche werden wie Rad-Sprüche behandelt, mit Pilotenstimme und Platzwahl. Das F10-Menü hat dieselben Gruppen, Namen und Texte wie das Rad, höchstens 9 Einträge je Ebene; nur *Platz wählen* fehlt (dafür das Rad nehmen oder den Platznamen sagen). Das Rad blendet Einträge aus, die zu deinem Flugzustand nicht passen, F10 zeigt immer alle; ein unpassender Ruf wird wie gewohnt beantwortet (z. B. *unable*).
@@ -675,20 +685,35 @@ So funktionieren die Werte:
 
 - **`@` setzt die Tonhöhe:** `@0.88` = tiefer, `@1.05` = höher.
 - **`|` nennt mehrere Stimmen:** jede Station (etwa „Kolkhi Tower“) behält eine davon, benachbarte Plätze klingen verschieden.
+- **`"random"` nimmt eine zufällige Stimme:** jede Station bekommt bei jedem Start eine der installierten Stimmen (ohne die Pilotenstimme) und behält sie, solange DCS-ATC läuft. Im Einstellungsfenster: *Zufällig*.
 - **Fehlende Stimmen:** fehlt eine Stimmdatei, wird eine vorhandene genommen (sonst `en_US-ryan-medium`). Mehr Stimmen: huggingface.co/rhasspy/piper-voices.
 - **Crew:** der Crew Chief am Parkplatz, der über deine Bordsprechanlage spricht.
 - **Carrier:** nicht in der Vorlage; der Standard `"en_US-ryan-medium@0.97|en_GB-alan-medium@1.02"` wird automatisch ergänzt.
-- **`PilotVoice`:** spricht deine Rad-, F10- und Chat-Sprüche vor der Antwort. Jeder Spieler bekommt eine leicht andere Tonhöhe. `""` = aus, wie das Abwählen von Einstellungsfenster → *Eigene Anfragen vorsprechen (Pilotenstimme)*.
+- **`PilotVoice`:** spricht deine Rad-, F10- und Chat-Sprüche vor der Antwort. Jeder Spieler bekommt eine leicht andere Tonhöhe. `""` = aus, wie *aus* bei Einstellungsfenster → *Pilotenstimme*.
 
 | Einstellung | Standard | Bedeutung |
 |---|---|---|
-| `"RadioFx"` | `true` | Funkklang: Bandpass, leises Rauschen, Squelch-Ende. Im Gefecht kommen Sprüche schneller und klingen wie ein übersteuertes Maskenmikrofon. |
-| `"RadioText"` | `true` | Funksprüche auch als DCS-Text im Bild. `false` = nur Stimme; Hinweise von DCS-ATC kommen weiter als Text. |
+| `"RadioFx"` | `true` | Funkklang: schmaler Bandpass (300–2700 Hz, je zwei Filterstufen) mit leichter Präsenzanhebung, harter Kompressor, leises Rauschen, Squelch-Ende. Im Gefecht kommen Sprüche schneller und klingen wie ein übersteuertes Maskenmikrofon. |
+| `"RadioText"` | `true` | Funksprüche auch als DCS-Text im Bild. Zahlen stehen dort als Ziffern (heading 045, 251.5, Enfield 1-1), die Stimme spricht sie weiter Ziffer für Ziffer. `false` = nur Stimme; Hinweise von DCS-ATC kommen weiter als Text. |
 | `"Volume"` | `0.6` | Lautstärke der Lotsen in SRS (0–1). Senken, wenn die Stimmen zu laut sind. |
+| `"ElevenLabsSpeed"` | `1.1` | Standard-Tempo der ElevenLabs-Stimmen ohne eigenes Tempo, unabhängig von `SpeechRate`: 1 = ElevenLabs-Normal, größer = schneller. Nur in der Config; das Tempo je Rolle steht in der Stimmentabelle (0,80 bis 1,50) und wird als `"id@1.3"` in `ElevenVoices` gespeichert. |
 | `"SpeechRate"` | `0.85` | Sprechtempo: 1 = Piper-Standard, kleiner = schneller, größer = langsamer. Der Regler im Einstellungsfenster geht von 0,70 bis 1,50. Alle Stimmen sind auf dasselbe Tempo abgeglichen. |
 | `"ReplyPause"` | `1.5` | Sekunden Pause zwischen zwei Sprüchen auf einer Frequenz (Pilot → Lotse → Readback). Regler im Einstellungsfenster: 0–5 s. |
 
 Lautstärke, Tempo, Pause, Funkklang und Pilotenstimme gelten sofort nach dem Speichern im Einstellungsfenster (Startmenü → **DCS-ATC → Einstellungen**).
+
+### ElevenLabs-Stimmen (optional)
+
+Statt Piper kann eine Lotsenrolle mit einer Stimme aus deinem eigenen ElevenLabs-Konto sprechen. Standardmäßig ist das aus; ohne Schlüssel ändert sich nichts.
+
+- **Eigenes Konto und Schlüssel:** Einen API-Schlüssel auf elevenlabs.io erstellen und im Einstellungsfenster eintragen (Seite Stimmen, Gruppe *ElevenLabs*) oder als `ElevenLabsKey` in der `config.jsonc`. Den ganzen Schlüssel (beginnt mit sk_) gleich kopieren, ElevenLabs zeigt ihn nur einmal. DCS-ATC nutzt den Schlüssel des PCs, auf dem es läuft, also des Mission-Hosts. Jede Installation hat ihren eigenen. Der Schlüssel braucht die Rechte *Text to Speech*, *Voices* (lesen) und *User* (lesen).
+- **Stimmen wählen:** **Verbinden** lädt die Stimmen deines Kontos (auch Bibliotheksstimmen, die du hinzugefügt hast) und das Restkontingent. Je Rolle (Tower, Ground, Approach, …) eine Stimme oder *Piper (wie oben)* wählen. ▶ spricht eine Probe. In der `config.jsonc` stehen die Stimmen-IDs in `ElevenVoices`, etwa `"Tower": "idA|idB"`; mit `|` behält jede Station eine davon, wie bei `Voices`. Pilotenstimmen bleiben immer Piper.
+- **Modell:** das Flash-Modell `eleven_flash_v2_5` (das schnellste ElevenLabs-Modell, in vielen Tarifen pro Zeichen günstiger als die anderen). Das Sprechtempo stellst du je Rolle in der Stimmentabelle ein (Spalte neben der Stimme, gespeichert als `"id@1.3"` in `ElevenVoices`; ohne eigenes Tempo gilt `ElevenLabsSpeed`; 1 = normal, größer = schneller; über den 1,2, die die API erlaubt, hilft DCS-ATC per ffmpeg nach), unabhängig von `SpeechRate`; Gefechts- und AWACS-Sprüche kommen schneller.
+- **Kontingent:** Das Einstellungsfenster zeigt die verbleibenden Zeichen und das Rücksetzdatum. Bei jedem Start mit Schlüssel steht dasselbe als eine Zeile im Log.
+- **Kosten:** ElevenLabs rechnet nach Zeichen ab. Der kostenlose Tarif mit 10.000 Zeichen im Monat reicht für etwa ein bis zwei Stunden Funk. Kurze feste Sätze werden während einer Sitzung zwischengespeichert.
+- **Keine Mehrkosten:** DCS-ATC hört bei den im Tarif enthaltenen Zeichen auf und nutzt nie kostenpflichtige Zusatzzeichen. ElevenLabs wird nur genutzt, solange das Restkontingent bekannt ist (beim Start und alle 5 Minuten gelesen, mit jedem gesprochenen Text verringert). Ist das Kontingent nicht lesbar, etwa weil dem Key die Berechtigung *User (read)* fehlt, spricht Piper. Ein Text, der länger ist als der Rest, wird von Piper gesprochen; bleibt weniger als 1 % des Tarifs (mindestens 500 Zeichen), zeigt DCS-ATC einen Hinweis im Spiel und nutzt für den Rest der Sitzung Piper. Zusätzlich bei ElevenLabs ein Kreditlimit am API-Key setzen und die nutzungsbasierte Abrechnung im Konto aus lassen.
+- **Ausweichen:** Ohne Internet spricht bei einem fehlgeschlagenen Aufruf die Piper-Stimme der Rolle. Wird der Schlüssel abgelehnt oder ist das Kontingent aufgebraucht, zeigt DCS-ATC einen Hinweis im Spiel und nutzt für den Rest der Sitzung Piper. Speichern im Einstellungsfenster versucht es erneut.
+- **Datenschutz:** Der Text des Funkspruchs geht an ElevenLabs. Der Schlüssel wird aus dem Diagnose-Zip und aus den Logs entfernt.
 
 ### Höhenmesser-Einstellung: hPa oder inHg
 
@@ -799,6 +824,8 @@ DCS-ATC wählt den Platz in dieser Reihenfolge:
 
 Die ATIS sendet dauerhaft für jeden Platz mit einem Spieler im Umkreis von 40 NM. Teilen sich mehrere Plätze eine ATIS-Frequenz, wechseln sie sich ab. Das Wetter kommt aus der Mission.
 
+Ändert sich die Meldung während der Spracherzeugung, verwirft die Dauersendung die überholte Aufnahme. Das gilt auch dann, wenn der Kennbuchstabe gleich bleibt. Mehrere ATIS-Frequenzen eines Platzes können denselben aktuellen Wetterbericht senden.
+
 > **ATIS:** Kutaisi information Alpha, time zero eight zero zero Zulu. Runway two five in use, left hand pattern, 2000 feet. Wind two four zero degrees, eight knots. Visibility one zero kilometers or more, sky clear. Temperature one five. QNH one zero one three, altimeter two niner niner two. Tower one three four decimal zero, UHF two six three decimal zero. Advise on initial contact you have information Alpha.
 
 - **Wolken** werden als Wolkenuntergrenze über dem Platz genannt („clouds 2500 feet“). **Wind** ist missweisend, unter 3 kt „wind calm“.
@@ -811,7 +838,7 @@ Die ATIS sendet dauerhaft für jeden Platz mit einem Spieler im Umkreis von 40 N
 
 ### Bahnwahl
 
-- **Wind bis 3,5 m/s (etwa 7 kt):** die DCS-Hauptbahn ist aktiv. Nutzen KI-Flugzeuge bei schwachem Wind die Gegenrichtung, folgt DCS-ATC ihnen.
+- **Wind bis 3,5 m/s (etwa 7 kt):** die DCS-Hauptbahn ist aktiv. Nutzen KI-Flugzeuge bei schwachem Wind die Gegenrichtung, folgt DCS-ATC ihnen. Lande- und Startrichtung lernt DCS-ATC getrennt: landet die KI an einem Ende der Bahn und startet am anderen (Nellis: Landung 21, Start 03), macht DCS-ATC es genauso, und das ATIS nennt beide.
 - **Stärkerer Wind:** die Bahn mit dem meisten Gegenwind. So landet auch die DCS-KI.
 - **Parallelbahnen** heißen nach Lage L/R/C, etwa 30L/30R. Landungen gehen auf die Seite der Hauptbahn.
 - **Wann die Bahn wechselt:** nur, solange du parkst oder nicht mit dem Platz arbeitest. Ein laufendes Verfahren behält seine Bahn.
@@ -846,7 +873,7 @@ Plätze können NOTAMs haben. Die ATIS liest sie vor „Advise on initial contac
 Der Platz ist **IFR**, wenn die Missionssicht unter 5 km oder die Wolkenuntergrenze unter 600 m (etwa 2000 ft) über NN liegt. Unter IFR:
 
 - Kein Initial und kein Overhead. „initial“ bekommt „negative, field is I F R. Expect vectors for ILS approach runway two five, localizer …, report inbound to Kutaisi Approach.“ „overhead“ bekommt „negative, field is I F R, no overhead.“
-- Approach führt dich auf ein **ILS**, wenn die Bahn eins hat, sonst auf einen **PAR**-Anflug mit Gleitweg-Ansagen.
+- Approach führt dich auf ein **ILS**, wenn die Bahn eins hat, sonst auf einen **PAR**-Anflug mit Gleitweg-Ansagen. Flugzeuge ohne ILS-Empfänger (F/A-18, F-14, AV-8B, F-5E, F-86, MiG-15/19, Warbirds) bekommen statt des ILS einen PAR-Anflug (VFR: Geradeausanflug).
 - „cancel IFR“, „VFR“ und „request visual approach“ werden abgelehnt.
 - Touch-and-go und Low Approach werden radargeführte Instrumentenrunden.
 
@@ -856,7 +883,9 @@ Liegt die Sicht unter 5 km oder die Wolkenuntergrenze unter 1000 ft, ergänzt de
 
 **Standardmäßig geradeaus**
 
-**Nachts** (Sonne mehr als 6° unter dem Horizont) und für Typen ohne Overhead Break gibt „inbound“ einen Geradeaus- oder Instrumentenanflug. Das sind Hubschrauber, C-130/C-17, C-47, An-/Il-/Tu-, B-1/B-52, KC-Tanker, E-2/E-3 und S-3. Mit „overhead“, „VFR“ oder „cancel IFR“ gibt es trotzdem den Overhead Break. („request visual approach“ gibt einen Sichtanflug geradeaus.)
+**Nachts** (Sonne mehr als 6° unter dem Horizont) und für Typen ohne Overhead Break gibt „inbound“ einen Geradeaus- oder Instrumentenanflug. Das sind C-130/C-17, C-47, An-/Il-/Tu-, B-1/B-52, KC-Tanker, E-2/E-3 und S-3. Mit „overhead“, „VFR“ oder „cancel IFR“ gibt es trotzdem den Overhead Break. („request visual approach“ gibt einen Sichtanflug geradeaus.)
+
+**Hubschrauber** fliegen keine Platzrunde an der Bahn. Auf „inbound for landing“ kommt *„proceed direct to the field, report two miles“*, danach *„wind calm, cleared to land at the ramp“*. Die Freigabe kommt bei zwei Meilen auch ohne Meldung und sofort, wenn du innerhalb von 5 NM rufst. Du stehst nicht in der Landereihenfolge und niemand sagt dir, die Bahn zu verlassen. Am Boden bei Ground *„air taxi to parking“* anfragen oder dort abstellen, wo du stehst. Für einen Anflug auf die Bahn oder Platzrunden die Bahn oder den Anflug nennen („inbound for landing runway 25“, „request straight in“, „touch and go“). Bei Instrumentenwetter und im Notfall wird ein Hubschrauber wie ein Flugzeug geführt.
 
 ### Ground
 
@@ -880,6 +909,9 @@ Als Anlassanfrage zählen: „request startup“, „start up“, „request eng
 
 - **Freigabegrenze:** ohne Ziel der nächste eigene Platz in Abflugrichtung. Das F10-Menü **Ground → IFR clearance** listet Plätze nach Entfernung.
 - **Reiseflughöhe** nach Halbkreisregel: FL150 ostwärts, 14.000 ft westwärts. Ein Ziel näher als 40 NM bekommt eine niedrige Höhe. Nie unter Gelände plus 2000 ft.
+- **Ziel per ICAO-Code:** „request IFR clearance to Uniform Golf Sierra Bravo“ (oder „UGSB“) geht wie der Name, für Namen, die die Spracherkennung falsch versteht. Die Kaukasus-Plätze haben ihren Code eingebaut; auf anderen Karten trägst du `"icao": "ETMN"` in den Eintrag des Platzes in einer Kartendatei ein (siehe [Eigene Platzverfahren](#eigene-platzverfahren-chartsjsonc)).
+- **Abflug aus der Kartendatei:** „request IFR clearance, Dream departure“ nimmt den Abflug in die Freigabe auf („cleared to Dream via the Dream departure, climb and maintain …“; der letzte Punkt des Abflugs ist das Freigabeende, mit genanntem Flugplatz bleibt es „cleared to Creech airport via radar vectors, after departure fly the Dream departure …“) und merkt ihn für die Startfreigabe, wie bei „request taxi, Dream departure“.
+- **Range als Ziel:** „request clearance to Three Lakes Range, FYTTR departure“ macht die Range zum Freigabeende: „cleared to Three Lakes Range via the FYTTR departure, climb and maintain …“, ohne Abflug „cleared to Three Lakes Range via radar vectors, after departure fly runway heading, …“. Nach dem Start lenkt Departure dich zur Range. Sag den Zonennamen wie in der Mission oder ihr Rufzeichen mit „range“ („Dogbone Range“ für die Zone „R-62A Dogbone Range“). Die Range ist eine Triggerzone mit dem Wort Range im Namen, siehe [Range](#range). Ein genannter Flugplatz geht vor.
 - **Feindliches Ziel:** „unable clearance to …, say alternate destination.“
 - **Readback-Prüfung:** geprüft wird nur der Squawk im Readback („squawk 4216“).
 - **Eigene Departure-Frequenz:** hat der Platz eine in `frequencies.jsonc`, sagt die Freigabe „departure frequency two seven three decimal five five“ statt „departure Kutaisi Approach“.
@@ -919,8 +951,9 @@ Als Anlassanfrage zählen: „request startup“, „start up“, „request eng
 - **Zu früh gefragt:** fragst du noch auf der Bahn nach Rollen, kommt „report runway vacated.“
 - **Kein Anruf:** rufst du 30 s nach dem Abrollen nicht, erinnert Tower einmal: „contact Kutaisi Ground.“
 - **Parkplatz:** dein eigener, wenn frei, sonst der nächste freie. Plätze anderer Spieler werden übersprungen. Ground gibt die Richtung einmal und erneut nur, wenn du abdriftest (oder mit „progressive“ bei jeder Halbierung der Entfernung).
+- **Nur Rampe:** Mit `"AssignParkingSpot": false` in der `config.jsonc` nennt Ground nur die Rampe aus der `charts.jsonc` („taxi to Ramp West via Alpha“), und du parkst darauf, wo du willst. Plätze ohne benannte Rampe bekommen weiter einen Parkplatz. Nur für einen einzelnen Platz: `"ramp_only": true` in seinem `ground`-Abschnitt der `charts.jsonc`.
 - **Auf deinem Platz:** „you are on your parking position, shut down at your discretion.“
-- **Wann du als geparkt giltst:** nach 30 s Stillstand auf dem Vorfeld oder wenn du auf einem Parkplatz die Triebwerke abstellst. Das beendet den Flug und schreibt das Debriefing.
+- **Wann du als geparkt giltst:** nach 30 s Stillstand auf dem Vorfeld oder wenn du auf einem Parkplatz die Triebwerke abstellst. Das beendet den Flug und schreibt das Debriefing. Hat Ground dir einen Parkplatz genannt, zählt der Stillstand nur im Umkreis von 100 m um diesen Platz und erst nach der Rollfreigabe. Woanders geparkt, zum Beispiel auf dem Vorfeld deiner Staffel: melde „Nellis Ground, Enfield 1-1, at parking, shutting down“, Ground antwortet „roger“, und der Flug endet dort.
 
 ### Tower: Abflug
 
@@ -1039,7 +1072,7 @@ Approach führt dich zum **Initial**: etwa 2 NM (4000 m) vor der Schwelle auf de
 > **Du:** Kutaisi Tower, Enfield 1-1, four miles final, gear down.  
 > **Tower:** Enfield one one, runway two five, wind …, cleared to land.
 
-- **Führung:** innerhalb 8 NM und bei freiem Gelände direkt auf einen 6-NM-Endanflug. Sonst Radarführung zum Endanflug.
+- **Führung:** innerhalb 8 NM, bei freiem Gelände und von der Anflugseite direkt auf einen 6-NM-Endanflug. Sonst Radarführung zum Endanflug, auch wenn du hinter oder neben der Bahn bist (etwa direkt nach dem Start): Approach behält dich dann, bis du im Endanflug bist, und übergibt dort an Tower.
 - **Höhe:** auf oder unter dem Gleitweg, aber nie unter der Geländefreiheit.
 - **ILS-Bahnen:** „maintain 2500 feet until established, cleared ILS approach runway two five, localizer …“
 - **„initial“ im Geradeaus-Anflug** bekommt „make straight in runway two five, report four miles final.“
@@ -1107,13 +1140,13 @@ Approach führt dich zum **Initial**: etwa 2 NM (4000 m) vor der Schwelle auf de
   | A-10, L-39, C-101 | 250 / 200 / 160 kt |
   | Hubschrauber | Keine Fahrtvorgaben |
 
-  Bist du zu dicht hinter dem Vordermann (3 NM, hinter Heavy 5 NM): „reduce speed 170 knots for spacing.“ Nahe am Gate: „reduce to final approach speed“.
+  Bist du zu dicht hinter dem Vordermann (3 NM, hinter Heavy 5 NM): „reduce speed to 170 knots for spacing.“ Nahe am Gate: „reduce to final approach speed“.
 - **Say airspeed:** nach einer Fahrtvorgabe hast du 90 s Zeit. Bist du dann noch mehr als 60 kt daneben und wirst nicht langsamer, fragt Approach „say airspeed.“ Antworte mit deiner Fahrt: „Kutaisi Approach, Enfield 1-1, 340 knots“, oder Rad **Approach → Fahrt melden**, oder Enter.
 
   | Deine Antwort | Approach |
   |---|---|
   | Innerhalb 30 kt der Vorgabe | „roger.“ |
-  | Weiter daneben | „roger, reduce speed 300 knots.“ (einmal) |
+  | Weiter daneben | „roger, reduce speed to 300 knots.“ (einmal) |
   | „unable“ | „roger, resume normal speed.“ |
   | Keine Antwort in 30 s | „resume normal speed.“ |
 
@@ -1142,13 +1175,30 @@ Approach führt dich zum **Initial**: etwa 2 NM (4000 m) vor der Schwelle auf de
 
 > **Approach:** Enfield one one, 12 miles from touchdown, maintain 3000 feet until established, cleared ILS approach runway two five, QNH one zero one three, contact Kutaisi Tower.
 
+- **Die Freigabe kommt mit der letzten Kurve zur Mittellinie** (ILS und PAR). Die Kurve ist höchstens 30° und trifft die Mittellinie mindestens 2 NM vor dem Gate. Näher am Gate gilt höchstens 20°, und nur bei einer Wolkenuntergrenze mindestens 500 ft über der Mindestführungshöhe und 3 Meilen Sicht. Bist du schon nahe der Mittellinie, bekommst du eine Kurve von 10 bis 30° darauf, nie einen Parallelkurs.
+
+Flugzeuge ohne ILS-Empfänger (F/A-18, F-14, AV-8B, F-5E, F-86, MiG-15/19, Warbirds) bekommen keine ILS-Freigabe, sondern einen PAR-Anflug (VFR: Geradeausanflug).
+
 Ein ILS-Anflug wird nur überwacht: keine Gleitweg-Ansagen, nur die eine Tiefflugwarnung.
 
-**PAR** (IFR ohne ILS oder Notfall ohne ILS). Nach der Übergabe gibt Tower Präzisionsradar-Korrekturen höchstens alle 20 s und nur bei deutlicher Abweichung:
+**PAR** (IFR ohne ILS oder Notfall ohne ILS). Mit deinem ersten Ruf an Tower baut der Lotse den Talk-down auf und führt dich dann mit einem Ruf etwa alle 5 bis 10 Sekunden bis zur Schwelle, jeder 2,5 Sekunden nach dem Ende des vorigen:
 
-> **Tower:** Enfield one one, three miles, slightly above glidepath, reduce rate of descent, slightly left of course, turn right heading two five two.
+> **Tower:** Enfield one one, Kutaisi Tower, P A R final. This will be a P A R approach to runway two five, decision height two hundred sixty feet. Do not acknowledge further transmissions. If no transmissions are received for five seconds on final approach, execute missed approach.  
+> **Tower:** Enfield one one, on glidepath, begin descent, on course.  
+> **Tower:** Enfield one one, five miles from touchdown, slightly above glidepath, coming down, slightly right of course, turn left heading two four eight.  
+> **Tower:** Slightly above glidepath, on course.  
+> **Tower:** Enfield one one, at decision height, on course.  
+> **Tower:** Over landing threshold.
 
-Gleitweg-Begriffe: „well/slightly above/below glidepath“. Korrekturen: „increase rate of descent“, „reduce rate of descent“, „level off“.
+- **Nicht quittieren.** Einfach fliegen. Hörst du auf Final 5 Sekunden nichts, Fehlanflug fliegen (Funkausfall).
+- **Ein PAR braucht einen langen Endanflug.** Approach bringt dich mindestens 8 NM vor der Schwelle auf den Endanflugkurs, eben auf der mit der Freigabe genannten Höhe („maintain ...“), und gibt die Freigabe einmal mit der letzten Kurve. Innerhalb von etwa 8 NM führt Approach dich erst hinaus, damit du den Gleitweg etwa 6-7 NM vor der Schwelle von unten triffst. Der Sinkflug beginnt mit „begin descent“ von Tower. Liegen Tower und Approach auf derselben Frequenz, beginnt der Talk-down nach der Übergabe von selbst, ohne Ruf an Tower; mit deinem ersten Ruf an Tower bekommst du immer die Einweisung, nie zuerst eine Landefreigabe.
+- Bist du bei der letzten Kurve noch neben der Anfluglinie, gibt Approach einen Kurs, der auf sie zuläuft (10-30°, mit Windvorhalt); den Rest macht der Talk-down von Tower.
+- Vor dem Gleitweg gibt es nur den Kurs und „approaching glidepath“, dann „on glidepath, begin descent“. Sinkst du vorher mehr als 200 ft unter die freigegebene Höhe, hörst du „check altitude, maintain ...“. Nach „begin descent“ hat jeder Ruf Gleitweg und Kurs, dazu die Entfernung bei jeder vollen Meile von 6 bis 1.
+- Während des Talk-downs macht Tower keine allgemeinen Durchsagen auf der Frequenz (keine neue ATIS-Kennung); die neue Information bekommst du später.
+- Begriffe: „slightly/well above/below glidepath“, „slightly/well left/right of course“, mit Tendenz „coming down“, „coming up“, „going further above/below/left/right“ oder „correcting“; „increase/reduce rate of descent“; „turn left/right heading ...“ (nur „heading ...“, wenn du schon darauf bist). Der Kurs ist exakt und berücksichtigt den Wind.
+- Die Landefreigabe wird im Talk-down mitgegeben.
+- **Sicherheitsgrenzen:** zwischen 3 NM und der Entscheidungshöhe mehr als 0,6° unter oder 1,2° über dem Gleitweg, oder innerhalb 2 NM mehr als 2,5° neben dem Kurs: „Enfield one one, too low for safe approach, if runway not in sight, execute missed approach.“ mit den Anweisungen für den Fehlanflug (ebenso „too high“, „too far left/right of course“).
+- Ein Ruf alle 5 bis 10 s heißt etwa 30 bis 40 Rufe pro Anflug; bei ElevenLabs-Stimmen zählt das auf dein Zeichenkontingent.
 
 **Sichtanflug** (nur VFR-Wetter):
 
@@ -1180,17 +1230,29 @@ Approach schickt dich ins Holding, wenn eines davon zutrifft:
 - **Prüfungen im Holding:** driftest du ab oder bist mehr als 30 kt neben der Fahrt, kommt eine Kurs- bzw. Fahrterinnerung. Mehr als 500 ft neben der Höhe: „check altitude, maintain 5000 feet.“
 - **Holding verlassen:** bist du dran, wirst du innerhalb 2 min mit einem Kurs grob Richtung Anflug entlassen.
 
+#### Staffelung
+
+Approach und Departure halten dich von anderem Verkehr fern, Spieler wie KI. Die Teile an einer Stelle:
+
+- **Höhen:** Du bekommst nur eine Höhe, die frei ist: auf dem Weg dorthin kein Verkehr innerhalb 3 NM und 1000 ft und kein Konflikt in den nächsten 60 s. Sonst bleibst du, wo du bist, bis der Verkehr durch ist. Unter Radarführung kommt der nächste Sinkschritt später; auf eine Anfrage hörst du „unable higher, traffic, maintain 5000 feet.“
+- **Warteschleife:** Der Stapel ist mit 1000 ft je Flugzeug gestaffelt. Die nächsttiefere Höhe bekommst du, wenn der Vordermann sie verlassen hat.
+- **Endanflug:** 3 NM hinter dem Vordermann, 5 NM hinter einem Heavy. Kommst du zu nah: „reduce speed to 170 knots for spacing.“ In der Platzrunde: „extend downwind, number two“, und „go around“, wenn die Bahn nicht rechtzeitig frei ist.
+- **Reihenfolge:** Ab zwei Flugzeugen in der Platzrunde warten Anflüge in der Warteschleife mit erwarteter Anflugzeit.
+- **Letztes Mittel:** die Verkehrswarnung mit Ausweichkurs und Ausweichhöhe, siehe unten.
+- KI-Flugzeuge fliegen, wie DCS sie fliegt; DCS-ATC steuert sie im Flug nicht. Du wirst um sie herum gestaffelt.
+
 #### Verkehrsinformationen und Verkehrswarnungen
 
 | Wann | Spruch |
 |---|---|
 | Erstanruf, Radarführung | „Traffic, Viper, 3 miles south of the field, 1500 feet.“ |
-| Konflikt innerhalb 60 s (näher als 1,5 NM und 700 ft) unter Führung oder im Anflug | „traffic alert, traffic 2 o'clock, 3 miles, same altitude. Turn right heading one two zero immediately, climb and maintain 5000 feet.“ Die nächsten 30 s keine anderen Anweisungen |
+| Konflikt innerhalb 60 s (näher als 1,5 NM und 700 ft) unter Führung oder im Anflug | „traffic alert, traffic 2 o'clock, 3 miles, same altitude. Turn right heading one two zero immediately, climb and maintain 5000 feet.“ Die nächsten 30 s keine anderen Anweisungen. Die Ausweichhöhe gilt nur vorübergehend: danach geht Approach zurück auf deine Vektorhöhe (oder deine aktuelle Höhe, wenn du inzwischen tiefer bist) |
 | KI-Abflug steigt in deinen Weg | „turn right heading …, traffic 11 o'clock, 4 miles, departing aircraft, climbing through 3000 feet.“ |
 | In der Platzrunde: Verkehr ohne Kontakt zum Tower, innerhalb 30 s näher als 0,5 NM | „traffic 2 o'clock, 1 mile, FA-18C, 1500 feet, no contact with Tower.“ |
 
-- **Antworten:** „traffic in sight“ bzw. „tally“, „looking“, „negative contact“ bzw. „no joy“. Approach antwortet „roger.“
+- **Antworten:** „traffic in sight“ bzw. „tally“, „looking“, „negative contact“ bzw. „no joy“. Approach antwortet „roger.“ Nach „traffic in sight“ kommen keine Ansagen mehr zu diesem Flugzeug, bis es mehr als 6 NM entfernt ist.
 - **Wessen Verkehr:** Radarhinweise nur für die eigene Seite und Neutrale; Feinde sind Sache des AWACS. Tower meldet alle in der Platzrunde.
+- **Begleitschutz und Verband:** Ein Flugzeug, das seit einer Minute bei dir bleibt (innerhalb 2,5 NM und 1500 ft, ungefähr gleiche Richtung), gilt als dein Begleitschutz oder Verbandspartner, zum Beispiel eine während der Mission erzeugte KI-Eskorte. Approach gibt darauf keine Verkehrshinweise und keine Traffic Alerts, bis es 20 s lang nicht mehr im Verband ist.
 
 #### Geländewarnung
 
@@ -1335,7 +1397,7 @@ Mit `"AirspaceWatch": false` bleiben nur die Sicherheitssprüche. Keine „possi
 
 ### Transponder (IFF)
 
-DCS-ATC liest deinen Transponder aus SRS: den Mode-3-Code, die IDENT-Taste und Mode 4. SRS bekommt ihn bei Modulen mit IFF-Export aus dem Cockpit, sonst aus dem SRS-Overlay. Ohne SRS oder in einem Modul ohne Transponder entfällt alles hier.
+DCS-ATC liest deinen Transponder aus SRS: den Mode-3-Code, die IDENT-Taste und Mode 4. SRS bekommt ihn bei Modulen mit IFF-Export aus dem Cockpit, sonst aus dem SRS-Overlay. Ohne SRS entfällt alles hier.
 
 - **Squawk 7700** wird immer bemerkt (nach 5 s, ein nur durchgedrehter Code zählt nicht): *„Enfield one one, Kutaisi Approach, observed squawk 7700, say nature of emergency.“* Danach erklärst du den Notfall wie gewohnt (siehe [Notfälle](#notfälle)). Hast du ihn schon erklärt, kommt nichts weiter.
 - **VFR-Code** beim Abmelden: *„squawk 7000“*, auf den US-Karten (Nevada, Marianen) *„squawk VFR“* (1200).
@@ -1358,7 +1420,7 @@ Mit **Transponder prüfen** in den Einstellungen (`"IffCheck": true`, Standard a
 | Zweiter Notruf während dein Notfall läuft | „roger mayday, continue as cleared.“ |
 | „high key“ / „flameout, high key“ im eigenen Notfall (echter Flameout, auch im IMC) | „report low key.“ Bei „low key, gear down“: „runway two five, wind …, cleared to land.“ (SFO-Übung: nur VMC und ohne anderen Notfall) |
 | „cancel emergency“ | Unter Radarführung: „roger, emergency cancelled, continue as cleared.“ Mit Landefreigabe: „roger, emergency cancelled, runway two five, cleared to land.“ Aus Initial oder Platzrunde: „Join left hand downwind, 2000 feet, report base.“ Sonst (weit draußen, kein Notfall) nur „roger.“ |
-| „minimum fuel“, „low fuel“, „bingo“ | „roger minimum fuel, number 2, expect approach in 3 minutes.“ oder „…, expect no delay.“ Kein Vorrang |
+| „minimum fuel“, „low fuel“, „fuel critical“, „bingo“ | „roger minimum fuel, number 2, expect approach in 3 minutes.“ oder „…, expect no delay.“ Kein Vorrang |
 
 - **Rad und F10:** **Notfall → MAYDAY / PAN PAN →** Triebwerksausfall, Treibstoff (nur MAYDAY), Hydraulik, Gefechtsschaden, Medizinisch, Vogelschlag.
 - **Welcher Platz:** hast du keinen Platz genannt oder gewählt und bist auf keinen gerastet, geht der Notfall an den nächsten geeigneten eigenen oder neutralen Platz. Bahnen ab 1800 m werden bevorzugt.
@@ -1398,7 +1460,9 @@ Das Debriefing sammelt:
 - die Zahl der vom Lotsen abgelehnten Sprüche
 - Einträge von Range, Tanker, Träger und AWACS
 
-Parkst du nach einem Flug, wird es automatisch gezeigt und unter `%LOCALAPPDATA%\Programs\DCS-ATC\debrief\<Datum>_<Uhrzeit>_<Rufzeichen>.txt` gespeichert. Jederzeit abrufbar über Rad oder F10 **Allgemein → Debriefing**.
+Parkst du nach einem Flug, wird es automatisch gezeigt und unter `%LOCALAPPDATA%\Programs\DCS-ATC\debrief\<Datum>_<Uhrzeit>_<Rufzeichen>.txt` gespeichert. Jederzeit abrufbar über Rad oder F10 **Allgemein → Debriefing / Log → Debriefing**.
+
+Gibt es den Dateinamen schon, erhält der nächste Bericht die Endung `-2.txt`, dann `-3.txt`. Ist der Zielordner gesperrt, legt DCS-ATC den fertigen Bericht unter `%LOCALAPPDATA%\DCS-ATC\pending-debriefs` ab. Die laufende App versucht den Export alle 30 Sekunden erneut, auch nach einem Neustart. Der Flug zählt dabei einmal im Logbuch. Meldet die App „nur im Arbeitsspeicher“, stelle vor dem Beenden den Schreibzugriff wieder her.
 
 **Arten von Verstößen:** Start ohne Freigabe; Bahn ohne Freigabe betreten; Landung ohne Freigabe; Landung nach Durchstartanweisung; Luftraumverletzung; Bahn ohne Freigabe überquert; aus der Reihenfolge genommen; Rollen ohne Freigabe; Anflug ohne Kontakt; keine Landemeldung; Durchstarten ohne Meldung; kein Check-in bei Departure (IFR); kein Check-in bei Approach nach dem Fehlanflug; keine Meldung „leaving the control zone“; keine Meldung „clear of the zone“. Träger, Tanker und Range tragen eigene ein (Approach-Zeit ohne „commencing“ verstrichen, Kontakt bzw. Annäherung an einen Tanker ohne Freigabe, kein „off“ auf der Range).
 
@@ -1431,7 +1495,7 @@ Ein Fluglehrer fliegt auf dem Bordfunk mit und prüft drei Platzrunden, einen An
 |---|---|---|
 | **Initial:** „Kutaisi Tower, Enfield 1-1, initial runway 25“ | Am Initial: „report initial“ | 1 NM hinter dem Initial: „no break clearance, continue straight through, re-enter initial runway two five, report initial.“ |
 | **Overhead:** „…, overhead“ | Über dem Platz (0,7 NM): „report overhead“ | 1,5 NM später: „no clearance to join, remain outside the pattern, say intentions.“ |
-| **CRP** (Kutaisi): „…, C R P north“ | Innerhalb 1 NM vom CRP, Approach: „report C R P north“ | 2 NM danach: „say position, remain outside the control zone“ (keine Übergabe) |
+| **CRP** (Kutaisi): „…, C R P north“ | Erst wenn der CRP hinter dir liegt (du also ohne Meldung darüber weg bist), Approach: „report C R P north“. Melden kannst du ab 2,5 NM vor dem Punkt und auch genau darüber. | 2 NM danach: „say position, remain outside the control zone“ (keine Übergabe) |
 | **Landemeldung:** Platzrunde „base, gear down (full stop)“; geradeaus oder ILS „four mile final, gear down“ | Bei etwa 2,5 NM im Endanflug oder im Queranflug: „report final“ | Innerhalb 0,8 NM bzw. unter 300 ft: „go around, no landing clearance, …, report base“ (IFR oder geradeaus: Fehlanflug), dazu ein Verstoß |
 | **Erstanruf vor dem Einflug in die Zone** (Approach oder Tower) | Zonenwache: „…, say intentions“ | Innerhalb 1 NM im Endanflug: „go around, you are not cleared to land“, dazu ein Verstoß |
 | **Tower-Check-in nach „contact Tower“** („…Tower, Enfield 1-1, initial / overhead / four mile final“) | Nur wenn Tower eine eigene Frequenz hat: nach 60 s oder innerhalb 5 NM vom Platz sagt Approach „contact Kutaisi Tower now, <Frequenz>“ (auf gemeinsamer Frequenz gelten die Aufforderungen oben) | Keine Landefreigabe; es gilt die Regel zur Landemeldung oben |
@@ -1467,7 +1531,7 @@ Schlüsselwörter werden überall im Spruch erkannt. Beginne mit „<Platz> <Lot
 | „leaving the control zone“ | Approach, nach Aufforderung | Abgemeldet, squawk 7000 |
 | „inbound (for landing)“, „landing“, „recovery“, „rejoin“, „full stop“ | Approach (Tower innerhalb 4 NM) | Radarführung, Holding oder Einflug in die Platzrunde |
 | „inbound for pattern work, touch and go“ | Approach | Führung, dann Platzrunden |
-| „request straight in“, „ILS“, „instrument“, „TACAN/VOR/PAR approach“, „radar approach“, „IFR“ | Approach | Geradeaus- oder Instrumentenanflug |
+| „request straight in“, „VFR straight in“, „request vectors to final“, „ILS“, „instrument“, „TACAN/VOR/PAR approach“, „radar approach“, „IFR“ | Approach | Geradeaus- oder Instrumentenanflug |
 | „request visual approach“ / „field in sight“, „runway in sight“, „have the field“ | Approach | Sichtanflug, sobald der Platz gemeldet ist |
 | „VFR“, „cancel IFR“, „visual recovery“ | Approach | Overhead bzw. Initial statt Instrumentenanflug (nur VFR-Wetter) |
 | „request runway 07“ / „runway 30 left“ | Alle | Bahnwunsch (bis 10 kt Rückenwind) |
@@ -1486,16 +1550,16 @@ Schlüsselwörter werden überall im Spruch erkannt. Beginne mit „<Platz> <Lot
 | „request zone transit“, „crossing“, „overflight“, „pass through“ / „clear of the zone“ | Approach (Tower innerhalb 5 NM) | Durchflugfreigabe / abgemeldet |
 | „request checkride“ / „cancel checkride“ (beliebige Frequenz) | Fluglehrer (Bordfunk) | Prüfflug-Aufgaben / beendet |
 | „request flight following“, „radar service“, „traffic advisories“ / „cancel flight following“, „leaving frequency“ | Approach | Flight Following an / aus |
-| „traffic in sight“, „tally“, „looking“, „negative contact“, „no joy“ | Approach/Tower | „roger“, Hinweisstatus vermerkt |
+| „traffic in sight“, „tally“, „looking“, „negative contact“, „no joy“, „blind“ | Approach/Tower | „roger“, Hinweisstatus vermerkt |
 | „terrain in sight“ | Approach | Geländewarnung quittiert |
 | „request separate landing“, „split“, „radar trail“ | Approach (Rotten) | Jedes Mitglied meldet einzeln |
 | „runway vacated“, „clear of runway“, „taxi to parking“ | Ground nach der Landung | Rollen zum Parkplatz |
 | „mayday“, „pan pan“ / „cancel emergency“ | Alle | Notfallverfahren / Notfall beendet |
-| „minimum fuel“, „low fuel“, „bingo“ | Approach/Tower | Quittiert, Reihenfolge und Verzögerung |
+| „minimum fuel“, „low fuel“, „fuel critical“, „bingo“ | Approach/Tower | Quittiert, Reihenfolge und Verzögerung |
 | „unable“ | Alle | „roger, say intentions“ (am Boden: „hold position“) |
 | „say again“, „repeat“, „say last“, „didn't copy“ | Alle | Letzter Spruch wiederholt bzw. aktualisiert |
 | „confirm …“, „verify …“ | Alle | „affirm …“ / „negative …“ oder Wiederholung |
-| „radio check“, „how do you read“ | Alle | „read you five“ |
+| „radio check“, „comm check“, „how do you read“ | Alle | „read you five“ |
 | „request weather“, „QNH“, „wind“, „which runway“, „runway in use“ | Alle | Wind, QNH, aktive Bahn |
 | „good day“, „thanks“, „bye“ | Alle | „good day“ |
 | „roger“, „wilco“, „copy“, „start up approved“, nur das Rufzeichen, Readback von Zahlen | Alle | Keine Antwort |
@@ -1508,7 +1572,7 @@ DCS-ATC übernimmt den Funk für jeden eigenen Träger in der Mission: Marshal, 
 
 ### Unterstützte Träger
 
-Erkannt wird jede Schiffsgruppe, deren erste Einheit ein Supercarrier oder Träger ist: Nimitz-Klasse / CVN, Stennis, Forrestal, Kuznetsov und Tarawa. Bei Schrägdeck-Trägern liegt das Final Bearing etwa 9° links vom Schiffskurs (BRC). Die Tarawa hat ein gerades Deck, ihr Final Bearing ist gleich dem BRC.
+Erkannt wird jede Schiffsgruppe, deren erste Einheit ein Supercarrier oder Träger ist: Nimitz-Klasse / CVN, Stennis, Forrestal, Kuznetsov und Tarawa. Bei Schrägdeck-Trägern liegt das Final Bearing links vom Schiffskurs (BRC): etwa 9° bei Nimitz-Klasse und Forrestal, etwa 8° bei der Kuznetsov. Jede Klasse hat für den LSO ihre eigene Deckhöhe, Seilpositionen und ihren Gleitwinkel (Kuznetsov 4°). Die Tarawa hat ein gerades Deck und keine Seile, ihr Final Bearing ist gleich dem BRC und die Note nennt kein Seil.
 
 Die Seite **Carrier** im Funkrad erscheint nur, wenn die Mission einen Träger enthält.
 
@@ -1541,7 +1605,7 @@ Stationen ohne Eintrag bleiben auf der Trägerfrequenz. Jede Station sendet dann
 Mit SRS geht alles, was du auf einer Trägerfrequenz sendest, an den Träger. Ohne SRS (nur Sprechtaste) schickt DCS-ATC einen Spruch an den Träger, wenn:
 
 - er *Marshal*, *mother*, *Paddles*, *ball*, *Clara*, *carrier* oder *pigeons* enthält, oder
-- du schon eingecheckt bist und er *initial*, *see you at*, *commencing*, *Charlie*, *platform*, *needles*, *up and …*, *down and …* oder *on and on* enthält.
+- du schon eingecheckt bist und er *initial*, *see you at*, *commencing*, *Charlie*, *platform*, *state*, *radial*, *DME*, *needles*, *up and …*, *down and …* oder *on and on* enthält.
 
 Du kannst den Träger auch unter Funkrad → Allgemein → **Platz wählen** auswählen. Sprüche ohne Stationsnamen gehen dann bis zur Landung an den Träger.
 
@@ -1721,10 +1785,10 @@ Paddles beobachtet deinen Groove ab etwa ¾ NM, solange du mit waagerechten Flä
 **Fahrt-Rufe** („slow“/„fast“) brauchen den On-Speed-AoA deines Typs und Anstellwinkeldaten, die es nur für das Flugzeug auf dem PC mit DCS-ATC gibt. Einstellung in `config.jsonc`:
 
 ```jsonc
-"OnSpeedAoa": { "FA-18": 8.1 },   // Grad je Typ-Präfix; andere Typen bekommen keine Fahrt-Rufe
+"OnSpeedAoa": { "F-14": 10.6 },   // Grad je Typ-Präfix; ergänzt die eingebauten Werte oder ersetzt einen
 ```
 
-Für einen anderen Typ ein paar Anflüge fliegen und den Wert aus der Logzeile `[LSO] … AoA im Mittel …` ablesen.
+Eingebaut: FA-18 8.1, F-14 10.4, T-45 8.5, A-4E 8.75, AV8B 10.0. Nur der Hornet-Wert ist im Spiel gemessen, die anderen sind Buchwerte. Andere Typen bekommen keine Fahrt-Rufe. Um einen Wert zu korrigieren oder einen Typ zu ergänzen: ein paar Anflüge fliegen und den Wert aus der Logzeile `[LSO] … AoA im Mittel …` ablesen.
 
 ### Wave-off und Bolter
 
@@ -1758,7 +1822,7 @@ Beide sind freiwillig. Du kannst weiter direkt „Marshal, checking in“ rufen 
 
 Red Crown macht nur Check-in, Identifizierung und Übergabe, keine Luftlage.
 
-Funkrad: Seite **Carrier** (Strike check in / check out, Red Crown check in / check out), F10: `ATC → Carrier → Strike / Red Crown`. Die Einträge erscheinen in der Luft, solange du noch nicht bei Marshal eingecheckt bist. Die Frequenz steht auf dem Kniebrett. Strike und Red Crown gehören zum Modul „Carrier“.
+Funkrad: Seite **Carrier** (Strike check in / check out, Red Crown check in / check out), F10: `DCS-ATC → Carrier → Strike / Red Crown`. Die Einträge erscheinen in der Luft, solange du noch nicht bei Marshal eingecheckt bist. Die Frequenz steht auf dem Kniebrett. Strike und Red Crown gehören zum Modul „Carrier“.
 
 ### Bingo und Ausweichen
 
@@ -1840,7 +1904,7 @@ Andere Abflugmeldungen unterwegs („passing 2.5“, „arcing“, „establishe
 | Case-I-Initial | (zip lip; „initial“ gibt nur einen Texthinweis) | – (vor Charlie: "negative, not Charlie, hold angels 2, expected Charlie …") |
 | Case II/III | "commencing, angels 6, state 5.2" | Marshal: "radar contact, final bearing …, switch Approach" |
 | Case II/III | "platform" | Approach: "Approach, radar contact, N miles" (danach: "roger") |
-| Case II/III | "up and on" / "down and left" / "on and on" … | Approach: "concur" oder "disregard needles, …" |
+| Case II/III | "up and on" / "down and left" / "on and on" / "needles centered" … | Approach: "concur" oder "disregard needles, …" |
 | Case II | "see you at ten" | Approach: "roger, switch Tower" |
 | Groove | "Hornet ball, 5.2" (*ball*) | Paddles: "Roger ball." (Case III: "Roger ball, 25 knots, axial.") |
 | Groove | "Clara" (*Clara / Clarence*) | Paddles: "roger Clara, keep it coming." |
@@ -1919,7 +1983,7 @@ Du erreichst eine Station auf drei Wegen:
 
 - **SRS (Stimme):** Frequenz der Station rasten und senden. DCS-ATC leitet jeden Spruch nach deiner Frequenz.
 - **Stationsname im Spruch:** auf einer Platzfrequenz oder mit Sprechtaste ohne SRS erreicht ein Spruch mit Stationsnamen sie trotzdem: *Overlord / AWACS / Magic / Moscow / Darkstar / Wizard / Focus*, *Texaco / Shell / Arco / Tanker* (auch *refuel*), *Range Alpha / Range control*, *JTAC / FAC A / forward air controller* oder das Rufzeichen des Lotsen (*Axeman one one*). Manche Wörter gehen direkt ans AWACS: *picture*, *bogey dope*, *declare*, *spike*, *request sort*.
-- **Funkrad** oder F10-Menü **ATC → AWACS / Tanker / Center**. Ist die Pilotenstimme an (`"PilotVoice"`), wird deine Anfrage zuerst vorgesprochen, etwa *„Overlord, Enfield 1-1, request picture.“*
+- **Funkrad** oder F10-Menü **DCS-ATC → AWACS / Tanker / Center**. Ist die Pilotenstimme an (`"PilotVoice"`), wird deine Anfrage zuerst vorgesprochen, etwa *„Overlord, Enfield 1-1, request picture.“*
 
 Funkrad-Einträge:
 
@@ -1974,7 +2038,7 @@ Solange du beim AWACS eingecheckt bist, überwacht die Zonenwache des Platzes nu
 | **splash** / **splash 2** / **kill** | *„Overlord copies splash two, west group. East group remains.“* (die abgeschossene Gruppe, dann was bleibt: ein oder zwei Gruppennamen oder *„3 groups remain“*), oder *„Overlord copies splash two, picture clean.“*, wenn nichts mehr da ist. Das *picture clean* wiederholt danach niemand, auch nicht nach dem *„Overlord copies, splash, picture clean.“* eines eigenen KI-Jägers. |
 | **winchester**, **RTB**, **tally** | *„Overlord copies.“* | winchester gibt außerdem deine Zuweisung frei.
 | **unable** (mit Grund: *„unable, winchester / bingo / defensive“*) | *„copy.“* Die Gruppe geht an den nächsten freien Flug; bei winchester oder bingo wirst du nicht mehr verplant. Antwortest du auf ein commit nicht, fragt das AWACS nach 10 s einmal nach (*„commit north group, how copy?“*) und gibt die Gruppe nach 25 s dem nächsten Flug; nach zwei unbeantworteten commits wirst du nicht mehr verplant, bis du wieder sprichst. Eine kurze Quittung (*„Enfield one one.“*, *„resetting“*, *„copy“*) auf eine Weisung bekommt keine Antwort, *„committing“* direkt nach dem commit auch nicht (kein Echo). |
-| **fox one/two/three** (optional mit Gruppe) | Keine Antwort. Die Gruppe gehört dir: Ein eigener KI-Flug darauf hört *„Ford one, Overlord, skip it, north group Enfield one targeted.“* |
+| **fox one/two/three**, **pitbull** (optional mit Gruppe) | Keine Antwort. Die Gruppe gehört dir: Ein eigener KI-Flug darauf hört *„Ford one, Overlord, skip it, north group Enfield one targeted.“* |
 | **defensive** / **defending** / **missile** | Keine Antwort; deine Gruppe bekommt einen zweiten Flug. |
 | **request support** (optional mit Gruppe) | *„copy, north group.“* und ein zweiter Flug wird angesetzt. |
 | **judy** (oder *„targeted north group“*) | *judy*: keine Antwort. Danach keine Entfernungs-Updates mehr zu dieser Gruppe – du führst den Abfang selbst, das AWACS hält die Frequenz frei. |
@@ -2056,15 +2120,17 @@ Overlord: Enfield one one, Overlord, Kutaisi bears 245, 62 miles.
 
 #### Wer spricht, Korb und Boom
 
-Es spricht immer der **DCS-ATC-Tanker**, auch wenn die Mission einen eigenen DCS-Tanker hat. Er führt den ganzen Ablauf wie unten beschrieben. Die DCS-eigenen Tanker bleiben stumm.
+Es spricht immer der **DCS-ATC-Tanker**, auch wenn die Mission einen eigenen DCS-Tanker hat. Er führt den ganzen Ablauf wie unten beschrieben.
 
-DCS bedient Korb bzw. Boom aber nur über seinen eigenen Tankerdialog im F-Menü. Für **den Spieler am PC mit DCS-ATC** drückt DCS-ATC deshalb im Hintergrund das DCS-Funkmenü für dich: *Intent to refuel* erst beim Join (*„cleared to join“*), nicht schon bei der Anfrage, *Ready pre-contact* bei deinem „pre-contact“. Der DCS-Tanker antwortet darauf nicht hörbar.
+DCS bedient Korb bzw. Boom aber nur über seinen eigenen Tankerdialog im F-Menü. Für **den Spieler am PC mit DCS-ATC** drückt DCS-ATC deshalb im Hintergrund das DCS-Funkmenü für dich: *Intent to refuel* erst beim Join (*„cleared to join“*), nicht schon bei der Anfrage, *Ready pre-contact* bei deinem „pre-contact“. Darauf muss der DCS-Tanker selbst antworten, sonst fährt DCS Korb oder Boom nicht aus, und ein stummer DCS-Tanker reagiert auf das Menü gar nicht. Bis zum Join schweigt der DCS-Tanker der Mission deshalb, ab *„cleared to join“* hörst du ihn zusätzlich zum DCS-ATC-Tanker. Direkt nach dem Hörbarschalten ignoriert DCS das Menü, deshalb geht das erste *Intent to refuel* 5 Sekunden nach *„cleared to join“* raus. 15 Minuten nach dem letzten dieser Schritte schweigt er wieder.
 
 - Der DCS-ATC-Tanker hört und spricht auf der Missionsfrequenz des Tankers (AWACS und Funkrad nennen sie) und auf dem Standard 255.5. Mit Easy Communication rastet DCS dein Funkgerät selbst auf die Missionsfrequenz. Teilt sie sich der Tanker mit einem Platz (etwa 261.0 = Senaki UHF), wechselt DCS-ATC deshalb nicht den Platz.
 - Das nutzt `"CommsKey"` (DCS-Funkmenü-Taste als Scancode, Standard `43`, also `\` auf US- und `#` auf deutschen Tastaturen). Mit `0` drückt DCS-ATC das Menü nicht. Ältere `config.jsonc` enthalten die Zeile nicht, dann gilt der Standard. Ist deine Menütaste eine andere, die Zeile ergänzen, z. B. `"CommsKey": 43,`.
 - Das DCS-Funkmenü muss zu sein, wenn DCS-ATC drückt. Leg die SRS-PTT nicht auf dieselben Knöpfe wie eine DCS-Funk-PTT, die das Menü öffnet (z. B. COMM 1 / COMM 2 der Hornet mit Easy Communication): Der Druck von DCS-ATC landet sonst im offenen Menü und schließt es.
+- DCS-ATC fragt DCS, in welcher Stufe sein Tankerdialog steht, und drückt nur, was dazu passt: *Intent to refuel*, wenn es keinen Tankerdialog gibt, *Ready pre-contact*, wenn DCS darauf wartet und du „pre-contact“ gemeldet hast, ab *cleared contact* nichts, denn F1 wäre dann *Abort refuel*. Antwortet der DCS-Tanker nicht innerhalb von etwa 25 Sekunden auf *Intent to refuel*, schickt DCS-ATC ihn noch einmal. Ein weiteres „pre-contact“ nach dem Abrutschen vom Korb drückt deshalb nichts; einfach wieder andocken. Nach vollem Tank beendet DCS seinen Dialog, und ein neues „pre-contact“ sendet wieder *Intent to refuel*. Ohne den KI-Wingmen-Teil des Mods (`DcsAtcWing.lua`) kann DCS-ATC nicht fragen und rät nach dem, was es vorher gedrückt hat.
+- Ist das DCS-Funkmenü offen, wenn DCS-ATC es drücken will, schließt DCS-ATC es zuerst. Bleibt das Hauptmenü danach offen, weil DCS eine Taste verpasst hat, schließt es DCS-ATC und drückt die Tasten noch einmal. Zeigt DCS stattdessen einen eigenen Dialog (oder fehlt `DcsAtcWing.lua`), wird nichts mehr gedrückt.
 - Mit Easy Communication aus drückt DCS-ATC das Menü auch nicht: *Intent to refuel* und *Ready pre-contact* sendest du dann selbst mit der Menütaste deines Funkgeräts (oder VAICOM).
-- **Andere Spieler** im Multiplayer bedienen das DCS-Tankermenü selbst.
+- **Andere Spieler** im Multiplayer (auf einem dedizierten Server: alle Spieler) bedienen das DCS-Tankermenü selbst: *Intent to refuel* nach *„cleared to join“*, *Ready pre-contact* bei Pre-contact. DCS-ATC hält den DCS-Tanker für sie ab *„cleared to join“* 15 Minuten lang hörbar, sonst würde er das Menü ignorieren. Dasselbe gilt für dich mit `"CommsKey": 0`.
 
 #### Deine Sprüche
 
@@ -2075,9 +2141,9 @@ DCS bedient Korb bzw. Boom aber nur über seinen eigenen Tankerdialog im F-Menü
 | **say altitude** / *angels* / *block*, **say speed** / *airspeed* / *knots*, **say track** / *heading* / *course*, **say TACAN** (auch mit *request*, *confirm*, *what*) | Nur das Gefragte, mehreres in einem Spruch: *„Enfield one one, Texaco, angels 22, 280 knots.“* Ohne Bake: *„negative TACAN“*. Ändert nichts am Ablauf, geht in jedem Zustand. |
 | **say position** / *status* / *bearing* / *range* / *where* | Alles: *„bearing 084, 18 miles, angels 22, track north, 280 knots, TACAN 52 X-ray.“* Funkrad: Tanker → Say position. |
 | **request vector** (während des Treffens) | Sofort ein neuer Vektor mit Kurs. |
-| **judy** / *radar contact* | *„roger, report visual.“* Die Join-Führung endet, der Join selbst braucht weiter „visual“. |
+| **judy** / *radar contact* | *„roger, report visual.“* Die Join-Führung endet, der Join selbst braucht weiter „visual“. *negative visual* oder *no joy* bekommt dieselbe Antwort, die Führung läuft weiter. |
 | **visual** (*tally*, *in sight*), mehr als 8 NM weg | *„continue, 20 miles, report visual.“* |
-| **visual**, innerhalb 8 NM | *„cleared to join, observation left wing, number 1.“* Warten mehrere: *„number 2. Enfield one two first, then Enfield one one.“* Vor der 3-9-Linie des Tankers (mehr als 0,5 NM vor ihm): *„negative, rejoin from astern, Texaco 6 o'clock, 2 miles, report visual.“* Angeschlossen wird nur von hinten. |
+| **visual**, innerhalb 8 NM | *„cleared to join, observation left wing, number 1.“* Warten mehrere: *„number 2. Enfield one two first, then Enfield one one.“* Vor der 3-9-Linie des Tankers (mehr als 0,5 NM vor ihm): gibt er den Join trotzdem frei, mit Hinweis: *„cleared to join, left observation, number 1. Rejoin from astern, Texaco one one 6 o'clock, 2 miles.“* Angeschlossen wird weiter von hinten, darum kümmerst du dich selbst. |
 | **moving to …** (*moving to pre-contact*, *moving into left observation*, *moving to the right wing*) | Keine Antwort. Das ist deine Rücklesung, melde dich, wenn du dort bist. |
 | **observation** / **left wing** / **joined** / **stabilized left observation** | Nach dem Join: *„cleared pre-contact.“* Sind andere vor dir: *„stabilize observation left wing, number 2.“* Noch ohne Join-Freigabe (innerhalb 2 NM): *„cleared to join, left observation, number 1.“* |
 | **pre-contact** (*precontact*, *in position*, *ready for contact*, *stabilized*, *ready to refuel*) | *„Enfield one one, cleared contact, basket ready.“* bzw. *„boom ready“*. Mehr als 2 NM weg: *„negative, bearing 084, 12 miles, report visual.“* Noch nicht dran: *„negative, hold observation left wing, number 2.“* Noch ohne Join-Freigabe: *„negative, not cleared pre-contact, cleared to join, left observation, number 1.“* |
@@ -2112,7 +2178,7 @@ DCS-ATC reagiert auf den echten DCS-Tankkontakt:
 
 **Kontakt und Anschluss nur mit Freigabe** (Tanker-Stimme von DCS-ATC, siehe oben):
 
-- **Kontakt ohne „cleared contact“:** *„Enfield one one, Texaco, you are not cleared contact, disconnect, return to left observation.“* und ein Verstoß. Hängt schon ein anderer Empfänger an diesem Tanker, kommt stattdessen *„breakaway, breakaway, breakaway.“*
+- **Kontakt ohne „cleared contact“:** *„Enfield one one, Texaco, you are not cleared contact, disconnect, return to pre-contact.“* (*„... return to left observation.“*, wenn du noch nicht gejoint hast oder nicht an erster Stelle stehst) und ein Verstoß. Hängt schon ein anderer Empfänger an diesem Tanker, kommt stattdessen *„breakaway, breakaway, breakaway.“*
 - **Zu nah vor „cleared to join“:** hast du ums Tanken gebeten, aber noch keine Anschlussfreigabe, und kommst innerhalb 1 NM und ±500 ft an den Tanker: *„Enfield one one, Texaco, not cleared to join, remain 1000 feet below, report visual.“* Bist du 30 s später noch dort: Verstoß.
 
 #### Beispiel (Multiplayer-Mitspieler, DCS-ATC-Tankerstimme)
@@ -2139,7 +2205,13 @@ Texaco:  Enfield one one, Texaco, total offload 6.2, cleared to depart, contact 
 
 ### Range
 
-Einen Range-Lotsen gibt es nur, wenn die Mission eine Triggerzone hat, deren Name mit **Range** beginnt. Er heißt **Range Alpha**.
+Einen Range-Lotsen gibt es nur, wenn die Mission eine Triggerzone mit dem Wort **Range** im Namen hat (an beliebiger Stelle: *Range 62*, *Dogbone Range*; nicht *Orange*). Jede solche Zone ist eine eigene Range, eine Mission kann also mehrere haben.
+
+- **Name:** der Zonenname ist der gesprochene Name. Heißt die Zone nur *Range* (oder ist der Name sehr kurz), wird sie nach der Reihenfolge *Range Alpha*, *Range Bravo* usw. genannt. Mit einem Namen wie *Range 62* oder *Range Nord* (`_` wird zum Leerzeichen) heißt der Lotse so.
+- **Rufzeichen:** steht Range nicht am Anfang, sind die Wörter davor das Rufzeichen der Range. Eine Zone *Dogbone Range 268.5* meldet sich als *Dogbone Range*, rufen kannst du sie mit *„Dogbone, Enfield 1-1, checking in“* oder *„Dogbone Range, Enfield 1-1, checking in“*.
+- **Frequenz:** steht im Zonennamen eine Frequenz zwischen 108 und 399 MHz (*Range 62 268.5*), hat diese Range ihre eigene Frequenz. Sonst gilt `"Range"` aus config.jsonc.
+- **Welche Range antwortet:** der genannte Name, sonst die Range, bei der du eingecheckt bist, sonst die zur gesendeten Frequenz, sonst die nächste zu deiner Position.
+- **Hot und Treffer** gelten je Range: ein Flugzeug in einer Range sperrt die andere nicht, Einschläge zählen nur für die Range, in der sie fallen.
 
 - **Ziele:** feindliche Bodeneinheiten in der Zone. DCS-ATC misst deine Treffer, spawnt aber nichts.
 - **Gewertete Waffen:** deine Bomben, Raketen und Luft-Boden-Flugkörper werden gegen die nächste feindliche Bodeneinheit in der Zone gemessen. Ein Einschlag innerhalb 500 m zählt.
@@ -2212,28 +2284,29 @@ Range:  Enfield one one, Range Alpha, check switches safe. 1 pass, best impact 4
 
 Ein JTAC ist ein Lotse am Boden, ein FAC(A) einer in der Luft. Beide sprechen dich auf ein Bodenziel ein: Lage, 9-Liner, Readback, Markierung, Freigabe und Wirkungsmeldung. DCS-ATC liefert nur die Stimme. Der Lotse muss in der Mission vorhanden sein, und der Feind muss in seiner Sicht liegen.
 
-- **Was als Lotse zählt:** eine Bodengruppe mit FAC-Aufgabe oder „JTAC“ im Namen ist ein JTAC. Eine Flugzeug- oder Hubschraubergruppe mit FAC-Aufgabe, der Aufgabe AFAC oder „JTAC“ im Namen ist ein FAC(A). „FACA“ im Gruppennamen macht sie immer zum FAC(A). Eine Gruppe, die ein Spieler fliegt, ist nie ein Lotse.
-- **Rufzeichen und Frequenz:** das Rufzeichen ist der FAC-Callname aus dem Mission Editor (Axeman, Darknight, Warrior …). Die Frequenz ist die an der FAC-Aufgabe eingestellte, sonst `"JTAC": 133.5`. Der Laser-Code ist der an der Aufgabe, sonst 1688.
+- **Was als Lotse zählt:** eine Bodengruppe mit FAC-Aufgabe oder „JTAC“ im Namen ist ein JTAC. Eine Flugzeug- oder Hubschraubergruppe mit FAC-Aufgabe, der Aufgabe AFAC oder „JTAC“ im Namen ist ein FAC(A). „FACA“ im Gruppennamen macht sie immer zum FAC(A). Eine Gruppe, die ein Spieler fliegt, ist nie ein Lotse. Auch eine Gruppe, die ein Skript während der Mission erzeugt, zählt, wenn „JTAC“ oder „FACA“ in ihrem Gruppennamen steht oder wenn sie die Kopie einer Lotsengruppe der Mission ist (ihr Name beginnt mit dem Namen dieser Gruppe, etwa „Reaper#001“), denn DCS sagt einem Skript die Aufgabe einer erzeugten Gruppe nicht. Ein solcher Lotse nimmt das Rufzeichen seines Flugzeugs, wenn es eines hat, sonst einen Namen aus der JTAC-Liste von DCS, und die Konsolenzeile zeigt es. Eine Gruppe der Mission mit späterer Aktivierung braucht nichts Zusätzliches.
+- **Rufzeichen und Frequenz:** das Rufzeichen ist der FAC-Callname aus dem Mission Editor (Axeman, Darknight, Warrior …). Die Frequenz ist die an der FAC-Aufgabe eingestellte, sonst `"JTAC": 133.5`. Auf der eigenen Missionsfrequenz sendet der Lotse in der Modulation aus der Mission (AM oder FM; das Funkgerät passend einstellen), auf der Config-Frequenz in `Modulation`. Der Laser-Code ist der an der Aufgabe, sonst 1688.
 - **Was er sieht:** ein JTAC sieht feindliche Gruppen bis 8 km, ein FAC(A) bis 15 km, jeweils nur mit Sichtlinie. Er weist eine Gruppe nach der anderen ein: erst Luftabwehr, dann bewegte Gruppen, dann die nächste.
 - **IP:** ein Navigationspunkt der Mission auf deiner Seite, der 3 bis 60 km vom Ziel liegt, dient als IP in Zeile 1.
+- **Konsole:** das DCS-ATC-Fenster schreibt für jeden gefundenen Lotsen eine Zeile, auch für einen, den ein Skript später erzeugt, mit Rufzeichen und Frequenz.
 - **Ohne Lotse** auf deiner Seite antwortet niemand und der Eintrag **JTAC** im Funkrad bleibt ausgeblendet. Das Modul lässt sich auch im Setup abwählen.
 
 #### Deine Sprüche
 
-Nenne das Rufzeichen des Lotsen (*Axeman one one*) oder *JTAC* / *FAC A* im Spruch. Über SRS reicht die Frequenz: es antwortet der Lotse auf dieser Frequenz. Teilen sich zwei Lotsen eine Frequenz, entscheidet das Rufzeichen im Spruch, sonst der, mit dem du gerade arbeitest, sonst der nächste. Im Funkrad listet „Check in“ die Lotsen, wenn deine Seite mehrere hat; spätere Sprüche gehen an den, bei dem du eingecheckt hast.
+Nenne das Rufzeichen des Lotsen (*Axeman one one*) oder *JTAC* / *FAC A* im Spruch. Über SRS reicht die Frequenz: es antwortet der Lotse auf dieser Frequenz. Teilen sich zwei Lotsen eine Frequenz, entscheidet das Rufzeichen im Spruch, sonst der, mit dem du gerade arbeitest, sonst der nächste. Im Funkrad listet „Check in“ die Lotsen, wenn deine Seite mehrere hat, den nächsten zuerst, mit Name und Frequenz. Das F10-Menü hat keine solche Liste: dort erreicht „Check in“ den nächstgelegenen Lotsen, und „Check in“ noch einmal, solange du eingecheckt bist, geht an den folgenden; eine Textzeile nennt ihn und seine Frequenz. Spätere Sprüche gehen an den, bei dem du eingecheckt hast.
 
 | Du sagst (erkannte Wörter) | JTAC / FAC(A) antwortet |
 |---|---|
-| **checking in** (jeder erste Spruch; mit Bewaffnung und Playtime, z. B. *„checking in, 4 GBU-12, 2 Mavericks, playtime 30 minutes“*) | Mit Bewaffnung und Playtime bestätigt die Leitstelle beides zuerst (*„copy GBU 12, Maverick, playtime three zero minutes.“*), wählt die Waffe für den 9-Liner (Bomben, lasergelenkte zuerst, auf ein stehendes Ziel; Flugkörper, Raketen oder Bordkanone auf ein fahrendes; Bemerkung *„ordnance GBU 12“*, Zeile 7 Laser) und meldet *„your playtime is up, say intentions“*, wenn sie abläuft. *„playtime 20“* setzt später eine neue. *„Enfield one one, Axeman one one, situation: enemy four tanks stationary, three zero zero zero meters east of my position, friendlies at my position. Type 2 control, bomb on target. Advise when ready for 9-line.“* Ein FAC(A) nennt stattdessen den Abstand der eigenen Truppen zum Ziel oder *„friendlies none known“*. Ohne Ziel: *„no enemy observed at this time, stand by. I'll call when I have a target.“* |
-| **ready to copy** (*go ahead*, *ready for 9 line*, *ready for tasking*, *ready for next*, *ready for re-attack*) | Der 9-Liner (unten). *request re-attack* auf dasselbe Ziel nach dem BDA: *„re-attack approved, same 9-line, final attack heading …, advise IN“*, ohne neuen 9-Liner. Solange du in der Warteschleife bist: *„stand by, hold as directed.“* |
+| **checking in** (jeder erste Spruch; mit Bewaffnung und Playtime, z. B. *„checking in, 4 GBU-12, 2 Mavericks, playtime 30 minutes“*) | Mit Bewaffnung und Playtime bestätigt die Leitstelle beides zuerst (*„copy GBU 12, Maverick, playtime three zero minutes.“*), wählt die Waffe für den 9-Liner (Bomben, lasergelenkte zuerst, auf ein stehendes Ziel; Flugkörper, Raketen oder Bordkanone auf ein fahrendes; Bemerkung *„ordnance GBU 12“*, Zeile 7 Laser) und meldet *„your playtime is up, say intentions“*, wenn sie abläuft. *„playtime 20“* setzt später eine neue. *„Enfield one one, Axeman one one, situation update, enemy four tanks stationary, three zero zero zero meters east of my position, friendlies at my position. Type 2 control, bomb on target. Advise when ready for 9-line.“* Ein FAC(A) nennt stattdessen den Abstand der eigenen Truppen zum Ziel oder *„friendlies none known“*. Ohne Ziel: *„no enemy observed at this time, stand by. I'll call when I have a target.“* |
+| **ready to copy** (*go ahead*, *ready for 9 line*, *ready for tasking*, *ready for next*, *next target*, *send it*, *ready for re-attack*) | Der 9-Liner (unten). *request re-attack* auf dasselbe Ziel nach dem BDA: *„re-attack approved, same 9-line, final attack heading …, advise IN“*, ohne neuen 9-Liner. Solange du in der Warteschleife bist: *„stand by, hold as directed.“* |
 | **readback** (Zeilen 4 und 6 und die Einschränkungen) | *„readback correct, push when ready, advise IN.“* Bei *danger close* nennen die Bemerkungen das Kürzel des Bodenkommandeurs (*„danger close, ground commander's initials whiskey golf“*); es muss im Readback zurückkommen (das Funkrad ergänzt es), sonst *„negative initials, ...“*. Eine falsche Zeile wird einzeln berichtigt: *„negative line 4, line 4 elevation six six zero feet. Say again your readback.“* |
 | **say again 9-line** (*repeat the 9-line*, *say again all*) | Der ganze 9-Liner noch einmal, beim Readback mit der Readback-Aufforderung. |
-| **say again line 6** (jede Zeile 1 bis 9) | Die Zeile noch einmal. *„say again in MGRS“* oder *„in lat long“* gibt Zeile 6 in diesem Format. |
+| **say again line 6** (jede Zeile 1 bis 9) | Die Zeile noch einmal; *„say again remarks“* gibt die Remarks. *„say again in MGRS“*, *„in lat long“* oder *„in keypad“* gibt Zeile 6 in diesem Format. |
 | **laser code** | *„laser code one six eight eight.“* |
 | **threats** (*air defense*) | Die bekannte Luftabwehr oder *„no threats observed.“* |
-| **request mark** (*mark my target*, *smoke*, *request smoke*) | JTAC: *„mark on the way, three zero seconds.“*, danach *„mark is red smoke, advise contact.“* FAC(A): bei laserfähigem Flugzeug (Hornet, F-16, A-10, Harrier, Apache …) oder lasergelenkten Bomben *„laser mark, code one six eight eight, advise spot.“* (auch Zeile 7 ist dann der Laser), sonst oder auf *request smoke* *„rocket away, mark is white phosphorus.“* Wunsch: *request green smoke* (red, green, white, orange, blue; nur JTAC), *request illum* (Leuchtgranate, JTAC), *request sparkle* oder *IR pointer* (sofort: *„sparkle, advise contact sparkle“*). *„contact smoke“* / *„contact sparkle“* ist das Tally. Vor dem Readback: *„negative, readback first.“* |
+| **request mark** (*mark the target*, *smoke*, *request smoke*, *request WP*) | JTAC: *„mark on the way, three zero seconds.“*, danach *„mark is red smoke, advise contact.“* FAC(A): bei laserfähigem Flugzeug (Hornet, F-16, A-10, Harrier, Apache …) oder lasergelenkten Bomben *„laser mark, code one six eight eight, advise spot.“* (auch Zeile 7 ist dann der Laser), sonst oder auf *request smoke* *„rocket away, mark is white phosphorus.“* Wunsch: *request green smoke* (red, green, white, orange, blue; nur JTAC), *request illum* (Leuchtgranate, JTAC), *request sparkle* oder *IR pointer* (sofort: *„sparkle, advise contact sparkle“*). *„contact smoke“* / *„contact sparkle“* ist das Tally. Vor dem Readback: *„negative, readback first.“* |
 | **laser on** (*request laser*) / **laser off** (*terminate*) | *„lasing, code one six eight eight.“* / *„laser off.“* Verliert der Lotse das Ziel: *„lost the target, laser off.“* |
-| **tally** (*visual*, *contact the mark*, *have the target*) | *„roger, advise IN.“* |
+| **tally** (*visual*, *target in sight*, *eyes on*, *contact the mark*, *have the target*) | *„roger, advise IN.“* |
 | **in from the west** (*in*, *in from the south* …) | Cleared hot, continue oder abort (unten). |
 | **IP inbound** (*inbound*, *pushing*) | *„continue, advise IN“* (oder *„advise tally target“*). |
 | **in from the south, dry** | *„continue dry“*, ein Übungsanflug ohne Freigabe. Liest du *„cleared hot“* zurück, kommt keine Antwort. |
@@ -2242,7 +2315,7 @@ Nenne das Rufzeichen des Lotsen (*Axeman one one*) oder *JTAC* / *FAC A* im Spru
 | **off** (*off north*, *winchester*, *complete*) | Die Wirkungsmeldung (unten). |
 | **bda** (*status*, *did I hit*) | Die Wirkungsmeldung oder *„no attack yet.“* |
 | **abort** | *„copy abort, standing by.“* |
-| **checking out** (*off station*, *signing off*, *bingo*, *RTB*) | *„copy checking out, 3 destroyed in total. Good work.“* |
+| **checking out** (*off station*, *departing station*, *signing off*, *bingo*, *RTB*) | *„copy checking out, 3 destroyed in total. Good work.“* |
 | **radio check** | *„read you five.“* |
 | alles andere | *„say again.“* |
 
@@ -2261,7 +2334,9 @@ Nach *ready to copy* kommt *„standby for 9-line“*, die Zeilen 1 bis 9 und di
 | 9 | Egress-Richtung, weg von den eigenen Truppen |
 | Remarks | *final attack heading*, *danger close* (eigene Truppen unter 1000 m), *laser to target line* (nur JTAC), *threats* |
 
-Zeile 6 hängt vom Flugzeug ab. A-10, AH-64 und Ka-50 bekommen MGRS (*„MGRS three seven tango, golf golf, one two three four five, six seven eight nine zero“*), alle anderen Breite und Länge in Grad und Dezimalminuten.
+Zeile 6 hängt vom Flugzeug ab. A-10, AH-64 und Ka-50 bekommen MGRS (*„MGRS three seven tango, golf golf, one two three four five, six seven eight nine zero“*), alle anderen Breite und Länge in Grad und Dezimalminuten. Kürzer: mit `"JtacKeypad": true` in der `config.jsonc` oder auf *„say again in keypad“* ist Zeile 6 das 1-km-Gitterquadrat und eine Keypad-Zahl (*„grid three seven tango, golf hotel, two six, two one, keypad seven“*; 7 8 9 sind das nördliche Drittel des Quadrats, 1 2 3 das südliche).
+
+Rauch und WP landen nicht auf dem Ziel, sondern 100 m daneben, und der JTAC sagt, wo das Ziel vom Rauch aus liegt: *„mark is red smoke, target from the smoke west one zero zero meters“*. Entfernung: `JtacMarkOffsetM` in der `config.jsonc`, mit `0` liegt der Rauch auf dem Ziel.
 
 #### Kontrollart
 
@@ -2293,7 +2368,7 @@ Ist die Zielgruppe zerstört oder nach *off*, kommt die Meldung: *„good hits, 
 
 ```
 Du:     Axeman one one, Enfield 1-1, checking in.
-JTAC:   Enfield one one, Axeman one one, situation: enemy four tanks stationary, three zero zero zero
+JTAC:   Enfield one one, Axeman one one, situation update, enemy four tanks stationary, three zero zero zero
         meters east of my position, friendlies at my position. Type 2 control, bomb on target.
         Advise when ready for 9-line.
 Du:     Axeman one one, Enfield 1-1, ready to copy.
@@ -2308,7 +2383,7 @@ Du:     Axeman one one, Enfield 1-1, readback, line 4 six six zero, line 6 north
 JTAC:   Enfield one one, Axeman one one, readback correct, advise when ready for mark or IN.
 Du:     Axeman one one, Enfield 1-1, request mark.
 JTAC:   Enfield one one, Axeman one one, mark on the way, three zero seconds.
-JTAC:   Enfield one one, Axeman one one, mark is red smoke, advise contact.
+JTAC:   Enfield one one, Axeman one one, mark is red smoke, target from the smoke west one zero zero meters, advise contact.
 Du:     Axeman one one, Enfield 1-1, tally target.
 JTAC:   Enfield one one, Axeman one one, roger, advise IN.
 Du:     Axeman one one, Enfield 1-1, in from the west.
@@ -2358,6 +2433,10 @@ Damit die Frequenz brauchbar bleibt, gehen je Frequenz höchstens 10 niedrig pri
 
 Deine KI-Rottenflieger nehmen Befehle per Sprache an, wie im DCS-Funkmenü (Wingman / Flight). Fang mit der Nummer des Rottenfliegers oder „Flight“ an, wahlweise mit dem Rufzeichen deines Flugs davor: *„Two, go trail.“* · *„Enfield one three, rejoin.“* · *„Flight, engage bandits.“* DCS-ATC wählt dann genau diesen Punkt im DCS-Funkmenü für dich. Es drückt keine Tasten, deshalb geht das auch mit Easy Communication aus, in jedem Flugzeug und in jeder DCS-Sprache. Den Befehl und die Antwort des Rottenfliegers spricht DCS selbst, wie beim Menü.
 
+**Welche Frequenz:** Sag den Befehl auf der eigenen Frequenz deines Flights (die Frequenz deiner Gruppe im Missionseditor, auf der du deine Rottenflieger hörst) oder auf irgendeiner Frequenz, auf der ein DCS-ATC-Lotse sitzt. Auf der Flight-Frequenz reagiert DCS-ATC nur auf Wingman-Befehle; alles andere dort ist Rottenfunk, kein Lotse antwortet. Die Flight-Frequenz muss AM sein.
+
+**Voraussetzung: eine Zeile in `autoexec.lua`.** Das Funkmenü liegt in der Skriptumgebung der Simulation, nicht in der des DCS-ATC-Hooks. Setup fügt deshalb bei der Admin-Abfrage auch eine Zeile ans Ende von `<DCS-Ordner>\Scripts\autoexec.lua` an, die nur `Scripts\DcsAtc\DcsAtcWing.lua` aus Saved Games lädt. DCS liest diese Datei nur beim Start: nach der Installation DCS einmal neu starten. Kommt der Befehl nicht an, sagt DCS-ATC *„Wingman: Befehl nicht angekommen …“*; dann **Startmenü → DCS-ATC → Nach DCS-Update reparieren** und DCS neu starten. Deinstallieren entfernt die Zeile wieder.
+
 | Sag | Befehl im DCS-Menü |
 |---|---|
 | *rejoin* · *join up* | Rejoin Formation |
@@ -2381,7 +2460,7 @@ Steigt ein Pilot deiner Seite über Land aus, kann ein Hubschrauber-Spieler ihn 
 
 - **Überlebender:** dort, wo der Fallschirm gelandet ist (DCS-Ereignis), sonst am Ausstiegspunkt. Aus dem Wasser gibt es keine Rettung.
 - **Ruf an die Hubschrauber:** Sobald ein Hubschrauber-Spieler dieser Seite in der Mission ist, ruft das AWACS auf Guard: „Any helicopter, Overlord, downed pilot Enfield one two, bullseye two seven zero, 25 miles.“
-- **Übernehmen:** „Overlord, Pedro 1-1, will pick up“ (oder „request CSAR“, oder Rad/F10 **Notfall → CSAR übernehmen**). Du bekommst den nächsten Überlebenden deiner Seite innerhalb 100 NM: „Pedro one one, Overlord, copy, downed pilot Enfield one two, bearing two seven zero, 12 miles. Contact him on guard.“ Ohne AWACS antwortet der Überlebende selbst.
+- **Übernehmen:** „Overlord, Pedro 1-1, will pick up“ (oder „request CSAR“, „en route to the survivor“, oder Rad/F10 **Notfall → CSAR übernehmen**). Du bekommst den nächsten Überlebenden deiner Seite innerhalb 100 NM: „Pedro one one, Overlord, copy, downed pilot Enfield one two, bearing two seven zero, 12 miles. Contact him on guard.“ Ohne AWACS antwortet der Überlebende selbst.
 - **Auf Guard:** Ab 3 NM hört er dich: „Pedro one one, Enfield one two, I hear you, you are north of me.“ Ein Signal forderst du mit seinem Rufzeichen an, „Enfield 1-2, Pedro, pop smoke“, oder mit **Notfall → CSAR Rauch/Leuchtkugel**. Tagsüber kommt orangefarbener Rauch, nachts eine rote Leuchtkugel, wenn du höchstens 5 NM entfernt bist, und höchstens einmal pro Minute.
 - **Aufnehmen:** höchstens 50 m neben ihm landen und 30 s am Boden bleiben. Die Besatzung meldet auf dem Bordfunk „Survivor in sight, he's coming to us.“, dann „Survivor on board, door closed. Clear to lift.“ Landest du 50–300 m entfernt, sagt sie dir, wo er ist.
 - **Gerettet:** mindestens 3 NM vom Aufnahmepunkt wieder landen (Platz, FARP, Schiff) und 10 s stehen: „Survivor delivered.“ Im Debriefing steht `CSAR: Enfield one two gerettet, 25 min nach dem Ausstieg`, das Logbuch zählt es.
@@ -2389,13 +2468,13 @@ Steigt ein Pilot deiner Seite über Land aus, kann ein Hubschrauber-Spieler ihn 
 
 ### Bodenpersonal und Crew Chief
 
-Das Bodenpersonal ist **standardmäßig aus**. Einschalten im F10-Menü **ATC → Einstellungen → Bodenpersonal an/aus** (*Anzeigen* zeigt den aktuellen Stand). Als Standard für alle Missionen `crew = true` in `Saved Games\DCS\Scripts\DcsAtc\DcsAtcOptions.lua` setzen. Eine einzelne Mission kann das per Trigger *Mission Start* mit Aktion *DO SCRIPT* und dem Code `DCSATC_OPTIONS = { crew = true }` überschreiben. Das Bodenpersonal besteht nur aus Soldaten und Fahrzeugen; DCS-ATC spawnt weiterhin keine Flugzeuge.
+Das Bodenpersonal ist **standardmäßig aus**. Einschalten im F10-Menü **DCS-ATC → Einstellungen → Bodenpersonal an/aus** (*Anzeigen* zeigt den aktuellen Stand). Als Standard für alle Missionen `crew = true` in `Saved Games\DCS\Scripts\DcsAtc\DcsAtcOptions.lua` setzen. Eine einzelne Mission kann das per Trigger *Mission Start* mit Aktion *DO SCRIPT* und dem Code `DCSATC_OPTIONS = { crew = true }` überschreiben. Das Bodenpersonal besteht nur aus Soldaten und Fahrzeugen; DCS-ATC spawnt weiterhin keine Flugzeuge.
 
 Was passiert:
 
 - **Geparkt:** stehst du 10 s still auf einem Parkplatz, erscheinen vorne links ein Crew Chief und vorne rechts ein Brandposten. Der Crew Chief spricht über SRS auf der **Bordsprechanlage** deines Flugzeugs. Ohne SRS siehst du nur den Text.
 - **Nach der Landung:** ein Tank- und ein Munitionswagen kommen von einem freien Platz in der Nähe und bleiben 4 Minuten. Sie sind nur Kulisse. Tanken und Aufmunitionieren laufen weiter über die DCS-Bodencrew (`\` → F8), ein Texthinweis erinnert daran.
-- **Losrollen:** die Soldaten treten zurück, die Wagen fahren weg, alles verschwindet.
+- **Losrollen:** sobald du anrollst, geht jeder Soldat seitlich aus deinem Weg. Die Wagen bleiben stehen, alles verschwindet, wenn du weg bist. Nach ihren 4 Minuten fahren die Wagen seitlich vom Flugzeug weg.
 - **Absturz oder schwer beschädigte Landung:** ein Feuerwehrwagen kommt und fährt nach 5 Minuten wieder.
 
 | Wann | Crew Chief (Bordsprechanlage) |
@@ -2445,6 +2524,7 @@ Als Host behandelt DCS-ATC jeden menschlichen Spieler der Mission getrennt:
 - **Rotten bilden sich automatisch.** Spieler derselben DCS-Gruppe innerhalb 1 NM zueinander fliegen als eine Rotte mit der Folge des Leads. Lead ist der Spieler mit dem niedrigsten Rufzeichen. Ground, Tower und Approach behandeln die Rotte dann als Einheit. Ein Rottenflieger, der sich mehr als 3 NM entfernt, bekommt wieder seine eigene Folge.
 - **Rufzeichen kommen aus dem DCS-Slot jedes Spielers** (aus `Enfield11` wird „Enfield 1-1“). „MyCallsign“ in den Einstellungen ändert nur das Rufzeichen des Hosts. Sitzen mehrere Spieler in Slots ohne westliches Rufzeichen, bekommt der erste „Callsign“ aus config.jsonc und die anderen werden mit ihrem Spielernamen gerufen.
 - Mit „CallsignFromUnit“ wird jeder Spieler mit dem Unitnamen seines Slots gerufen, wenn der wie ein Rufzeichen aussieht (`VICTORY 9-1` wird „Victory 9-1“).
+- Mit „CallsignFromPlayer“ wird jeder Spieler, dessen DCS-Spielername vor einem „|“ ein Rufzeichen trägt (`GUARDIAN 1-1 | Christian`), so gerufen, unabhängig vom Slot. Das geht auch auf einem Dedicated Server.
 - **Textmeldungen gehen an die eigene Gruppe jedes Spielers**, du siehst also nur Lotsentext für deine Gruppe (und nur, wenn du auf die Frequenz gerastet bist). Die Stimme geht über SRS auf der Lotsenfrequenz, du hörst also genau, was du auf dieser Frequenz in echt hören würdest, auch die Sprüche an andere Spieler.
 - **Lotsen arbeiten nur für ihre Seite.** Ein Platz der Gegenseite hat für dich keinen Lotsen.
 
@@ -2470,6 +2550,7 @@ Im Client-Modus:
 - **Sprechen geht wie gewohnt.** SRS-Sprechtaste auf der Lotsenfrequenz drücken und sprechen.
 - **Was Mitspieler nicht bekommen.** Dein lokales DCS-ATC startet kein SRS, macht keine Spracherkennung und betreibt keine Lotsen. Der ENTER-Vorschlag in der Radmitte geht nur beim Host, weil der Mitspieler keinen Flugzustand hat. Das Mitspieler-Rad zeigt keine Frequenzen, weil nur der Host sie kennt (Karte und `frequencies.jsonc`). Auch den Rad-Text im Spiel (VR) bekommt der Mitspieler nicht; den schreibt das DCS-ATC des Hosts nur für sein eigenes Flugzeug.
 - **Der Host muss DCS-ATC laufen haben.** Sonst fängt niemand deine `ATC>`-Anfragen ab und nichts antwortet.
+- **Versionen.** Nimmst du einen Slot, schreibt dir der Server eine Chatzeile: „This server runs DCS-ATC 0.23.21-alpha. ...“. Hat dein DCS-ATC eine andere Version, bekommst du eine zweite Zeile, ob deine älter ist (updaten) oder neuer (manche Funkrad-Einträge kommen beim Server nicht an). Deine Version landet auch in der `atc-log.txt` des Servers („[ATC] Mitspieler Hawk: DCS-ATC 0.23.18-alpha (Server 0.23.21-alpha, älter)“). Die Prüfung braucht auf beiden Seiten 0.23.21 oder neuer. Unterschiedliche Versionen gehen trotzdem: Lotsen, Stimmen und Logik sind die des Servers.
 
 ### Spieler ohne DCS-ATC
 
@@ -2477,7 +2558,7 @@ Spieler müssen DCS-ATC gar nicht installieren. Läuft es beim Host (oder auf de
 
 - **Sprechen über SRS.** Mit dem SRS-Server des Hosts verbinden, Lotsenfrequenz rasten und auf Englisch sprechen. Beispiel:
   > "Kutaisi Ground, Enfield 1-2, request startup"
-- **F10-Menü.** `F10 -> ATC` hat dieselben Anfragen wie das Funkrad (Ground, Tower, Approach, AWACS / Tanker / Center, Allgemein, Notfall …). Jeder Spieler bekommt sein eigenes `ATC`-Menü. Teilen sich mehrere Spieler eine Gruppe, hat das `ATC`-Menü je Spieler ein Untermenü mit seinem Rufzeichen.
+- **F10-Menü.** `F10 -> DCS-ATC` hat dieselben Anfragen wie das Funkrad (Ground, Tower, Approach, AWACS / Tanker / Center, Allgemein, Notfall …). Jeder Spieler bekommt sein eigenes `DCS-ATC`-Menü. Teilen sich mehrere Spieler eine Gruppe, hat das `DCS-ATC`-Menü je Spieler ein Untermenü mit seinem Rufzeichen.
 - **Lotsentext** erscheint im Spiel für deine Gruppe, die Stimme kommt über SRS.
 
 Funkrad und ENTER-Vorschlag bekommen sie nicht. Ihre F10-Anfragen spricht trotzdem die Pilotenstimme, wie bei allen anderen.
@@ -2567,6 +2648,13 @@ Standardmäßig nutzt jeder Platz die Frequenz, die DCS ihm auf der Karte gibt, 
 - **Werte:** eine Frequenz in MHz oder eine Liste wie `"Ground": [275.8, 121.8]` (UHF und VHF). Jeder Wert muss zwischen 30 und 400 MHz liegen.
 - **Platzname:** wie in DCS. Groß-/Kleinschreibung, Bindestriche, Leerzeichen und Satzzeichen sind egal, `"senaki kolkhi"` passt also zu `Senaki-Kolkhi`. Ein eindeutiger Teil des Namens reicht. Passt der Teil zu mehreren Plätzen, wird der Eintrag ignoriert.
 - **Kartenabschnitte:** Zeilen unter `// ===== <Karte> =====` gelten nur auf dieser Karte, benannt nach ihrem Ordner in `Mods\terrains`, wie die Datei ihn aufführt (`Sinai`, `GermanyColdWar`). Zeilen vor dem ersten Abschnitt gelten auf jeder Karte.
+- **Nur die gelisteten Plätze:** Mit `"OnlyListed": true,` arbeitet DCS-ATC nur an den Plätzen, die in der Datei eine aktive Zeile haben. Alle anderen Plätze bleiben stumm: kein Ground, Tower, Approach oder ATIS, keine Ansagen zu Kontrollzone oder Bahn, kein Eintrag im Funkrad oder auf dem Kneeboard, und sie werden nicht als Ziel-, Ausweich- oder Notlandeplatz genommen. Ein Ruf an einen davon bekommt keine Antwort (atc-log.txt vermerkt ihn). KI-Abflüge dort starten, ohne auf eine Freigabe zu warten. Center, AWACS, Tanker, Träger und Schießplätze sind nicht betroffen. Unter einer Kartenüberschrift gilt die Zeile nur für diese Karte, vor der ersten Überschrift für jede Karte. Steht kein Platz der Karte in der Datei, sind alle stumm. Oben in der Datei steht ein auskommentiertes Beispiel. Beispiel für eine Staffel, die auf Germany Cold War nur ein paar Plätze betreibt:
+  ```jsonc
+  // ===== GermanyColdWar =====
+  "OnlyListed": true,
+  "Nordholz": { "Ground": 251.0, "Tower": 257.8 },
+  "Wunstorf": { "Tower": 250.5 },
+  ```
 - **Nicht genannte Lotsen bleiben auf der Kartenfrequenz.** Ohne Departure übernimmt Approach die Abflüge wie bisher.
 - **Änderungen gelten sofort nach dem Speichern** der Datei, ohne Neustart.
 - **Ungültige Einträge werden ignoriert**, jeder mit einer Zeile in `atc-log.txt`, zum Beispiel:
@@ -2611,11 +2699,16 @@ Die Platzverfahren im Kaukasus (CRPs, Ein- und Ausflug je Bahn, Platzrundenhöhe
 
 - Ein Platz in `charts.jsonc` ersetzt den eingebauten Eintrag ganz. Plätze, die nicht drinstehen, behalten die eingebauten Verfahren.
 - Vorlage ist `charts\caucasus.jsonc` im DCS-ATC-Ordner, die eingebauten Daten aller Plätze mit Erklärungen. Am einfachsten kopierst du den Eintrag eines Platzes in deine `charts.jsonc` und änderst ihn dort. Die Vorlage selbst wird bei jedem Update überschrieben.
-- Platzname wie in DCS (`Kutaisi`, `Sochi-Adler`, `Senaki-Kolkhi`).
+- Platzname wie in DCS (`Kutaisi`, `Sochi-Adler`, `Senaki-Kolkhi`). Ein Name, der den DCS-Namen enthält oder in ihm steckt, geht auch, solange er genau einen Platz trifft (`Nellis AFB` für `Nellis`). Das DCS-ATC-Fenster zeigt, welchem DCS-Platz jeder Eintrag zugeordnet wurde, und nennt die Einträge, die nicht auf der aktuellen Karte liegen.
+- Meldepunkte in Kleinbuchstaben heißen CRP („report CRP north“). Schreibst du einen Punkt in Großbuchstaben (`CRAIG`, `GASS_PEAK`), sagt der Lotse stattdessen seinen Namen („report Craig“, „Gass Peak“). Der Unterstrich steht für ein Leerzeichen.
+- `"via"` ist `"overhead"` oder `"initial"`, `"hand"` ist `"left"` oder `"right"`. Alles andere, oder ein Ein- oder Ausflugpunkt, der in `"crp"` fehlt, macht die Datei fehlerhaft, und das DCS-ATC-Fenster nennt die Stelle.
 - Koordinaten wie auf der Karte gedruckt (`"42°15.924'N 042°30.086'E"`) oder als DCS-Koordinaten `[x, z]`. Kurse in Grad missweisend.
+- Weitere Dateien `charts-*.jsonc` (eine je Karte oder Autor, etwa `charts-NTTR.jsonc`) liegen im DCS-ATC-Ordner oder im Unterordner `charts`. Steht ein Platz in mehreren Dateien, gilt `charts.jsonc`, dann die übrigen im DCS-ATC-Ordner nach Namen, zuletzt die im Unterordner `charts`.
 - Gelesen wird die Datei bei jedem Missionsstart. Ist sie fehlerhaft, meldet das DCS-ATC-Fenster den Fehler, und es gelten die eingebauten Verfahren.
 - Gilt auf jeder Karte. Eingebaute Verfahren hat nur der Kaukasus, auf anderen Karten hat ein Platz nur welche, wenn er in `charts.jsonc` steht. Breite/Länge braucht dort die installierte Karte, weil DCS-ATC die Kartenprojektion aus ihren Funkfeuerdaten nimmt. DCS-Koordinaten `[x, z]` gehen immer.
 - Die Kontrollzone reicht 0,5 NM über den entferntesten CRP hinaus und bis `ctr_top_ft` (ohne CRPs: 5 NM um den Platz, bis 3000 ft darüber). Diesen Luftraum überwacht DCS-ATC auf Verstöße.
+- Parallelbahnen: `"land_rwy": "21L"` legt fest, auf welcher du landest, `"dep_rwy": "21R"`, von welcher du startest. Du nennst die Bahn selbst, die Richtung richtet sich weiter nach dem Wind: bei Nordwind heißt `"21L"` dann 03R. Ohne diese Schlüssel nimmt DCS-ATC die Bahn der DCS-KI. Die KI behält ihre Bahn, und „request runway 21 left“ geht für einen einzelnen Flug weiterhin. Bei verschiedenen Bahnen sagt die ATIS „landing runway 21L, departure runway 21R“.
+- Feste Bahnrichtung: mit `"tailwind_kt": 10` behalten `land_rwy`/`dep_rwy` ihre Richtung, solange der Rückenwind auf dieser Bahn höchstens 10 kt beträgt. Nellis mit `"land_rwy": "21R", "dep_rwy": "03L", "tailwind_kt": 10` landet auf 21R und startet von 03L; ab mehr als 10 kt Rückenwind entscheidet wieder der Wind. Die DCS-KI nimmt weiter ihre eigene Bahn.
 - Echte SIDs und STARs mit Wegpunktfolgen kennt DCS-ATC nicht, es geht um die Sichtflugverfahren.
 
 Beispiel: Kutaisi mit Platzrunde 1500 ft und nur zwei CRPs.
@@ -2642,13 +2735,174 @@ Beispiel: Kutaisi mit Platzrunde 1500 ft und nur zwei CRPs.
 
 Ohne Abschnitt `ground` gibt es für den Platz keine Rollwegnamen und Warteplätze aus der Karte. Willst du sie behalten, kopiere `ground` aus der Vorlage mit.
 
+#### Mehrere Dateien, eine je Karte
+
+Neben `charts.jsonc` liest DCS-ATC jede Datei im selben Ordner, deren Name mit `charts` beginnt und auf `.jsonc` endet, zum Beispiel `charts-nevada.jsonc` oder `charts-syria.jsonc`. Jede Datei ist aufgebaut wie `charts.jsonc`.
+
+- Eine Datei je Karte oder je Autor geht, und du kannst eine Datei weitergeben, ohne sie mit einer anderen zusammenzuführen.
+- Steht derselbe Platz in zwei Dateien, gilt `charts.jsonc`, danach die übrigen Dateien in alphabetischer Reihenfolge.
+- Eine fehlerhafte Datei wird übersprungen und im DCS-ATC-Fenster genannt. Die anderen Dateien gelten trotzdem.
+- Plätze einer anderen Karte in einer Datei schaden nicht; das Fenster nennt sie als nicht auf dieser Karte.
+
+#### Schritt für Schritt: Verfahren für einen neuen Platz
+
+1. Flieg einmal irgendeine Mission auf der Karte. Danach kennt DCS-ATC ihre Plätze, Bahnen und Parkplätze, auch ohne laufende Mission.
+2. Öffne den [Verfahrens-Editor](#verfahrens-editor) und wähle den Platz. Er zeigt die Bahnen mit ihren DCS-Namen. Klick die Meldepunkte und, wenn du willst, die Routen an.
+3. Kopiere das Ergebnis in `charts.jsonc` oder in eine eigene Datei wie `charts-nevada.jsonc`. Das ist schon ein vollständiger Eintrag.
+4. Ergänze von Hand, was der Editor nicht kennt. Die Tabelle zeigt, was jeder Schlüssel bedeutet und woher der Wert kommt.
+5. Starte eine Mission. Das DCS-ATC-Fenster nennt die Plätze, die es aus jeder Datei übernommen hat, oder die Stelle eines Fehlers.
+
+| Schlüssel | Bedeutung | Woher |
+|---|---|---|
+| Platzname | Wie in DCS; ein eindeutiger Teil genügt (`Nellis AFB`) | Verfahrens-Editor, F10-Karte |
+| `icao` | ICAO-Code, für „request IFR clearance to Echo Tango Mike November“ | Platzkarte |
+| `pattern_ft` | Platzrundenhöhe, Fuß über Meer | Platzkarte; sonst Platzhöhe plus 1000 bis 1500 ft |
+| `arrdep_max_ft` | Größte Höhe für An- und Abflug nach Sicht in der Zone („not above“) | Platzkarte |
+| `ctr_top_ft` | Obergrenze der Kontrollzone, Fuß über Meer | Platzkarte |
+| `crp` | Meldepunkte: Name und Position | Verfahrens-Editor; gedruckte Koordinaten einer Karte; die F10-Karte zeigt die Position unter dem Mauszeiger (LAlt+Y wechselt das Format) |
+| `rwy` → `"03L"` | Ein Block je Bahnrichtung, benannt wie in DCS | Verfahrens-Editor |
+| `hand` | Richtung der Platzrunde: `"left"` oder `"right"` | Platzkarte |
+| `side` | Seite der Bahn, auf der die Platzrunde liegt, so wie der Lotse sie sagt (`"south"`) | Platzkarte |
+| `initial_nm` | Abstand des Initial von der Schwelle in NM | Platzkarte; üblich sind 2 bis 3 NM |
+| `entry` | Meldepunkte für den Einflug, jeder mit `"via": "overhead"` oder `"initial"`. Der letzte ist der Standard, wenn deine Position nicht entscheidet | Platzkarte |
+| `exit` | Meldepunkte für den Ausflug. Der erste ist der Standard | Platzkarte |
+| `ground` → `ramps` | Benannte Vorfelder. `pts`: ein oder mehrere Punkte auf dem Vorfeld; ein Parkplatz gehört zum Vorfeld mit dem nächsten Punkt. `to`: Rollwege zur Bahn, je Bahn. `in`: Rollwege nach der Landung, je Bahn (`"*"` = jede Bahn). `vacate`: wie du die Bahn verlässt | Platzkarte; Positionen von der F10-Karte |
+| `ground` → `holds` | Benannte Warteplätze: `pos` und die Bahnen `rwy`. Ein Vorfeld verweist darauf mit `"hold": { "03L": "Alpha" }` | Platzkarte; Position von der F10-Karte |
+| `ground` → `ramp_only` | `true` = nach der Landung nennt Ground an diesem Platz nur das Vorfeld, keinen Parkplatz | Deine Entscheidung |
+| `ground` → `stands` | Parkplatznummer in DCS und ihr Name auf der Karte. Brauchst du nicht: DCS-ATC sagt die Parkplatznamen, die DCS selbst zeigt | – |
+
+`"crs"` in der Vorlage ist nur eine Notiz des gedruckten Kurses, DCS-ATC liest es nicht. Schlüssel, die du weglässt, behalten ihren allgemeinen Wert. Ein Platz mit Meldepunkten braucht je Bahn mindestens einen `entry`. Ohne `exit` wird der Abflug wie an einem Platz ohne Verfahren freigegeben; eine Bahn ohne `entry` wird wie an einem Platz ohne Verfahren behandelt (Radar-Vektoren zum Initial).
+
+#### Rollwege hin und zurück (Vorfelder)
+
+Ground nennt nur Rollwege, die du im `ramps`-Eintrag des Platzes festlegst. DCS-ATC kennt die Namen der Rollwege in DCS nicht. Derselbe Eintrag gilt für beide Richtungen:
+
+- `to` gilt für die Rollfreigabe zur Bahn: „taxi to holding point runway zero three right via Foxtrot, Alpha“. Schreibe **jede Bahn, die du benutzt,** als eigenen Schlüssel, so benannt wie in DCS (`"03L"`, `"03R"`, `"21L"`, `"21R"`). `to` kennt kein `"*"`: eine Bahn ohne Schlüssel bekommt „taxi to holding point runway two one left“ ohne Route.
+- `in` gilt nach der Landung: „taxi to Ramp West via Alpha, Foxtrot“. `"*"` heißt jede Bahn.
+- `pts` braucht mindestens einen Punkt. Ein Vorfeld mit `"pts": []` wird ignoriert, Ground nennt dafür gar keine Rollwege.
+- Das Vorfeld wird nach Position gewählt: das mit dem Punkt am nächsten an deinem Flugzeug (Rollen zur Bahn) oder an deinem Parkplatz (Rollen zum Vorfeld).
+
+```jsonc
+"ground": {
+  "holds": {
+    "Alpha": { "pos": "36°13.892'N 115°02.410'W", "rwy": ["03L", "21R"] }
+  },
+  "ramps": {
+    "Ramp West": {
+      "pts": [[228, 524], [198, 508], [163, 574], [193, 590]],
+      "to": { "03L": "Foxtrot, Alpha", "03R": "Foxtrot, Alpha", "21L": "Foxtrot, Echo", "21R": "Foxtrot, Echo" },
+      "in": { "*": "Alpha, Foxtrot" }
+    }
+  }
+}
+```
+
+Mit benanntem Warteplatz (`"hold": { "21R": "Echo" }`) lautet die Freigabe „taxi to holding point Echo, runway two one right, via Foxtrot, Echo“.
+
+#### Anflugrouten (Recoveries)
+
+Eine Route ist eine Kette benannter Fixes, die an einem Meldepunkt endet, etwa die MINTT-Recovery auf Nellis Bahn 03 (MINTT, GASS PEAK, SIMNS, dann CRAIG an den Tower melden). Du forderst sie mit Namen an: „Nellis Approach, Enfield 1-1, inbound via MINTT“ oder „request MINTT recovery“. Eine Bahn kannst du dazusagen („inbound runway 03R via MINTT“). Fragst du nach einem Namen, der nicht unter den Routen und Departures des Platzes ist, sagt der Lotse das: „Unable Dream departure, not on file.“
+
+- Approach antwortet „cleared Mintt recovery runway zero three right, proceed direct Mintt, cross Mintt at or above 15000 feet, Gass Peak at or above 9000 feet, Simns at 5500 feet, report Craig.“ Du fliegst die Route wie auf der Karte.
+- Die Fixes darfst du melden („Gass Peak“), Approach antwortet „roger, report Craig“. Meldest du nicht, verfolgt Approach dich trotzdem von Fix zu Fix.
+- Etwa zwei Minuten vor dem letzten Punkt übergibt Approach an den Tower, wie bei jedem Meldepunkt. Dort meldest du den Punkt („Craig“) und bekommst Overhead oder Initial.
+- Eine Route gibt es nur auf Anfrage. Ohne sie bekommt ein „inbound“ wie bisher Radarführung.
+
+```jsonc
+"Nellis": {
+  "crp": { "CRAIG": "36°15.25'N 115°08.27'W" },
+  "rwy": {
+    "03L": { "hand": "left", "side": "northwest", "initial_nm": 3,
+             "entry": { "CRAIG": { "crs": 120, "via": "overhead" } }, "exit": { "CRAIG": { "crs": 300 } } },
+    "03R": { "hand": "right", "side": "southeast", "initial_nm": 3,
+             "entry": { "CRAIG": { "crs": 120, "via": "overhead" } }, "exit": { "CRAIG": { "crs": 300 } } }
+  },
+  "routes": {
+    "MINTT": { "rwy": ["03L", "03R"], "to": "CRAIG", "pts": [
+      { "fix": "MINTT",     "pos": "36°42.74'N 115°06.29'W", "above": 15000 },
+      { "fix": "GASS_PEAK", "pos": "36°24.14'N 115°10.66'W", "above": 9000 },
+      { "fix": "SIMNS",     "pos": "36°17.34'N 115°10.75'W", "at": 5500 } ] }
+  }
+}
+```
+
+- `"rwy"`: die Bahnen, für die die Route gilt. Fragst du sie an, während eine andere Bahn in Betrieb ist, nennt Approach die passenden Bahnen.
+- `"to"`: der Meldepunkt am Ende. Er muss für jede dieser Bahnen ein `entry` sein.
+- `"pts"`: die Fixes der Reihe nach. `"above"` = in oder über, `"at"` = in dieser Höhe, `"below"` = in oder unter, jeweils in Fuß. Steht `"above"` zusammen mit `"below"` am selben Fix, heißt das zwischen den beiden Höhen, etwa `"above": 5000, "below": 7000`; der Lotse sagt dann „cross Flex between 5000 and 7000 feet“. Alles darf fehlen.
+- `"say"`: weitere Namen, mit denen du die Route anfordern kannst, für einen Namen, den die Spracherkennung nicht versteht: `"say": ["ECHO"]` lässt „request Echo recovery“ ARCOE wählen. Optional, auch für Abflugrouten.
+
+Ein Name für mehrere Bahnen: statt einer Route eine Liste von Varianten. Du fragst wie gewohnt nach „STRYK“, DCS-ATC nimmt die Variante für die Bahn in Betrieb.
+
+```jsonc
+"routes": {
+  "STRYK": [
+    { "rwy": ["03L", "03R"], "to": "CRAIG", "pts": [
+      { "fix": "STRYK",     "pos": "36°31.420'N 115°32.110'W", "above": 9500 },
+      { "fix": "GASS_PEAK", "pos": "36°24.14'N 115°10.66'W",   "above": 8500 },
+      { "fix": "SIMNS",     "pos": "36°17.34'N 115°10.75'W",   "at": 5500 } ] },
+    { "rwy": ["21L", "21R"], "to": "APEX", "pts": [
+      { "fix": "STRYK",     "pos": "36°31.420'N 115°32.110'W", "above": 9500 },
+      { "fix": "GASS_PEAK", "pos": "36°24.14'N 115°10.66'W",   "above": 8500 } ] }
+  ]
+}
+```
+
+#### Abflugrouten
+
+Eine Abflugroute ist eine Kette von Fixes, die du nach dem Start abfliegst, danach eigene Navigation. Du nennst sie mit der Rollanfrage („request taxi, FLEX departure“) oder mit „ready for departure, FLEX departure“.
+
+- Die Startfreigabe enthält sie: „after departure Flex departure, proceed direct Flex, cross Flex at or below 5000 feet, Apex at or above 9000 feet, then own navigation, runway zero three left, wind …, cleared for takeoff.“ Mit IFR-Freigabe endet sie stattdessen mit „then climb and maintain …“. Hat schon die IFR-Freigabe den Abflug genannt, wiederholt die Startfreigabe nur den Namen („after departure fly the Flex departure, runway …, cleared for takeoff“). Die Höhe in dieser IFR-Freigabe liegt nie unter der höchsten „at or above“-Höhe des Abflugs, aufgerundet auf die nächsten 1000 ft („expect“ entfällt, wenn sie nicht höher ist).
+- Beim Check-in bei Departure lautet die Antwort „Continue Flex departure“. Departure verfolgt dich von Fix zu Fix, nach dem letzten Fix fliegst du eigene Navigation.
+- Fragst du sie an, während eine andere Bahn in Betrieb ist, nennt der Tower die passenden Bahnen.
+
+```jsonc
+"departures": {
+  "FLEX": { "rwy": ["03L", "03R"], "pts": [
+    { "fix": "FLEX", "pos": "36°18.238'N 115°02.218'W", "below": 5000 },
+    { "fix": "APEX", "pos": "36°21.57'N 114°54.34'W",  "above": 9000 } ] }
+}
+```
+
+`"departures"` steht im Eintrag des Platzes neben `"routes"`. `"rwy"` und `"pts"` funktionieren wie bei Anflugrouten, ebenso eine Liste von Varianten unter einem Namen; ein `"to"` gibt es nicht. Ein Punkt, dessen Name mit `_` beginnt (etwa `"_ARC_SOUTH"`) oder der `"silent": true` hat, gehört zur Route, wird aber nie angesagt; der Lotse nennt nur die übrigen Punkte. Auf einem Abflug korrigiert er dich erst, wenn du mehr als 4 NM neben der Route fliegst. Die Route verläuft zwischen den Punkten geradlinig, für einen Bogen setzt du deshalb mehrere stille Punkte entlang des Bogens.
+
+#### Verfahrens-Editor
+
+Der Verfahrens-Editor ist eine Seite im Browser, die Meldepunkte und Routen für `charts.jsonc` schreibt. Koordinaten musst du damit nicht mehr von Hand messen.
+
+- **Öffnen:** Startmenü → DCS-ATC → *Verfahrens-Editor*, oder `http://localhost:18600/chart`, während DCS-ATC läuft (das Lagebild hat einen Link). Ohne laufende Mission zeigt er die Plätze der letzten Mission.
+- **Platz wählen** oben rechts. Die Karte zeigt seine Bahnen, die Meldepunkte und Routen, die er schon hat (blau, grün, orange), und die Nachbarplätze. Ziehen verschiebt die Karte, das Mausrad zoomt. Unten links stehen missweisende Peilung und Entfernung des Mauszeigers vom Platz, um einen Punkt von einer echten Karte zu setzen.
+- **Meldepunkt:** auf die Karte klicken und den Namen eintippen. In der Liste wählst du, ob er Einflug (über Initial oder Overhead) und Ausflug ist. Das gilt für alle Bahnen des Platzes.
+- **Anflugroute:** Namen der Route eintippen, die Fixes der Reihe nach anklicken, dann den Meldepunkt anklicken, an dem die Route endet, dann *Finish route*. Klickst du nach einem Meldepunkt weiter, geht die Route über ihn hinaus, und der Punkt wird einer ihrer Fixes. Die Höhe je Fix stellst du in der Liste ein (oder höher, genau, oder tiefer, zwischen mit einer zweiten Höhe; leer = keine). Die Route gilt für jede Bahn, die den Endpunkt als Einflug hat.
+- **Abflugroute:** Namen eintippen, die Fixes der Reihe nach anklicken, dann *Finish route*.
+- Ein Klick auf einen Punkt, den es schon gibt, nimmt diesen Punkt mit Namen und Position.
+- **Ergebnis:** Im Textfeld steht der vollständige Eintrag des Platzes: was er bisher hatte (auch die eingebauten Kaukasus-Daten mit den Rollwegen) plus deine Ergänzungen. Mit *Copy* kopieren und in `charts.jsonc` innerhalb der äußeren `{ }` einfügen, anstelle des Eintrags des Platzes, falls die Datei schon einen hat. Gilt ab dem nächsten Missionsstart. Positionen stehen als DCS-Koordinaten `[x, z]` drin.
+- Eine rote Zeile über dem Text nennt, was noch fehlt, zum Beispiel eine Bahn ohne Einflug- oder Ausflugpunkt. Jede Bahn eines Platzes mit Meldepunkten braucht mindestens einen von jedem.
+- Die Seite liest nur, sie ändert `charts.jsonc` nicht. Deine Ergänzungen bleiben im Browser, bis du sie entfernst (×).
+- Feinheiten (ein Punkt als Einflug nur für eine Bahn, Seite der Platzrunde, Rollwege) änderst du im Text wie oben beschrieben.
+- Die Seite ist auf Englisch.
+
 ### Kneeboard-Seiten
 
-Bei jedem Missionsstart legt DCS-ATC seine Kneeboard-Seiten in `Saved Games\DCS\Kneeboard` ab. DCS zeigt sie im Kneeboard jedes Flugzeugs. Die Seiten: Funk, Kutaisi, Plätze mit Frequenzen, Platzrunden und CRPs, Navigationsanlagen, AWACS und Tanker, Hinweise zur Karte. Die Frequenzen sind die der laufenden Mission.
+Bei jedem Missionsstart legt DCS-ATC seine Kneeboard-Seiten in `Saved Games\DCS\Kneeboard` ab. DCS zeigt sie im Kneeboard jedes Flugzeugs. Die Seiten: Funk, Plätze mit Frequenzen, Platzrunden und CRPs, An- und Abflugrouten, Navigationsanlagen, AWACS und Tanker, dazu zwei Seiten mit den Funksprüchen für Tanker, Träger, Wingmen, JTAC und Range. Die Frequenzen sind die der laufenden Mission.
 
-- Nur Karte Kaukasus und nur auf Deutsch. Auf anderen Karten und bei englischer Sprache entfernt DCS-ATC seine Seiten wieder.
+- Auf jeder Karte, in der Sprache der Oberfläche (Deutsch oder Englisch). Auf Karten mit vielen Plätzen laufen die Tabellen über mehrere Seiten.
+- Platzrunden, CRPs und Routen stehen für die Plätze mit Verfahren drin: Kaukasus eingebaut, sonst aus deiner `charts.jsonc` (siehe [Eigene Platzverfahren](#eigene-platzverfahren-chartsjsonc)). Die Routen-Seite nennt je Route die Bahnen, die Fixes in Reihenfolge und ihre Höhen („9000+“ = oder höher, „5000-“ = oder tiefer, „5000-7000“ = zwischen).
+- Platzseiten: Jeder Platz aus deinen `charts*.jsonc`-Dateien bekommt eine eigene Seite `ATC-2-<Platz>` (etwa `ATC-2-NellisAFB`) mit Bahnen und Längen, Elevation, Navhilfen, Frequenzen, Platzrundenhöhe und -seite je Bahn, An- und Abflughöhe, Kontrollzone, Meldepunkten mit den Bahnen und dem Einflug, den sie bedienen, Initial-Abstand, Rollwegen je Vorfeld, Abrollhinweisen und deinen Hinweisen. Bei vielen Vorfeldern geht sie auf `…_2` und `…_3` weiter. Höchstens 10 Plätze je Karte. Im Kaukasus hat Kutaisi immer seine Seite; die übrigen eingebauten Plätze stehen auf den Platz- und Platzrunden-Seiten.
+- Nur im Kaukasus: die Hinweise zur Karte.
+- DCS liest die Seitenliste beim Laden der Mission. Eine Seite, die es bisher nicht gab (andere Karte, mehr Tabellenseiten), erscheint deshalb erst ab der nächsten Mission, und die erste Mission nach einem Kartenwechsel zeigt noch die Seiten der vorherigen Karte. Eine Seite, die diese Mission nicht braucht, zeigt einen Hinweis und ist ab der nächsten Mission weg.
 - Ausschalten: `"KneeboardPages": false` in `config.jsonc`.
 - Die Dateien heißen `ATC-*.png`. Beim Deinstallieren werden sie gelöscht.
+
+### Zeichnungen auf der F10-Karte
+
+Bei jedem Missionsstart zeichnet DCS-ATC die Lufträume der Plätze auf die F10-Karte. Alle Spieler sehen sie, auch ohne eigenes DCS-ATC.
+
+- **Kontrollzone:** blauer Kreis um jeden Platz mit Namen und Obergrenze („Kutaisi CTR 2700 ft“). Das ist der Luftraum, den der Tower überwacht (siehe [Luftraum](#luftraum)).
+- **Meldepunkte:** kleiner blauer Kreis mit Namen („CRP north“, „CRAIG“), bei Plätzen mit Verfahren (Kaukasus eingebaut, sonst aus `charts.jsonc`).
+- **Anflugrouten** (`"routes"`): grüne Linie von Fix zu Fix bis zum Meldepunkt am Ende.
+- **Abflugrouten** (`"departures"`): orange gestrichelte Linie von Fix zu Fix.
+- Die Zeichnungen lassen sich in der Karte nicht verschieben oder löschen. Nach einer Änderung an `charts.jsonc` gelten sie ab dem nächsten Missionsstart.
+- Ausschalten: `"F10Drawings": false` in `config.jsonc` oder im Einstellungsfenster.
 
 ### Andere Karten als Kaukasus
 
@@ -2671,7 +2925,7 @@ Die erzeugten Zeilen in `frequencies.jsonc` enthalten die Platznamen schon. Sons
   ```
 - **`airfields.txt`** in `%LOCALAPPDATA%\Programs\DCS-ATC` enthält die Plätze der zuletzt geflogenen Karte. Jeder Platz ist eine Zeile mit `A;` am Anfang, etwa `A;Anapa-Vityazevo;…`. Das zweite Feld ist der genaue Name.
 - **Das Funkrad:** Allgemein -> „Platz wählen“ listet die 8 nächsten Plätze.
-- **Das F10-Menü:** `ATC -> Ground -> IFR clearance` listet bis zu 8 Plätze deiner Seite mit Namen.
+- **Das F10-Menü:** `DCS-ATC -> Ground -> IFR clearance` listet bis zu 8 Plätze deiner Seite mit Namen.
 - **Die F10-Karte** zeigt die DCS-Platznamen.
 - **atc-log.txt:** passt ein Name in `frequencies.jsonc` zu mehreren Plätzen, nennt die Logzeile die getroffenen Plätze.
 
@@ -2692,17 +2946,23 @@ Die erzeugten Zeilen in `frequencies.jsonc` enthalten die Platznamen schon. Sons
 
 Öffnen über **Startmenü → DCS-ATC → Einstellungen** oder **Funkrad → Allgemein → Einstellungen**. **Speichern** schreibt deine Änderungen in `config.jsonc` und behält die Kommentare der Datei. Im Fenster speichert `Enter`, `Esc` bricht ab. Mit `*` markierte Felder gelten ab dem nächsten Start von DCS-ATC, alle anderen schon während es läuft.
 
+Links wählst du die Seite: Allgemein, Stimmen, Funk & Verkehr, AWACS, Frequenzen, Tasten & Funkrad, SRS, Module, Erweitert, Danke (die Unterstützer von DCS-ATC). Das Suchfeld darüber springt zur Seite mit dem gesuchten Feld und hebt es hervor.
+
 | Feld | Werte | config.jsonc-Schlüssel |
 |---|---|---|
 | **Eigenes Rufzeichen** | Leer = Rufzeichen aus dem DCS-Slot. Sonst Name und zwei Ziffern, etwa `Viper 1-1` (`viper11` wird angenommen und vereinheitlicht). | `MyCallsign` |
 | **Rufzeichen aus dem Unitnamen der Mission** | Aus = DCS-Rufzeichen. An = Unitname, wenn er wie ein Rufzeichen aussieht (`VICTORY 9-1` wird „Victory 9-1“), sonst DCS-Rufzeichen. | `CallsignFromUnit` |
+| **Rufzeichen aus dem DCS-Spielernamen** | An = Teil des Spielernamens vor dem Strich (oder ganzer Name), wenn er wie ein Rufzeichen aussieht (`GUARDIAN 1-1 \| Christian` wird „Guardian 1-1“), vor dem Unitnamen. | `CallsignFromPlayer` |
 | **Sprache der Oberfläche** `*` | Deutsch / English. Schaltet auch die Sprache des F10-Menüs um. | (Sprachdatei) |
 | **Lautstärke Lotsen** | 0–100 %, in 5er-Schritten | `Volume` |
 | **Sprechtempo** (1 = normal, größer = langsamer) | 0,70–1,50 | `SpeechRate` |
 | **Pause zwischen Funksprüchen** | 0–5 s | `ReplyPause` |
 | **Funkklang (Rauschen, Squelch)** | an/aus | `RadioFx` |
 | **Funksprüche auch als Text im Spiel** | an/aus | `RadioText` |
-| **Eigene Anfragen vorsprechen (Pilotenstimme)** | an/aus. Aus setzt die Pilotenstimme auf leer. | `PilotVoice` |
+| **Hinweise von DCS-ATC als Text im Spiel** | an/aus. Aus: Hinweise, Fehlermeldungen, Landebewertung und Verstöße erscheinen nicht mehr im Bild (für VR ohne Text im Sichtfeld). Sie stehen weiter in `atc-log.txt` und im Debriefing. | `HintText` |
+| **Pilotenstimme (spricht eigene Anfragen vor)** | Stimme wählen oder *aus*. Aus setzt die Pilotenstimme auf leer. | `PilotVoice` |
+| **ElevenLabs (optional)** | API-Schlüssel, **Verbinden** (lädt Stimmen und Kontingent), Kontingentanzeige, je Rolle eine Stimme oder *Piper (wie oben)* mit ▶ Probe. | `ElevenLabsKey`, `ElevenVoices` |
+| **Tempo** je Rolle in der ElevenLabs-Stimmentabelle (1 = normal, größer = schneller) | 0,80–1,50 | `ElevenVoices` (`"id@1.3"`) |
 | **AWACS-Picture als Bullseye (statt BRAA)** | an/aus | `AwacsBullseye` |
 | **AWACS meldet neue Gruppen bis** | 40–200 NM | `AwacsNewGroupNm` |
 | **KI-Verkehr funkt hörbar mit** | an/aus | `AiChatter` |
@@ -2713,16 +2973,38 @@ Die erzeugten Zeilen in `frequencies.jsonc` enthalten die Platznamen schon. Sons
 | **Zufällige NOTAMs (ILS aus, Bahn gesperrt, Vogelschlag)** | an/aus | `RandomNotams` |
 | **Luftraum überwachen (Kontrollzonen, Verstöße, Debriefing)** | an/aus | `AirspaceWatch` |
 | **Debug-Log für Fehlerberichte (atc-debug.txt)** | an/aus | `DebugLog` |
+| **Diagnose-Zip erstellen …** | Knopf | legt `DCS-ATC-diagnostics-<Datum>-<Uhrzeit>.zip` auf den Desktop (siehe Fehlerbericht unten) |
+| **Installationsbericht erstellen …** | Knopf | Erstellt eine Textdatei mit DCS-ATC-Version, Windows-Version, Zeitpunkt und dem Installationsstatus der mitgelieferten Sprachkomponenten. |
+| **Problem melden …** | Knopf | Erstellt die Diagnose-Zip, zeigt sie im Explorer und öffnet das Formular für den Fehlerbericht auf GitHub, vorausgefüllt mit Version, Karte, Flugzeug und der Uhrzeit deiner letzten Log-Markierung. Die Zip hängst du dort selbst an. |
+| **Funk-Selbsttest starten** | Knopf | Prüft Mikrofonpegel, lokale Spracherkennung, Erzeugung der Sprachantwort und den lokalen SRS-Port. |
 | **Bahnbefeuerung (nachts)** | stumm / mit DCS-Lotse (hörbar) / aus. Gilt ab dem nächsten Start. | `RunwayLights` |
 | **Höhenmesser-Einstellung** | automatisch (nach Flugzeugtyp) / hPa (QNH) / inHg (altimeter) | `AltimeterUnit` |
-| **Funkrad im Spiel (VR)** | automatisch (wenn DCS im VR-Modus) / immer / aus | `WheelInGame` |
+| **Funkrad im Spiel (VR)** | Text automatisch (wenn DCS im VR-Modus) / Text immer / aus / Rad als Bild (Test) | `WheelInGame` |
+| **Feste Nummern im Funkrad** | An: Die oberste Ebene zeigt immer alle Einträge der gewählten Module in derselben Reihenfolge (etwa für VoiceAttack). Nicht benutzte Module abwählen, damit alles auf die Tasten 1-9 passt. | `WheelFixed` |
 | **Mikrofon (nur ohne SRS)** `*` | Windows-Standard oder ein bestimmtes Gerät | `MicName` |
 | **SRS-Ordner** `*` | Der Pfad, mit „…“ zum Durchsuchen. Geprüft wird auf `ExternalAudio\DCS-SR-ExternalAudio.exe`. | `SrsPath` |
 | **Tasten festlegen …** | Öffnet die Tastenabfrage (Funkrad, HOTAS, Sprechtaste). | `WheelKey`, `PttKey`, … |
 | **Module** | Ein Kästchen pro Modul, wie im [Setup](#module-wählen). Das F10-Menü ändert sich ab der nächsten Mission. | (`modules.txt`, `DcsAtcModules.txt`) |
 | **DCS-ATC aktiv** | an/aus. Aus: DCS-ATC startet ab der nächsten Mission nicht mehr, ohne Deinstallieren. Kein Funkrad, kein F10-Menü, der KI-Funk von DCS läuft wie ohne DCS-ATC. Wieder an: Haken setzen. | (`DcsAtcOff.txt`) |
 
-**Alle Optionen (config.jsonc) …** öffnet die Datei im Editor.
+| **Kneeboard-Seiten bei Missionsstart schreiben** `*` | an/aus | `KneeboardPages` |
+| **Kontrollzonen, Meldepunkte und Routen auf die F10-Karte zeichnen** `*` | an/aus | `F10Drawings` |
+| **Update** | Zeigt die installierte Version. *Nach Updates suchen* fragt GitHub nach dem neuesten Release. Gibt es ein neueres, wird der Knopf zu *Jetzt aktualisieren*: lädt das Update, prüft Größe und Prüfsumme, führt das Setup aus und öffnet dieses Fenster wieder. Geladen wird nur das Programm (rund 75 MB), wenn Sprachmodell, Stimmen und Werkzeuge auf deinem PC die des neuen Release sind, sonst das volle Release (rund 850 MB); das Fenster zeigt die Größe. Nicht, solange DCS läuft. `config.jsonc` und Tasten bleiben erhalten. | |
+| **Beim Start nach einer neuen Version suchen** | an/aus. An: eine Anfrage an GitHub beim Start von DCS-ATC und beim Öffnen dieses Fensters. Eine neuere Version wird nur gemeldet (Zeile im Log, dieses Fenster), geladen wird nichts ohne den Knopf. | `UpdateCheck` |
+| **Stimme je Station** `*` | Je Station: *Zufällig* (bei jedem Start eine der installierten Stimmen, ohne die Pilotenstimme) oder eine feste Stimme aus dem Ordner `models` mit Tonhöhe (1.00 = unverändert, kleiner = tiefer). Mit einer zweiten Stimme wechseln sich die Plätze ab. Der Knopf rechts spricht eine Probe über die PC-Lautsprecher. *Alle zufällig* und *Standard* setzen alle Zeilen. Drei und mehr Stimmen aus der Datei bleiben ein Textfeld. | `Voices` |
+| **KI-Funk nur im Umkreis eigener Spieler** | 10–200 NM | `AiFlightRadiusNm` |
+| **Eigene KI-Wingmen funken mit** | an/aus | `AiOwnWingmen` |
+| **Tanker führt selbst zum Join** | an/aus | `TankerVectors` |
+| **KI-Jäger fliegen die AWACS-Zuweisung** | an/aus. Aus: nur Funk. | `AiFollowAwacs` |
+| **Funktionsfrequenzen in MHz** `*` | Je Station eine Frequenz, 30–400 MHz | `Frequencies` |
+| **Modulation** `*`, **SRS-Seite für Stationen ohne eigene Seite** `*` | AM / FM, blau / rot | `Modulation`, `Coalition` |
+| **frequencies.jsonc …** | Öffnet die Datei mit den eigenen Frequenzen je Platz. | (`frequencies.jsonc`) |
+| **Größe des Funkrads** `*` | 25–95 % der Fensterhöhe | `WheelSize` |
+| **Über SRS auf der Lotsen-Frequenz sprechen** `*`, **SRS-Client beim Start verbinden** `*` | an/aus | `SrsListen`, `SrsAutoConnect` |
+| **Spracherkennung** `*` | Grafikkarte an/aus, API-Adresse, API-Schlüssel, API-Modell | `AsrGpu`, `AsrApiUrl`, `AsrApiKey`, `AsrApiModel` |
+| **Lagekarte im Browser** `*` | Port (0 = aus), auch aus dem Netzwerk an/aus | `MapPort`, `MapLan` |
+
+Auf der Seite *Erweitert* öffnet **config.jsonc …** die Datei im Editor. Nur dort stehen Center-Namen und -Sektoren, eigene NOTAMs, die ATIS-Frequenz je Platz und der On-speed-AoA.
 
 ### config.jsonc-Referenz
 
@@ -2744,7 +3026,8 @@ Die Datei liegt im Installationsordner: `%LOCALAPPDATA%\Programs\DCS-ATC\config.
 | `WheelJoystick` | `-1` (aus) | Joystick-ID für den Rad-Knopf. Ist sie gesetzt, bedient der Hat das Rad. |
 | `WheelButton` | `1` | Knopfnummer, die das Rad öffnet. |
 | `WheelSize` | `0.45` | Radgröße als Anteil der DCS-Fensterhöhe (0,25–0,95). `+`/`-` im offenen Rad ändern und speichern sie. |
-| `WheelInGame` | `"auto"` | Rad zusätzlich als Text im Spiel: `"auto"`, wenn DCS in VR läuft (VR-Option oder `--force_enable_VR`), `"on"`, `"off"`. |
+| `WheelInGame` | `"auto"` | Rad zusätzlich als Text im Spiel: `"auto"`, wenn DCS in VR läuft (VR-Option oder `--force_enable_VR`), `"on"`, `"off"`. `"window"` = stattdessen das Rad als Bild in einem DCS-Fenster (Test). |
+| `WheelFixed` | `false` | `true` = die oberste Ebene des Funkrads zeigt immer alle Einträge der gewählten Module in fester Reihenfolge, ohne Filter nach Flugphase oder Anwesenheit von AWACS, Tanker, JTAC, Träger, Schießplatz oder Center; Ground ist also immer Taste 1. Bleiben mehr als 9, bleiben Notfall und Allgemein hinten und Einträge aus der Mitte entfallen, deshalb nicht benutzte Module abwählen. Untermenüs bleiben; in Allgemein ist Debriefing / Log immer Taste 7. |
 | `CommsKey` | `43` (`\` US / `#` deutsch) | Deine DCS-Taste für das **Kommunikationsmenü** als Scancode. DCS-ATC drückt sie, um das DCS-Tankermenü (Korb/Boom) zu öffnen und in Dämmerung, Nacht oder schlechter Sicht die Bahnbefeuerung anzufordern. `0` = aus. |
 | `MicName` | `""` | Teil des Mikrofonnamens, etwa `"FDUCE"`. Leer = Windows-Standard. Nur ohne SRS. |
 
@@ -2755,6 +3038,7 @@ Die Datei liegt im Installationsordner: `%LOCALAPPDATA%\Programs\DCS-ATC\config.
 | `Callsign` | `"Enfield 1-1"` | Nur ohne Missionsdaten oder für einen Slot ohne westliches Rufzeichen. Normalerweise kommt das Rufzeichen aus deinem DCS-Slot. |
 | `MyCallsign` | `""` | Eigenes Rufzeichen statt des Slot-Rufzeichens. `""` = aus DCS. |
 | `CallsignFromUnit` | `false` | Rufzeichen aus dem Unitnamen der Mission (`VICTORY 9-1`, `WOLF-2-1`) statt aus dem DCS-Slot. Andere Unitnamen behalten das DCS-Rufzeichen. |
+| `CallsignFromPlayer` | `false` | Rufzeichen aus dem DCS-Spielernamen: Teil vor dem Strich (`GUARDIAN 1-1 \| Christian`) oder ganzer Name (`Guardian 9-1`). Vor `CallsignFromUnit`; `MyCallsign` gilt für den Host zuerst. Andere Namen behalten Unitnamen oder DCS-Rufzeichen. |
 | `Mode` | `"host"` | `"client"` = nur Funkrad, Anfragen gehen über DCS an den Host. DCS-ATC schaltet von selbst in den Client-Modus, wenn du einem fremden Server beitrittst. |
 | `Dedicated` | `false` | Dedicated Server ohne jemanden am PC: kein Rad, keine Tasten, kein Mikrofon, kein SRS-Client. Schaltet sich automatisch ein, wenn `DCS_server.exe` ohne `DCS.exe` läuft. |
 
@@ -2764,6 +3048,7 @@ Die Datei liegt im Installationsordner: `%LOCALAPPDATA%\Programs\DCS-ATC\config.
 |---|---|---|
 | `Frequencies` | `{ "ATIS": 263.5, "Ground": 264.5, "Tower": 265.0, "Approach": 266.5, "Range": 267.5, "Center": 268.5, "RedCrown": 252.5, "AWACS": 251.5, "Tanker": 255.5, "Carrier": 127.5, "JTAC": 133.5 }` | Stationsfrequenzen in MHz. **ATIS** ist die gemeinsame ATIS-Frequenz. **Range** ist der Range-Lotse. **JTAC** ist die Frequenz eines JTAC oder FAC(A), der in der Mission keine eigene hat. **Tanker** ist der Tankerfunk von DCS-ATC. **AWACS**, **Carrier** und **RedCrown** gelten nur, wenn die Missionseinheit keine eigene Frequenz hat. **Ground / Tower / Approach** sind Ersatz für Plätze ohne DCS-Frequenzdaten; normalerweise nutzt jeder Platz seine Kartenfrequenz. DCS-ATC warnt im Fenster, wenn eine Stationsfrequenz gleich einer Platzfrequenz ist. |
 | `AtisFreqs` | `{}` | Eigene ATIS-Frequenz je Platz, etwa `{ "Kutaisi": 262.0 }`. Nicht genannte Plätze nutzen `Frequencies.ATIS`. Gilt nach Neustart. |
+| `Pronunciation` | `{}` | Aussprache einzelner Wörter durch die Stimme, z. B. `{ "Ramstein": "Rahm-shtine" }`. Die Stimmen sind englisch, ein deutscher Name wird also so geschrieben, wie ihn ein Englischsprecher lesen würde. Nur ganze Wörter, Groß- und Kleinschreibung egal; der Funktext bleibt wie geschrieben. |
 | `CenterNames` | `{}` | Center-Name je Karte, z. B. `{ "Nevada": "Seattle Center", "Caucasus:red": "Rostov Control" }`. Leer = eingebaute Namen (siehe [Center](#center)). |
 | `CenterSectors` | `[]` | Mehrere Center-Sektoren je Karte, z. B. `[{ "Name": "Rostov Control", "Freq": 269.0, "Lat": 47.2, "Lon": 39.7, "RadiusNm": 120, "Side": "red" }]`. `Lat`/`Lon` auf jeder Karte, oder `X`/`Z` in Metern. `"Gci": true` macht den Eintrag zum GCI/CRC (Radarlotse wie das AWACS) statt zum Center. Der nächste Mittelpunkt, in dessen Radius du liegst, gilt. |
 | `Modulation` | `"AM"` | Modulation aller DCS-ATC-Sendungen. |
@@ -2771,6 +3056,7 @@ Die Datei liegt im Installationsordner: `%LOCALAPPDATA%\Programs\DCS-ATC\config.
 | `SrsPath` | `"C:\\Program Files\\DCS-SimpleRadio-Standalone"` | SRS-Ordner. Stimmt er nicht, nimmt DCS-ATC den Registry-Eintrag oder das laufende SRS. |
 | `SrsListen` | `true` | Sprüche aller Spieler über SRS hören. Mit SRS-Verbindung wird deine eigene Sprechtaste ignoriert. |
 | `SrsAutoConnect` | `true` | Einen noch nicht verbundenen SRS-Client automatisch mit dem lokalen SRS-Server verbinden. |
+| `SrsStart` | `true` | SRS-Server und -Client starten, wenn sie nicht laufen. `false`: DCS-ATC startet keinen von beiden, für einen Server, dessen SRS du selbst startest. |
 | `TelemetryPort` | `18500` | Lokaler UDP-Port für die Daten deines Flugzeugs. Das Export-Skript sendet an 18500, also so lassen. |
 
 Eigene Frequenzen je Platz und Lotse stehen nicht in `config.jsonc`, sondern in der eigenen Datei `frequencies.jsonc`; sie gelten sofort nach dem Speichern. Siehe [Eigene Frequenzen je Platz](#eigene-frequenzen-je-platz).
@@ -2781,9 +3067,15 @@ Eigene Frequenzen je Platz und Lotse stehen nicht in `config.jsonc`, sondern in 
 |---|---|---|
 | `Voices` | Wie installiert: Tower `"en_US-ryan-medium\|en_US-ljspeech-medium"`, Ground `"en_US-bryce-medium"`, Approach `"en_US-ryan-medium@1.05"`, ATIS `"en_US-ryan-medium@0.94"`, Range `"en_US-ryan-medium@1.06"`, AWACS `"en_GB-alan-medium\|en_US-ljspeech-medium"`, Tanker `"en_US-bryce-medium"`, Crew `"en_US-ryan-medium"`. Carrier (automatisch ergänzt) `"en_US-ryan-medium@0.97\|en_GB-alan-medium@1.02"` | Piper-Stimme je Lotse aus dem Ordner `models`. `@0.9` = tiefer. Mehrere Stimmen mit `\|` getrennt: jeder Platz bzw. jede Station bekommt eine davon. Mehr Stimmen: huggingface.co/rhasspy/piper-voices. |
 | `PilotVoice` | `"en_US-joe-medium"` | Spricht deine Rad- und F10-Anfragen vor der Antwort. `""` = aus. |
-| `RadioFx` | `true` | Funkklang: Bandpass, leichtes Rauschen, Squelch-Ende. |
+| `ElevenLabsKey` | `""` | Dein eigener ElevenLabs-API-Schlüssel (Rechte Text to Speech, Voices lesen, User lesen). Leer = nur Piper. Wird aus Diagnose-Zip und Logs entfernt. |
+| `ElevenVoices` | `{}` | Rolle → ElevenLabs-Stimmen-ID, etwa `{"Tower": "idA\|idB"}`. Mit `\|` behält jede Station eine. Fehlt die Rolle, gilt die Piper-Stimme aus `Voices`. |
+| `RadioFx` | `true` | Funkklang: schmaler Bandpass, Kompressor, leichtes Rauschen, Squelch-Ende. |
+| `RadioFxBand` | `[300, 2700]` | Band des Funkklangs in Hz `[untere, obere Grenze]`, je zwei Filterstufen. Untere 100–1000, obere 1500–5000, sonst gilt der Standard. Breiter = klarer, schmaler = mehr Funkgerät. |
+| `RadioFxRatio` | `6` | Kompressor-Verhältnis des Funkklangs (1 = aus, höher = härter). Gefechtssprüche bleiben bei 1:3. |
 | `RadioText` | `true` | Funksprüche auch als DCS-Text im Bild. `false` = nur Stimme. |
+| `HintText` | `true` | Hinweise von DCS-ATC (Hinweise, Fehler, Landebewertung, Verstöße) als DCS-Text im Bild. `false` = nur in `atc-log.txt` und im Debriefing. |
 | `Volume` | `0.6` | Lautstärke der Lotsen in SRS (0–1). |
+| `ElevenLabsSpeed` | `1.1` | Standard-Tempo für ElevenLabs-Stimmen ohne eigenes `@Tempo` in `ElevenVoices`: 1 = normal, größer = schneller (unabhängig von `SpeechRate`). |
 | `SpeechRate` | `0.85` | Sprechtempo: 1 = Piper-Standard, kleiner = schneller. |
 | `ReplyPause` | `1.5` | Sekunden zwischen zwei Sprüchen auf derselben Frequenz. |
 
@@ -2798,8 +3090,10 @@ Eigene Frequenzen je Platz und Lotse stehen nicht in `config.jsonc`, sondern in 
 | `AiFollowAwacs` | `true` | Eigene KI-Jäger fliegen die Gruppe an, auf die das AWACS sie ansetzt. Das AWACS weicht Bedrohungen aus. `false`: die KI fliegt ihre Mission, der Funk folgt ihr. |
 | `AwacsBullseye` | `true` | Picture und Updates an alle im Bullseye-Format; `false` = alles BRAA von dir. |
 | `AwacsNewGroupNm` | `200` | AWACS meldet neue Gruppen (und „picture clean“) bis zu dieser Entfernung, 40–200 NM. |
+| `JtacKeypad` | `false` | `true` = der JTAC gibt Zeile 6 für jedes Flugzeug als 1-km-Gitterquadrat mit Keypad (*„grid three seven tango, golf hotel, two six, two one, keypad seven“*). Das Keypad teilt das Quadrat in neun Felder wie ein Ziffernblock: 7 8 9 im Norden, 1 2 3 im Süden. |
+| `JtacMarkOffsetM` | `100` | Rauch- und WP-Markierungen landen so viele Meter neben dem Ziel, der JTAC nennt Richtung und Entfernung vom Rauch zum Ziel. `0` = Rauch direkt auf dem Ziel. |
 | `TankerVectors` | `false` | `true` = der Tanker führt dich selbst zum Join (Kurs, Entfernung, Höhe), bis du „visual“ meldest. `false` = nur die erste Peilung, Vektoren vom AWACS oder auf „request vector“. |
-| `OnSpeedAoa` | `{ "FA-18": 8.1 }` | LSO: On-Speed-Anstellwinkel in Grad je Typ-Präfix für „you're fast/slow“. Andere Typen bekommen keine Fahrt-Rufe. Werte aus der Logzeile `[LSO] AoA im Mittel` ableiten. |
+| `OnSpeedAoa` | `{ }` | LSO: On-Speed-Anstellwinkel in Grad je Typ-Präfix für „you're fast/slow“. Ergänzt die eingebauten Werte (FA-18 8.1, F-14 10.4, T-45 8.5, A-4E 8.75, AV8B 10.0) oder ersetzt einen. Andere Typen bekommen keine Fahrt-Rufe. Werte aus der Logzeile `[LSO] AoA im Mittel` ableiten. |
 
 **Platzverhalten und Logs**
 
@@ -2809,6 +3103,7 @@ Eigene Frequenzen je Platz und Lotse stehen nicht in `config.jsonc`, sondern in 
 | `MapPort` | `18600` | Port des [Lagebilds im Browser](#lagebild-im-browser), 0 = aus. Gilt nach einem Neustart. |
 | `MapLan` | `false` | `true` = das Lagebild lässt sich auch von anderen Geräten im Netz öffnen (Tablet). Gilt nach einem Neustart. |
 | `StationPositions` | `true` | Lotsen senden mit Standort (Platz, AWACS, Tanker, JTAC, KI-Flüge). Hat der SRS-Server Sichtlinie oder Reichweite an, hört man sie hinter Gelände oder zu weit weg nicht. Siehe [SRS einrichten](#srs-einrichten). |
+| `AssignParkingSpot` | `true` | `false` = Ground nennt nach der Landung nur die Rampe aus der `charts.jsonc` (*„taxi to Ramp West via …“*) und keinen Stellplatz; du parkst darauf, wo du willst. Plätze ohne benannte Rampe bekommen weiter einen Stellplatz. |
 | `IffCheck` | `false` | Lotsen prüfen deinen Transponder aus SRS: Code und *„squawk … and ident“* beim Radarkontakt, *„reset transponder“*, Squawk 7600, AWACS *„parrot sour“* ohne Mode 4. Siehe [Transponder (IFF)](#transponder-iff). Squawk 7700 wird auch ohne die Einstellung bemerkt. |
 | `RandomNotams` | `false` | Höchstens ein zufälliges NOTAM pro Platz und Tag: ILS außer Betrieb, Parallelbahn gesperrt, Vogelschlaggefahr. Siehe [NOTAMs](#notams). |
 | `Notams` | `{}` | Eigene NOTAMs je Platz, zum Beispiel `{ "Kutaisi": ["ILS 25 unserviceable", "runway 07 closed"] }`. Siehe [NOTAMs](#notams). |
@@ -2816,14 +3111,17 @@ Eigene Frequenzen je Platz und Lotse stehen nicht in `config.jsonc`, sondern in 
 | `RunwayLights` | `"silent"` | Bahnbefeuerung in Dämmerung, Nacht oder schlechter Sicht über das DCS-eigene ATC-Menü: `"silent"` (DCS-Lotse bleibt stumm), `"dcs"` (DCS-Lotse 15 s hörbar), `"off"`. |
 | `AltimeterUnit` | `"auto"` | Höhenmessereinstellung in Sprüchen. `"auto"`: westliche Typen „altimeter two niner niner two“ (inHg), andere „QNH one zero one three“ (hPa); die ATIS nennt beides. Oder `"hpa"`, `"inhg"`. |
 | `DebugLog` | `true` | `atc-debug.txt` schreiben. |
+| `AsrServer` | `true` | Die Spracherkennung bleibt, solange DCS-ATC läuft, in einem Hintergrundprozess geladen (auf der Grafikkarte etwa 1 GB Grafikspeicher) und antwortet in deutlich unter einer Sekunde, ohne das Ruckeln durch Modell-Neuladen bei jedem Funkspruch. Bis sie bereit ist und bei einem Fehler wird der Spruch über den alten Start je Funkspruch erkannt. `false` = immer der alte Start je Funkspruch. |
 | `AsrApiUrl` | `""` | Spracherkennung über einen OpenAI-kompatiblen Dienst statt des lokalen Whisper, z. B. `"https://api.openai.com/v1/audio/transcriptions"` oder ein Whisper-Server auf einem anderen PC mit Grafikkarte. `""` = lokal. Fällt der Dienst aus, wird dieser Spruch lokal erkannt; nach drei Fehlern in Folge läuft der Rest der Sitzung lokal. Alles, was auf den abgehörten Frequenzen gesprochen wird, geht an diesen Dienst. |
 | `AsrApiKey` | `""` | Schlüssel für `AsrApiUrl` (als `Bearer`). Leer für einen Server ohne Schlüssel. |
 | `AsrApiModel` | `"whisper-1"` | Modellname bei `AsrApiUrl`, z. B. `"whisper-1"` oder `"gpt-4o-mini-transcribe"`. |
-| `KneeboardPages` | `true` | Kneeboard-Seiten bei Missionsstart nach `Saved Games\DCS\Kneeboard` (nur Kaukasus, deutsch), siehe [Kneeboard-Seiten](#kneeboard-seiten). |
+| `UpdateCheck` | `true` | Beim Start einmal bei GitHub nach einem neueren Release fragen (nur Hinweis, geladen wird aus dem Einstellungsfenster). `false` für Dedicated Server oder PC ohne Internet. |
+| `KneeboardPages` | `true` | Kneeboard-Seiten bei Missionsstart nach `Saved Games\DCS\Kneeboard` (jede Karte, Sprache der Oberfläche), siehe [Kneeboard-Seiten](#kneeboard-seiten). |
+| `F10Drawings` | `true` | Kontrollzonen, Meldepunkte und benannte Routen bei Missionsstart auf die F10-Karte zeichnen, siehe [Zeichnungen auf der F10-Karte](#zeichnungen-auf-der-f10-karte). |
 
 **Optionen je Mission.** Bodenpersonal (Tank-/Munitionswagen, Feuerwehr) ist eine Missionsoption, nicht Teil von `config.jsonc`:
 
-- **Im Spiel:** F10 → ATC → Einstellungen.
+- **Im Spiel:** F10 → DCS-ATC → Einstellungen.
 - **Standard für alle Missionen:** `Saved Games\DCS\Scripts\DcsAtc\DcsAtcOptions.lua` (`crew = false`).
 - **Andere Werte für eine Mission:** im Missionseditor einen Trigger „Mission Start“ → DO SCRIPT: `DCSATC_OPTIONS = { crew = true }`.
 
@@ -2834,6 +3132,8 @@ Eigene Frequenzen je Platz und Lotse stehen nicht in `config.jsonc`, sondern in 
 - **Tablet oder anderer PC:** `"MapLan": true` setzen und DCS-ATC neu starten. Windows fragt einmal, ob der Netzzugriff erlaubt ist. Dann `http://<Name oder IP des PCs>:18600/` öffnen.
 - **Anderer Port oder aus:** `"MapPort"` in der `config.jsonc` (0 = aus). Ist der Port belegt, sagt das DCS-ATC-Fenster das, und es gibt kein Lagebild.
 - Die Seite liest nur. Über sie lässt sich in DCS-ATC und in der Mission nichts ändern. In VR gibt es dafür die Kneeboard-Seiten.
+- **Verfahrens-Editor:** `http://localhost:18600/chart` schreibt Meldepunkte und Routen für `charts.jsonc`, siehe [Verfahrens-Editor](#verfahrens-editor).
+- **Funkrad:** `http://localhost:18600/wheel` zeigt das offene Funkrad als Bild, für einen OpenKneeboard-Tab in VR oder ein Tablet (siehe [Funkrad als Text im Spiel (VR)](#funkrad-als-text-im-spiel-vr)).
 
 ### Logdateien
 
@@ -2845,7 +3145,23 @@ Alle Logs liegen in `%LOCALAPPDATA%\Programs\DCS-ATC`:
 | `atc-debug.txt` | Ausführliches Log für Fehlerberichte: Spracherkennung, Platzwahl, Flugphasen, Flugzeugdaten alle 10 s. Nur mit `DebugLog`. Bei 20 MB wird sie zu `atc-debug.old.txt`, belegt also höchstens 2 × 20 MB. |
 | `crash-log.txt` | Fehlerdetails bei einem Absturz von DCS-ATC. DCS-ATC startet sich dann neu, außer es ist in seiner ersten Minute abgestürzt. |
 
-Für einen Fehlerbericht: Uhrzeit, Platz, kurze Beschreibung, `atc-log.txt` und `atc-debug.txt`.
+Bei Installationsproblemen findest du unter **Erweitert → Diagnose → Installationsbericht erstellen …** einen kurzen Bericht. Er prüft, ob Whisper, das Whisper-Modell, Piper und das mitgelieferte FFmpeg vorhanden sind. Die Textdatei enthält außerdem die DCS-ATC-Version, die Windows-Version und den Zeitpunkt.
+
+Wenn der Funk stumm bleibt, wähle **Erweitert → Diagnose → Funk-Selbsttest starten**. Sage während der viersekündigen Aufnahme „Radio check“ ins gewählte Mikrofon. Die Anzeige nennt den Spitzenpegel und die von lokalem Whisper erkannten Wörter. Piper und FFmpeg erzeugen die Testantwort als MP3-Datei ohne Wiedergabe. Der letzte Schritt prüft SRS ExternalAudio und die Erreichbarkeit des lokalen TCP-Ports. Eine laufende Mission oder ein anderer Spieler wird dafür nicht benötigt. Der Test sendet weder Sprache über Funk noch Audio an einen externen Spracherkennungsdienst.
+
+Für eine wiederholbare Prüfung mit einer Datei ersetze das Mikrofon durch eine WAV-Aufnahme mit „Radio check“ (16 kHz, PCM 16 Bit, Mono, bis 30 Sekunden). Starte im DCS-ATC-Ordner `.\DcsAtc.exe --radio-selftest "C:\Pfad\funkprobe.wav"`. Der Befehl gibt alle Ergebnisse im Terminal aus.
+
+Wenn sich die Einstellungen nicht öffnen lassen, starte PowerShell im DCS-ATC-Programmordner. `.\DcsAtc.exe --installation-report` zeigt denselben Bericht auch bei einer ungültigen `config.jsonc`.
+
+Bei einem Problem während des Flugs helfen Uhrzeit, Platz, eine kurze Beschreibung und passende Auszüge aus `atc-log.txt` und `atc-debug.txt`. Bei einem Problem mit Vektoren oder dem Weg zur Bahn dazu `airfields.txt` aus dem DCS-ATC-Ordner, die Dateien `DcsAtc-Terrain-*.txt` aus `%TEMP%` und deine `charts.jsonc`: damit lässt sich der Flug aus deinem Log durch die aktuelle Version noch einmal abspielen (`DcsAtc.exe --replay atc-debug.txt`, die Dateien neben dem Log; listet die Lotsensprüche des Logs neben denen der aktuellen Version).
+
+Einfacher: Unter Erweitert, Diagnose, packt **Diagnose-Zip erstellen …** alles in eine Zip-Datei auf dem Desktop und zeigt sie im Explorer: `atc-log.txt`, `atc-debug.txt`, `config.jsonc`, `frequencies.jsonc`, `modules.txt`, alle `charts*.jsonc` (auch aus `charts\`) und `info.txt` mit Version, Windows und Uhrzeit. Die API-Schlüssel (`AsrApiKey`, `ElevenLabsKey`) fehlen in der Kopie, die Datei auf der Platte bleibt unverändert. Die Logs enthalten Rufzeichen und das, was auf dem Funk gesagt wurde; prüfe die Zip, bevor du sie weitergibst. Ist ein Log größer als 20 MB, steht nur sein Ende darin. Auch das Debug-Log enthält den API-Schlüssel nicht mehr; ältere Logs werden beim nächsten Start bereinigt. Wer einen `atc-debug.txt` gepostet hat, während ein Schlüssel eingetragen war, sollte diesen Schlüssel ersetzen.
+
+Am schnellsten: **Problem melden …** (an derselben Stelle) erstellt diese Zip, zeigt sie im Explorer und öffnet das Formular für den Fehlerbericht auf GitHub, in dem Version, Karte, Flugzeug und die Uhrzeit deiner letzten Log-Markierung schon eingetragen sind. Du ziehst nur noch die Zip ins Formular und beschreibst, was passiert ist. Ohne GitHub-Konto schick dieselbe Zip im Forum oder über Discord.
+
+Den Moment markieren: Geht im Flug etwas schief, wähle im Funkrad oder in F10 **Allgemein → Debriefing / Log → Log markieren**. DCS-ATC schreibt eine `[MARK]`-Zeile mit Uhrzeit, Position, Höhe, Phase beim Lotsen und den letzten drei Funksprüchen in `atc-log.txt` und zeigt dir die Uhrzeit. Die Markierungen des Laufs stehen auch in `info.txt` in der Zip.
+
+`atc-log.txt` beginnt außerdem jeden Lauf mit Datum und Version und nennt beim Missionsstart Karte, Mission, ob Easy Communication an ist, sowie AWACS, Tanker und JTACs mit ihren Frequenzen. Liegt einer davon auf einer Platzfrequenz, steht das in einer eigenen Zeile, etwa *„Frequency clash: Tanker Texaco 251.0 = Krasnodar-Center UHF“*.
 
 ### Fehlersuche
 
@@ -2858,8 +3174,9 @@ Für einen Fehlerbericht: Uhrzeit, Platz, kurze Beschreibung, `atc-log.txt` und 
   - Bei „say again“ wiederholen oder das Funkrad nehmen.
 - **Text im Spiel, aber keine Stimme?** Zeigt das DCS-ATC-Fenster „(SRS-Server nicht erreichbar)“, läuft der SRS-Server nicht lokal oder auf einem anderen Port. Dein SRS-Client muss mit dem SRS-Server auf dem DCS-ATC-PC verbunden sein (`127.0.0.1`), nicht mit einem anderen Server, sonst geht in keine Richtung Ton. Beides erscheint auch einmal als Text im Spiel.
 - **Virenscanner oder Firewall:** Sie können Piper und andere Teile von DCS-ATC oder den SRS-Ton über UDP blockieren, während SRS weiter „verbunden“ zeigt. Bleibt die Stimme aus, trage Ausnahmen für den DCS-ATC-Ordner und `C:\Program Files\DCS-SimpleRadio-Standalone` ein, auch in der Firewall.
+- **„Spectators audio disabled“ im SRS-Server:** Der Server verwirft dann alles, was ein Zuschauer sendet, und im Einzelspieler ist dein SRS-Client oft Zuschauer (Koalition 0), auch im Flugzeug. Dann hört dich niemand, auch DCS-ATC nicht. Schalte die Einstellung aus; das DCS-ATC-Fenster weist darauf hin, wenn es das sieht.
 - **VoiceAttack, VAICOM, WhisperAttack:** DCS-ATC braucht sie nicht, nur SRS und deine SRS-Sprechtaste. Kommst du nicht durch, schalte sie aus und teste nur mit SRS.
-- **Kein F10 → ATC und falsches Rufzeichen?** DCS-ATC hat keine Missionsdaten, `MissionScripting.lua` ist also nicht angepasst. Siehe „Nach einem DCS-Update“ unten.
+- **Kein F10 → DCS-ATC und falsches Rufzeichen?** DCS-ATC hat keine Missionsdaten, `MissionScripting.lua` ist also nicht angepasst. Siehe „Nach einem DCS-Update“ unten.
 
 **Falsche Frequenz**
 - **Platzanfrage auf einer Stationsfrequenz.** Fragst du auf der AWACS-, Tanker-, Range- oder Trägerfrequenz nach Rollen oder Landen, kommt ein Texthinweis statt einer Antwort, etwa „Du funkst auf AWACS 251.5. Kutaisi Ground: 263.0 / 134.0“.
@@ -2884,6 +3201,7 @@ Für einen Fehlerbericht: Uhrzeit, Platz, kurze Beschreibung, `atc-log.txt` und 
 **Nach einem DCS-Update**
 - **Warum es nicht mehr geht.** DCS-Updates setzen `Scripts\MissionScripting.lua` zurück.
 - **Automatische Reparatur.** DCS-ATC prüft die Datei im Betrieb und fragt einmal nach Adminrechten („DCS-Update hat die DCS-ATC-Zeile in MissionScripting.lua entfernt -> Admin-Abfrage (UAC). Mission danach neu starten.“).
+- **DCS Retribution / DCS Liberation.** Solange ihr Programm offen ist, ersetzen sie `MissionScripting.lua` durch eine eigene Fassung (`resources\scripts\MissionScripting.lua` in ihrem Ordner) und spielen beim Schließen das Original zurück. DCS-ATC trägt seine Zeile auch in diese Fassung ein, auch wenn Retribution oder Liberation als Administrator läuft. Beim ersten Mal kommt trotzdem einmal die Admin-Abfrage (sie repariert auch deren Fassung, falls DCS-ATC dort nicht schreiben darf); danach die Mission neu starten. Retribution oder Liberation dabei offen lassen. Danach keine Abfrage mehr, bis du eine neue Retribution-Version installierst.
 - **Von Hand.** Startmenü → DCS-ATC → **Nach DCS-Update reparieren**. Das Fenster zeigt, welche Dateien angepasst wurden.
 - **Datei selbst ändern.** `<DCS-Ordner>\Scripts\MissionScripting.lua` als Administrator öffnen (Dedicated Server: Installationsordner des Servers). Direkt über `local function sanitizeModule` diese Zeile einfügen:
   ```lua
@@ -2899,5 +3217,6 @@ Für einen Fehlerbericht: Uhrzeit, Platz, kurze Beschreibung, `atc-log.txt` und 
 
 **Antworten kommen langsam**
 - Die Spracherkennung läuft auf der CPU und braucht ein paar Sekunden pro Spruch. Das Funkrad ist sofort da.
+- Das Sprachmodell wird beim Start von DCS-ATC geladen, nicht erst bei deinem ersten Funkspruch.
 - Mehrere Sprüche gleichzeitig werden nacheinander erkannt, nicht alle auf einmal. `atc-debug.txt` zeigt die Wartezeit je Spruch (`WHISPER … ms (davon … ms gewartet)`).
 - Auf einem Server ohne Grafikkarte schickt `AsrApiUrl` die Erkennung an einen Dienst oder an einen Whisper-Server auf einem anderen PC (siehe Einstellungstabelle).

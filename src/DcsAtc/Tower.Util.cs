@@ -16,6 +16,10 @@ public partial class Tower
         return (e.ThrX - along * e.Dx, e.ThrZ - along * e.Dz);
     }
 
+    /// Aircraft behind or beside the runway (less than 2 NM out on the approach side): straight to the 6-NM point would mean flying away from the runway.
+    /// Not on an intercept inside the 6-NM point (bearing to it points back there too, but the aircraft is out in front).
+    bool BehindSixMile(Telemetry t, string rw) { var p = OnCenterline(rw, 6 * NM); return Approach(t.X, t.Z, rw).along < 2 * NM && HdgDiff(Bearing(t.X, t.Z, p.X, p.Z), LandHdg(rw)) > 90; }
+
     /// > 0 = on the pattern side of the runway (left for left-hand pattern)
     double PatternOffset(double x, double z, string rw)
     {
@@ -93,9 +97,10 @@ public partial class Tower
         if (Math.Abs(right) < tol) return "on course";
         // Heading to a point on the centreline ahead, to the degree as with PAR
         var aim = Pt(rw, Math.Max(along - Math.Max(NM, along * 0.4), 0), 0);
-        int mag = (int)Math.Round(((Bearing(t.X, t.Z, aim.X, aim.Z) - MagVar) % 360 + 360) % 360);
+        double brg = Bearing(t.X, t.Z, aim.X, aim.Z), turn = Turn(t, brg);   // turn direction from his own heading (not from the side he is on)
+        int mag = (int)Math.Round(((brg - MagVar) % 360 + 360) % 360);
         return $"{(Math.Abs(right) < 2.5 * tol ? "slightly " : "")}{(right > 0 ? "right" : "left")} of course, " +
-               $"turn {(right > 0 ? "left" : "right")} heading {Digits((mag == 0 ? 360 : mag).ToString("000"))}";
+               $"{(Math.Abs(turn) < 1.5 ? "" : $"turn {(turn > 0 ? "right" : "left")} ")}heading {Digits((mag == 0 ? 360 : mag).ToString("000"))}";
     }
 
     static string GlideFix(double devFt) => devFt switch
@@ -105,6 +110,107 @@ public partial class Tower
         < -60 => ", reduce rate of descent",
         _ => "",
     };
+
+    // ======================================================================= PAR talk-down (FAA JO 7110.65 5-10, 5-12): one call every 5 s from the setup to the threshold
+    bool ParApp(string rw) => navName == "six mile final" && Phase is not (Phase.Pattern or Phase.Inbound) && (Proc(rw) == "P A R" || Emergency && Proc(rw) == "") && !wantVisual && !visAsk && option != "low approach";   // practice approach keeps the old calls; R115: no approach callouts before the visual report
+    bool OnParFinal(Telemetry t, string rw) => OnLongFinal(t, rw) || OnFinalLoose(t, rw);   // PAR final is long (handoff 8-12 NM out): setup already there
+    internal bool parOn;   // set up
+    bool parAppr, parBegun, parSafe, parDh, parEnd, parHave;   // "approaching glidepath" / "begin descent" / safety call / decision height / over threshold said / previous values valid
+    /// A talk-down is running (set up, threshold not yet passed): the frequency carries nothing else (Program: no general broadcasts).
+    public bool ParTalking => parOn && !parEnd;
+    int parMile = 7, parHdg = -1;   // last mile announced, last heading issued (magnetic)
+    double parDev, parRight, parAlong, parAt;   // glidepath deviation (ft), offset (m), distance and time at the previous call
+    void ParReset() { parOn = parAppr = parBegun = parSafe = parDh = parEnd = parHave = false; parMile = 7; parHdg = -1; }
+    List<Msg> ParSay(string s) { var m = Say(s, "Tower"); m[0] = last = m[0] with { MaxAge = 3 }; return m; }   // a delayed call is dropped, the next one comes 5 s later anyway
+
+    /// Setup (first call to Tower on a PAR final): decision height (200 ft above the field, 10 ft steps), no acknowledgement, lost communications = missed approach.
+    List<Msg> ParSetup(string hdr, string rw)
+    {
+        parOn = landCall = true; parHdg = -1;   // landing clearance comes from the tick at 3 NM (no "report final")
+        double dh = Math.Round((FieldElev / Ft + 200) / 10) * 10;
+        return Say($"{hdr}, P A R final. This will be a P A R approach to runway {RwSay(rw)}, decision height {Alt(dh)}. Do not acknowledge further transmissions. " +
+                   "If no transmissions are received for five seconds on final approach, execute missed approach.", "Tower");
+    }
+
+    /// One talk-down call (null = none yet). devFt: height above the 3° path (TCH 15 m), along: distance before the threshold (m).
+    List<Msg>? ParTalk(Telemetry t, string rw, double along, double devFt, double now)
+    {
+        double tan3 = Math.Tan(3 * Math.PI / 180), dhAlong = (200 * Ft - 15) / tan3;   // DH: path 200 ft above the field
+        bool atDh = along <= dhAlong;
+        bool busy = awaitAir && now - lastAt < 20 || now < towerEnd + 2.5;   // the previous Tower call is not on air yet / still being spoken (+ 2.5 s pause between calls, stays below the 5 s silence limit): a call now would be queued and dropped as late
+        if (along <= 0) { if (busy || now - lastAt < 2) return null; parEnd = true; return ParSay("Over landing threshold."); }
+        if (busy || now - lastAt < (parBegun && atDh && !parDh ? 2 : 4.5)) return null;   // 5 s rhythm (any Tower call counts), decision height at its point
+        var (tx, tz) = Thr(rw);
+        double h = LandHdg(rw) * Math.PI / 180, right = (t.X - tx) * -Math.Sin(h) + (t.Z - tz) * Math.Cos(h), dev = devFt;   // right > 0 = right of the centreline (as CourseText)
+        double th = Math.Atan(dev * Ft / (along + 286)) * 180 / Math.PI, az = Math.Atan(right / (along + 300)) * 180 / Math.PI;   // angles seen from the glidepath/azimuth antenna (GPI 286 m, azimuth 300 m past the threshold)
+        int gp = Math.Abs(th) <= 0.10 || Math.Abs(dev) <= 10 ? 0 : Math.Abs(th) <= 0.35 ? 1 : 2, cr = Math.Abs(az) <= 0.25 || Math.Abs(right) <= 10 ? 0 : Math.Abs(az) <= 1.0 ? 1 : 2;
+        string above = dev > 0 ? "above" : "below", lr = right > 0 ? "right" : "left", c = Cs();
+        string gpTrend = !parHave || gp == 0 ? "" : Math.Abs(dev) < Math.Abs(parDev) - 10 ? (dev > 0 ? ", coming down" : ", coming up") : Math.Abs(dev) > Math.Abs(parDev) + 10 ? $", going further {above}" : "";
+        string crTrend = !parHave || cr == 0 ? "" : Math.Abs(right) < Math.Abs(parRight) - 5 ? ", correcting" : Math.Abs(right) > Math.Abs(parRight) + 5 ? $", going further {lr}" : "";
+        string Gp() => gp == 0 ? "on glidepath" : $"{(gp == 2 ? "well" : "slightly")} {above} glidepath{gpTrend}" +
+            (gp == 2 && !gpTrend.StartsWith(", coming") ? (dev > 0 ? ", increase rate of descent" : ", reduce rate of descent") : "");
+        string Course()
+        {
+            string s = cr == 0 ? "on course" : $"{(cr == 2 ? "well" : "slightly")} {lr} of course{crTrend}";
+            if (crTrend == ", correcting") return s;
+            // heading to a point on the centreline ahead (as CourseText), wind drift corrected, limited to the runway heading +-10° (+-5° inside 3 NM, +-3° inside 1 NM)
+            var aim = Pt(rw, Math.Max(along - Math.Max(NM, along * 0.4), 0), 0);
+            double brg = Bearing(t.X, t.Z, aim.X, aim.Z), br = brg * Math.PI / 180, wn = -t.WindX * Math.Sin(br) + t.WindZ * Math.Cos(br);   // wn: wind across the track (m/s)
+            if (t.Ias > 20) brg -= Math.Asin(Math.Clamp(wn / t.Ias, -0.5, 0.5)) * 180 / Math.PI;   // no ground track in the telemetry: IAS as airspeed
+            double lim = along < NM ? 3 : along < 3 * NM ? 5 : 10, d = ((brg - LandHdg(rw)) % 360 + 540) % 360 - 180;
+            int mag = (int)Math.Round(((LandHdg(rw) + Math.Clamp(d, -lim, lim) - MagVar) % 360 + 360) % 360); if (mag == 0) mag = 360;
+            if (parHdg < 0) { parHdg = (int)Math.Round(((LandHdg(rw) - MagVar) % 360 + 360) % 360); if (parHdg == 0) parHdg = 360; }   // on course the runway heading needs no call
+            int rwyMag = (int)Math.Round(((LandHdg(rw) - MagVar) % 360 + 360) % 360);
+            double Corr(int m) => (((m - rwyMag) % 360 + 540) % 360 - 180) * (right > 0 ? -1 : 1);   // correction toward the centreline (°), > 0 = toward it
+            if (HdgDiff(mag, parHdg) < 2 || cr != 0 && Corr(mag) < Corr(parHdg) + 2)   // off course and not correcting: never a weaker correction than the last one
+            {
+                if (cr == 0) return s;
+                string HdgCall(int m)   // with the turn from his own heading (as below)
+                {
+                    double tn = ((m - (t.Hdg * 180 / Math.PI - MagVar)) % 360 + 540) % 360 - 180;
+                    return Math.Abs(tn) < 1.5 ? $"{s}, heading {Digits(m.ToString("000"))}" : $"{s}, turn {(tn < 0 ? "left" : "right")} heading {Digits(m.ToString("000"))}";
+                }
+                if (cr == 1) return HdgCall(parHdg);   // slightly off, not correcting: restate the heading
+                int more =((parHdg + (right > 0 ? -3 : 3)) % 360 + 360) % 360;   // well off, not correcting: 3° more toward the centreline
+                if (more == 0) more = 360;
+                if (Math.Abs(((more - rwyMag) % 360 + 540) % 360 - 180) > lim) return HdgCall(parHdg);   // limit reached: restate
+                mag = more;
+            }
+            parHdg = mag;
+            double turn = ((mag - (t.Hdg * 180 / Math.PI - MagVar)) % 360 + 540) % 360 - 180;
+            return Math.Abs(turn) < 1.5 ? $"{s}, heading {Digits(mag.ToString("000"))}" : $"{s}, turn {(turn < 0 ? "left" : "right")} heading {Digits(mag.ToString("000"))}";   // already on it: "heading ...", no turn
+        }
+        string call;
+        double gs = parHave && now - parAt >= 4 ? (parAlong - along) / (now - parAt) : Gs(t);   // ground speed from the distance flown, first call: IAS - wind
+        if (!atDh && !parSafe && along < 3 * NM && (th < -0.6 || parBegun && (th > 1.2 || along < 2 * NM && (Math.Abs(az) > 2.5 || Math.Abs(right) > 300))))   // too low also before "begin descent" (descended on his own)
+        {
+            parSafe = true;   // once per approach, only between 3 NM and decision height (PatternReset clears it with the missed approach)
+            return Missed(t, now, $"{(th < -0.6 ? "too low" : th > 1.2 ? "too high" : $"too far {lr} of course")} for safe approach, if runway not in sight, execute missed approach.");
+        }
+        else if (!parBegun)
+        {
+            if (dev >= -10) { parBegun = true; call = $"{c}, {(gp == 0 ? "on glidepath" : $"{(gp == 2 ? "well" : "slightly")} {above} glidepath")}, begin descent, {Course()}."; }
+            else if (vecFt > 0 && IndFt(t) < vecFt - 200) call = $"{c}, check altitude, maintain {Alt(vecFt)}, {Course()}.";   // descended before "begin descent": back to the cleared altitude ("maintain" in the approach clearance)
+            else
+            {
+                double aGp = (t.AltMsl - FieldElev - 15) / tan3;   // distance where the path meets the current altitude
+                bool soon = !parAppr && along > aGp && (along - aGp) / Math.Max(gs, 10) <= 20;
+                parAppr |= soon;
+                call = Cap($"{(soon ? "approaching glidepath, " : "")}{Course()}.");
+            }
+        }
+        else if (atDh && !parDh) { parDh = true; call = $"{c}, at decision height, {Course()}."; }
+        else if (parDh) call = Cap($"{Course()}.");
+        else
+        {
+            int mile = (int)Math.Ceiling(along / NM);   // whole mile crossed
+            bool mi = mile is >= 1 and <= 6 && mile < parMile;
+            if (mi) parMile = mile;
+            call = mi ? $"{c}, {DigitWords[mile]} mile{(mile > 1 ? "s" : "")} from touchdown, {Gp()}, {Course()}." : Cap($"{Gp()}, {Course()}.");
+        }
+        (parHave, parDev, parRight, parAlong, parAt) = (true, dev, right, along, now);
+        return ParSay(call);
+    }
 
     // ======================================================================= Geometry & weather
     internal static double Sq(double v) => v * v;
@@ -157,7 +263,7 @@ public partial class Tower
 
     /// Runway as DCS-ATC (Airfield.BestRunway) with the wind at the airfield, not the one at flight level.
     public (double X, double Z)? FieldWind;   // Program: mission weather at the airfield (10 m)
-    string WindRunway(Telemetry t) => FieldWind is { } w ? F.BestRunway(w.X, w.Z) : F.BestRunway(t.WindX, t.WindZ);
+    string WindRunway(Telemetry t, bool dep = false) => FieldWind is { } w ? F.BestRunway(w.X, w.Z, dep: dep) : F.BestRunway(t.WindX, t.WindZ, dep: dep);
 
     /// "25" -> "two five", "13L" -> "one three left"
     public static string RwSay(string rw) => Digits(rw) + (rw.EndsWith('L') ? " left" : rw.EndsWith('R') ? " right" : rw.EndsWith('C') ? " center" : "");
@@ -233,7 +339,9 @@ public partial class Tower
         ["zero"] = "0", ["one"] = "1", ["two"] = "2", ["three"] = "3", ["four"] = "4", ["five"] = "5",
         ["six"] = "6", ["seven"] = "7", ["eight"] = "8", ["nine"] = "9", ["niner"] = "9",
         ["tree"] = "3", ["fower"] = "4", ["fife"] = "5", ["decimal"] = "point",   // ICAO pronunciation
-        ["enbound"] = "inbound", ["embound"] = "inbound",
+        ["enbound"] = "inbound", ["embound"] = "inbound", ["enboard"] = "inbound",   // as transcribed (log)
+        ["overload"] = "overlord", ["bogeydope"] = "bogey dope", ["bogie"] = "bogey", ["bogy"] = "bogey", ["boogie"] = "bogey", ["overlard"] = "overlord",   // #27
+        ["panpan"] = "pan pan", ["pam"] = "pan",   // "PAN PAN" as transcribed
     };
     static readonly HashSet<string> NotCallsign = new()
     {
@@ -242,7 +350,7 @@ public partial class Tower
         "the", "and", "this", "is", "at", "to", "inbound", "feet", "knots", "degrees", "wind", "initial",
         "number", "crp", "north", "south", "east", "west", "via", "left", "right", "short",
         "state", "ball", "fuel", "flight", "cherubs", "thousand", "climb", "climbing", "descend", "descending", "passing", "leaving", "maintain",
-        "spot", "stand", "gate", "parking", "squawk", "frequency", "departure", "contact", "approach", "ground", "altimeter", "track", "speed", "radial", "report",
+        "spot", "stand", "gate", "parking", "squawk", "frequency", "departure", "contact", "approach", "ground", "altimeter", "track", "speed", "radial", "report", "range",   // #56: "Range 62" is a zone name, no call sign
     };
 
     internal static string Digits(string s) => string.Join(" ", s.Where(char.IsDigit).Select(ch => DigitWords[ch - '0']));
@@ -263,8 +371,32 @@ public partial class Tower
         s = Regex.Replace(s, @"(?<=\d)\.(?=\d)", " point ");    // 6.2 -> 6 point 2
         s = Regex.Replace(s, @"[^a-z0-9 ]", " ");
         s = Regex.Replace(s, @"\bmay +day\b", "mayday");     // R360: transcription splits the word
+        s = Regex.Replace(s, @"\bdark +star\b", "darkstar");   // AWACS callsign as transcribed
+        s = Regex.Replace(s, @"\bsee you again\b", "say again");   // "say again" as transcribed (log); "see you at 10" (carrier) stays
+        s = Regex.Replace(s, @"\bclear(?= +(?:to|the|for) +(?:land|take ?off)\b)", "cleared");   // #23: readback "clear to land"/"clear the land" as transcribed
         return string.Join(" ", s.Split(' ', StringSplitOptions.RemoveEmptyEntries)
                                  .Select(w => Words.TryGetValue(w, out var d) ? d : w));
+    }
+
+    /// Mishearing of a name: a word of 6+ letters that is one letter off (replaced, added, dropped) from exactly one name word expected on the frequency
+    /// (airfields, call names of the mission) becomes that word ("Overlard" -> "Overlord", "Kutaissi" -> "Kutaisi"); same first letter, digits and short words stay.
+    internal static string FixNames(string text, IEnumerable<string> names)
+    {
+        var vocab = names.SelectMany(n => Regex.Split(n, "[^A-Za-z]+")).Where(w => w.Length >= 6).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        static bool OneOff(string a, string b)
+        {
+            int i = 0, j = 0, n = Math.Min(a.Length, b.Length);
+            while (i < n && a[i] == b[i]) i++;
+            while (j < n - i && a[^(j + 1)] == b[^(j + 1)]) j++;
+            return Math.Max(a.Length, b.Length) - i - j <= 1;
+        }
+        return Regex.Replace(text, "[A-Za-z]{6,}", m =>
+        {
+            var w = m.Value.ToLowerInvariant();
+            if (vocab.Contains(w, StringComparer.OrdinalIgnoreCase)) return m.Value;
+            var hit = vocab.Where(v => char.ToLowerInvariant(v[0]) == w[0] && OneOff(v.ToLowerInvariant(), w)).ToList();
+            return hit.Count == 1 ? hit[0] : m.Value;
+        });
     }
 
     /// Callsign at the start of the call (at most 4 words of station before it) or at the end ("…, Enfield 1-1"); digits in the middle of the call are values ("squawk 4 3 2 1").
@@ -285,11 +417,31 @@ public partial class Tower
     string? Direction(string n)
     {
         var keys = (F.Crp.Count > 0 ? F.Crp.Keys.ToArray() : new[] { "north", "south", "east", "west" }).OrderByDescending(k => k.Length).ToArray();
-        string Rx(string k) => Regex.Escape(k.Replace('-', ' ')).Replace("\\ ", " ?");
         var own = Normalize(F.Name).Split(' ').ToHashSet();
         return keys.FirstOrDefault(k => Regex.IsMatch(n, $@"\bc ?r ?p {Rx(k)}\b"))
-            ?? keys.Where(k => !own.Contains(k)).FirstOrDefault(k => Regex.IsMatch(n, $@"\b{Rx(k)}\b"));
+            ?? keys.Where(k => !own.Contains(k.ToLowerInvariant())).FirstOrDefault(k => Regex.IsMatch(n, $@"\b{Rx(k)}\b"));
     }
+    static string Rx(string k) => Regex.Escape(k.ToLowerInvariant().Replace('-', ' ').Replace('_', ' ')).Replace("\\ ", " ?");   // "GASS_PEAK" -> "gass ?peak"
+
+    /// Route of the chart (charts.jsonc "routes") named in the transmission, compared by sound: doubled letters count once (Whisper hears "Mint" for MINTT),
+    /// y = i and an e at the end of a word is dropped (#28 log: "request strike recovery" for the route STRYK; #23 log: "request Arco" for ARCOE).
+    static string Sq(string s) => Regex.Replace(Regex.Replace(s.Replace('y', 'i'), @"([a-z])\1+", "$1"), @"(?<=[a-z])e(?=r?(?![a-z]))", "");   // #40: "fitter" for FYTTR (-er at the end of a word = -r)
+    Airfield.Route? RouteOf(string n) => Named(F.Routes, n);
+    /// Route named in the transmission; several variants under one name (charts.jsonc array): the one for the runway in use first.
+    Airfield.Route? Named(Dictionary<string, Airfield.Route> d, string n) =>
+        d.Values.Where(r => (r.Say ?? Array.Empty<string>()).Prepend(r.Name).Any(k => Regex.IsMatch(Sq(n), $@"\b{Sq(Rx(k))}\b"))).OrderByDescending(r => r.Rwy.Contains(Runway)).FirstOrDefault();
+    /// Index of the fix of the route being flown that the pilot reports, -1 = none.
+    /// #57: chart departure, aircraft more than 4 NM from the route (current leg: previous point or the field, and the next leg).
+    bool OffRoute(Telemetry t, Airfield.Route r)
+    {
+        var cur = (r.Pts[depAt].X, r.Pts[depAt].Z);
+        var d = SegDist(t.X, t.Z, depAt > 0 ? (r.Pts[depAt - 1].X, r.Pts[depAt - 1].Z) : (CX, CZ), cur);   // ponytail: field centre instead of the runway end, the 4 NM cover the difference
+        if (depAt + 1 < r.Pts.Length) d = Math.Min(d, SegDist(t.X, t.Z, cur, (r.Pts[depAt + 1].X, r.Pts[depAt + 1].Z)));
+        return d > 4 * NM;
+    }
+    int RouteFix(string n) => Rt is { } r ? Array.FindIndex(r.Pts, p => !Airfield.Silent(p.Fix) && Regex.IsMatch(Sq(n), $@"\b{Sq(Rx(p.Fix))}\b")) : -1;
+    /// Departure of the chart (charts.jsonc "departures") named in the transmission ("FLEX departure").
+    Airfield.Route? DepOf(string n) => Named(F.Departures, n);
 
     /// Chart text (English) as speech: digit strings spelled out, "CRP" as letters.
     static string SayChart(string s) => Regex.Replace(Regex.Replace(s.Replace("CRP", "C R P"), @"(?<=[A-Za-z])(?=\d)", " "), @"\d+", m => Digits(m.Value));   // "W1" -> "W one"

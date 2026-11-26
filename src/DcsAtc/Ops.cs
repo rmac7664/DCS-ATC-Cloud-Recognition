@@ -13,7 +13,29 @@ partial class Ops
     public record Me(string Callsign, Telemetry? Tel, string Type, int Coalition, int Flight = 1, double Fuel = -1, double Freq = 0, Iff? Iff = null, string Modex = "");   // Flight: aircraft in the flight (player + AI wingmen); Fuel: tank 0–1, -1 unknown; Freq: SRS frequency of the call (MHz), 0 = menu/unknown
 
     // ------------------------------------------------------------ World (Program sets it from DcsAtc-State.txt)
-    public static (double X, double Z, double R)? Range;              // Range Alpha (TrainingRange_build.lua)
+    /// #56: every trigger zone "Range ..." is one range; name and frequency come from the zone name (ParseRange). Freq 0 = the Range frequency of the config.
+    public record Zone(string Name, double X, double Z, double R, double Freq);
+    public static List<Zone> Ranges = new();
+    static readonly Zone NoZone = new("Range Alpha", 0, 0, 0, 0);
+    internal static readonly string[] NatoNames = { "Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot", "Golf", "Hotel", "India", "Juliett", "Kilo", "Lima" };
+    /// Compatibility: the first zone (older code and tests knew one range); set = one zone "Range Alpha" without own frequency.
+    public static (double X, double Z, double R)? Range
+    {
+        get => Ranges.Count > 0 ? (Ranges[0].X, Ranges[0].Z, Ranges[0].R) : null;
+        set => Ranges = value is { } v ? new() { new Zone("Range Alpha", v.X, v.Z, v.R, 0) } : new();
+    }
+    /// Zone name as written in the mission ("Range", "Range-2", "Range 62 268.5", "Range_Kutaisi"): a frequency (108-399 MHz, three digits) is cut out;
+    /// a bare "Range" / one character / "zone" is generic and gets the next NATO name by index ("Range Alpha", "Range Bravo", ...), otherwise the name as written.
+    public static Zone ParseRange(string raw, int index, double x, double z, double r)
+    {
+        var fm = Regex.Match(raw, @"\b(1[0-7]\d|2\d\d|3\d\d)(\.\d{1,3})?\b");
+        var freq = fm.Success ? double.Parse(fm.Value, System.Globalization.CultureInfo.InvariantCulture) : 0;
+        if (freq < 108 || freq > 399) freq = 0;
+        var name = Regex.Replace((freq > 0 ? raw.Remove(fm.Index, fm.Length) : raw).Replace('_', ' '), @"\s+", " ").Trim(' ', '-');
+        var rest = Regex.Replace(name, @"^range", "", RegexOptions.IgnoreCase).Trim(' ', '-');
+        if (rest.Length <= 1 || rest.Equals("zone", StringComparison.OrdinalIgnoreCase)) name = "Range " + NatoNames[index % NatoNames.Length];
+        return new Zone(name, x, z, r, freq);
+    }
     public static Dictionary<int, (double X, double Z)> Bulls = new(); // Bullseye per side (1 red, 2 blue; 0 = old mission)
     public static Dictionary<string, string> Beacons = new();          // tanker group -> TACAN "51X"
     public static Dictionary<string, string> Tracks = new();           // tanker group -> track "Alpha" (mission)
@@ -28,6 +50,10 @@ partial class Ops
 
     public readonly List<string> Debrief = new();
     int tkContacts; double tkLb;   // N39: counters for the debriefing (contacts, fuel taken); not in State: after a restart counting begins anew
+    int rg;   // #56: range this pilot is checked in to (index in Ranges; also the last one after checking out)
+    Zone Z => Ranges.Count == 0 ? NoZone : Ranges[Math.Clamp(rg, 0, Ranges.Count - 1)];
+    readonly HashSet<string> rgSeen = new();
+    string RgLabel => rgSeen.Count == 1 ? rgSeen.First() : "Range";   // summary over all visits: the name of the only range, otherwise "Range"
     int rgPasses; double rgBestD = double.MaxValue; int rgBestClock;   // N39: range over all visits of the flight (passes/bestD begin anew per visit, A126)
 
     /// N39: summary of the individual scores (tanker, range); empty if there was nothing.
@@ -35,12 +61,12 @@ partial class Ops
     {
         var l = new List<string>();
         if (tkContacts > 0) l.Add(L($"Luftbetankung gesamt: {tkContacts} Kontakt{(tkContacts > 1 ? "e" : "")}", $"Air refueling total: {tkContacts} contact{(tkContacts > 1 ? "s" : "")}") + (tkLb > 0 ? L($", {tkLb:0} lb erhalten", $", {tkLb:0} lb received") : ""));   // without fuel capacity of the type (MaxLb 0) no amount, like the single line
-        if (rgPasses > 0) l.Add(L($"Range Alpha gesamt: {rgPasses} {(rgPasses > 1 ? "Anflüge" : "Anflug")}", $"Range Alpha total: {rgPasses} pass{(rgPasses > 1 ? "es" : "")}") + (rgBestD < 5000 ? L($", bester Einschlag {(rgBestD < 1.5 ? "shack" : $"{Feet(rgBestD)} bei {rgBestClock} Uhr")}", $", best impact {Score(rgBestD, rgBestClock)}") : ""));
+        if (rgPasses > 0) l.Add(L($"{RgLabel} gesamt: {rgPasses} {(rgPasses > 1 ? "Anflüge" : "Anflug")}", $"{RgLabel} total: {rgPasses} pass{(rgPasses > 1 ? "es" : "")}") + (rgBestD < 5000 ? L($", bester Einschlag {(rgBestD < 1.5 ? "shack" : $"{Feet(rgBestD)} bei {rgBestClock} Uhr")}", $", best impact {Score(rgBestD, rgBestClock)}") : ""));
         return l;
     }
     public int TankerContacts => tkContacts;   // FI3: logbook
     public int RangePasses => rgPasses;
-    public void ResetDebrief() { Debrief.Clear(); (tkContacts, tkLb, rgPasses, rgBestD, rgBestClock) = (0, 0, 0, double.MaxValue, 0); }
+    public void ResetDebrief() { Debrief.Clear(); (tkContacts, tkLb, rgPasses, rgBestD, rgBestClock) = (0, 0, 0, double.MaxValue, 0); rgSeen.Clear(); }
 
     // Range
     bool checkedIn, isHot, isDry;   // isDry: R285 "cleared dry", occupies the range until "off"
@@ -64,8 +90,12 @@ partial class Ops
     public string TankerGroup { get => tanker; internal set => tanker = value; }
     int tank;
     double contactAt, offload;                // offload: amount received until departure in lb ("total offload")
-    public (string Step, string Group)? Menu;  // due DCS radio menu action: "intent" / "precontact"
-    public bool DcsIntent;                    // Mission has pressed "Intent to refuel" (M reply); otherwise no direct F1 "Ready pre-contact" (would hit an open DCS-ATC dialog)
+    public (string Step, string Group)? Menu;  // due DCS radio menu action: "join" / "intent" / "precontact" / "cleared" (Program.TankerAction decides with the stage of the DCS tanker dialog)
+    // Forum (jojojung, Hornet): in DCS's tanker dialog F1 is "Ready pre-contact" or, from "cleared contact" on, "Abort refuel". Program asks DCS for the dialog stage
+    // (DcsAtcWing.lua) and decides with it; these two flags are only the guess for an unknown stage (old script, no answer).
+    public bool DcsIntent;                    // Mission has pressed "Intent to refuel" (M reply)
+    bool dcsCleared;                          // a contact since "Intent to refuel" = DCS has cleared contact; reset when full (the dialog ends)
+    bool afterFull;                           // Forum (jojojung): Full() called "disconnect, move to the right wing", nothing else changed tank since (external tanks may still be filling)
     public Airfield? Divert;                  // A15: MAYDAY/PAN at the AWACS -> Program selects this airfield and gives the call to its Approach
     // AWACS: memory per unit (Id), a group counts as reported if one of its units is reported (lead kill, regrouping)
     readonly Dictionary<int, double> mergeTold = new();
@@ -94,14 +124,30 @@ partial class Ops
     /// and not in a call to an airfield station or with an emergency word ("Kutaisi Tower, declare an emergency").
     static string Blank(string n, string? own) => own == null ? n : Regex.Replace(n, $@"\b{Regex.Replace(Normalize(own), @"(?<=\d) (?=\d)", " ?")}\b", " ");
     /// R393: "say again" without a station (own call sign blanked): repeats the last call of the controller that spoke last (Program.Request)
+    /// #49: a call that only withdraws the previous one ("Disregard", "Correction, Victory 9-1", "Showtime, Victory 9-1, disregard") gets no reply and no "say again" (Program.Request, all controllers)
+    public static bool Disregard(string n, string? own = null) => Regex.IsMatch(Regex.Replace(Blank(n, own), @"\s+", " ").Trim(), @"^(?:\w+ ){0,3}?(?:disregard|correction)(?: that| last transmission| my last transmission)?$");
+    /// #49 (log Nellis: "Victory 9-1, Judy." 0.62 and "Victory 9-1. Defending." 0.57 were asked back, the same words at 0.70/0.85 were accepted): a tactical report to the AWACS
+    /// is a closed phrase that triggers nothing dangerous, so a weak recognition (Program: from ExpConf) is not asked back
+    public static bool AwacsReport(string n) => Has(n, "judy", "defending", "defensive", "commit", "targeting", "targeted", "engaged", "engaging");
     public static bool BareSayAgain(string n, string? own = null) => Regex.IsMatch(Blank(n, own).Trim(), @"^(?:say again|say again please)$");
+    /// Forum (Abr): the name of a mission AWACS/tanker is a station too, also an own one from the unit name ("Sentry 1-1", CallsignFromUnit)
+    static bool Named(Dictionary<string, double> groups, string n) =>
+        groups.Keys.Any(g => Callsigns.TryGetValue(g, out var cs) && Regex.Match(cs, "^[A-Za-z]{3,}").Value is { Length: > 0 } w && Has(n, w.ToLowerInvariant() + @"\b"));
+    /// #56: call sign of a zone whose name does not start with "range" ("Dogbone Range" -> "dogbone", "R-62A Dogbone Range" -> "dogbone"): the letter words of 3+ letters except "range".
+    /// "Range Alpha" / "Range Kutaisi" have none ("alpha" is also a taxiway).
+    internal static IEnumerable<string> CallWords(Zone z)
+    {
+        var w = Normalize(z.Name).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return w.Length == 0 || w[0] == "range" ? Array.Empty<string>() : w.Where(x => x != "range" && Regex.IsMatch(x, "^[a-z]{3,}$"));
+    }
+    static Regex CallRx(IEnumerable<string> words) => new($@"\b(?:{string.Join("|", words.Select(Regex.Escape))})\b");
     public static string? RoleOf(string n, string? own = null)
     {
         n = Blank(n, own);
-        return Range != null && (Regex.IsMatch(n, @"^range\b") || Has(n, "range control", "range alpha", "range ")) ? "Range"   // A17: without a range zone in the mission no range controller
-          : Has(n, "overlord", "awacs", "magic", "moscow", "darkstar", "wizard", "focus", "spike", "request sort", "picture", "bogey dope")
+        return Range != null && (Regex.IsMatch(n, @"^range\b") || Has(n, "range control", "range alpha", "range ") || Ranges.SelectMany(CallWords).ToList() is { Count: > 0 } cw && Regex.IsMatch(n.TrimStart(), "^" + CallRx(cw))) ? "Range"   // call sign only at the start (station is called first; "north" in "request vectors north" is no range call); A17: without a range zone in the mission no range controller
+          : Has(n, "overlord", "awacs", "magic", "moscow", "darkstar", "wizard", "focus", "spike", "request sort", "picture", "bogey dope") || Named(AwacsFreq, n)
             || Has(n, "declare") && !Has(n, "tower", "ground", "approach", "departure", "mayday", "pan pan", "emergency") && Regex.IsMatch(n, @"\bdeclare\b(?: [a-z]+){0,3}? \d") ? "AWACS"
-          : Has(n, "tanker", "shell", "texaco", "arco", "refuel") ? "Tanker"
+          : Has(n, "tanker", "shell", "texaco", "arco", "refuel") || Named(TankerFreq, n) ? "Tanker"
           : Regex.IsMatch(n, @"\b(?:jtac|fac a|faca|forward air controller)\b") || Leaders.Any(l => CsKey(l) is { Length: > 2 } k && Has(n, k)) ? "JTAC"   // J5
           : null;
     }
@@ -125,8 +171,8 @@ partial class Ops
         if (now - byeAt < 60 && Farewell(n)) return new();   // LA08 (log): "Good day, Trident 5-1" after "copy checking out, good day", "… Have a good one. Goodbye." after "cleared to depart", also when unsure
         if (unsure || Has(n, "radio check", "how do you read"))
         {
-            var st = role == "Range" ? "Range Alpha" : role == "AWACS" ? AwacsName(MyAwacs(air, me), me) : Tankers(air, me).FirstOrDefault()?.Name ?? "Tanker";
-            return new() { new(role, st, unsure ? $"{Cs(me)}, {st}, say again." : $"{Cs(me)}, {st}, read you five.", role == "AWACS" ? AwacsFreqOf(MyAwacs(air, me), me) : 0) };
+            var st = role == "Range" ? PickZone(n, me).Name : role == "AWACS" ? AwacsName(MyAwacs(air, me), me) : Tankers(air, me).FirstOrDefault()?.Name ?? "Tanker";
+            return new() { new(role, st, unsure ? $"{Cs(me)}, {st}, say again." : $"{Cs(me)}, {st}, read you five.", role == "AWACS" ? AwacsFreqOf(MyAwacs(air, me), me) : role == "Range" ? PickZone(n, me).Freq : 0) };
         }
         if (role != "AWACS" && Has(n, "say again") && lastRole.TryGetValue(role, out var lc)) return lc;   // R393: repeat the last call of the Range/tanker (AWACS: `last`)
         var res = role == "Range" ? RangeCall(n, me, air, fields, cfgAwacs, now, qnhOf) : role == "AWACS" ? AwacsCall(n, me, air, fields, now) : TankerCall(n, me, air, now);
@@ -143,28 +189,62 @@ partial class Ops
     {
         var r = Regex.Replace(Blank(n, own), @"\b(?:roger|copy|copied|wilco|affirm(?:ative)?|understood|okay|ok|thanks|thank you|will do|\d+)\b", " ");
         var bare = Regex.Replace(r, @"\b(?:texaco|shell|arco|tanker|range alpha|range)\b", " ");
+        foreach (var z in Ranges) bare = NameRx(z.Name).Replace(bare, " ");   // #56: zone names are station words
+        if (Ranges.SelectMany(CallWords).ToList() is { Count: > 0 } cw) bare = CallRx(cw).Replace(bare, " ");   // #56: so are range call signs
         return bare.Trim() == "" && n.Trim() != "" && (bare == r || role == "Tanker" && tank >= 1 || role == "Range" && checkedIn);
     }
 
     // ======================================================================= Range
-    static Call R(string s) => new("Range", "Range Alpha", s);
+    Call R(string s) => new("Range", Z.Name, s, Z.Freq);
+
+    /// Regex of a zone name in the normalised transcript; numbers also as spoken ("Range 62": "range 62", "range 6 2", "range sixty two").
+    internal static Regex NameRx(string name)
+    {
+        var tens = new[] { "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety" };
+        var parts = Normalize(name).Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(w =>
+        {
+            if (!Regex.IsMatch(w, @"^\d+$")) return Regex.Escape(w);
+            var alt = new List<string> { w, string.Join(" ?", w.ToCharArray()) };
+            if (w.Length == 2 && w[0] >= '2') alt.Add(tens[w[0] - '0'] + (w[1] == '0' ? "" : " " + w[1]));   // Normalize turns "two" into "2": "sixty 2"
+            return "(?:" + string.Join("|", alt) + ")";
+        });
+        return new Regex($@"\b{string.Join(" ", parts)}\b");
+    }
+    /// #56: which range a call addresses: zone name in the call (longest), checked in, the zone of the frequency transmitted on, the nearest, the first.
+    int PickRange(string n, Me me)
+    {
+        if (Ranges.Count < 2) return 0;
+        var byName = Ranges.Select((z, i) => (z, i)).Where(x => NameRx(x.z.Name).IsMatch(n)).OrderByDescending(x => x.z.Name.Length).ToList();
+        if (byName.Count > 0) return byName[0].i;
+        var byCall = Ranges.FindIndex(z => CallWords(z).ToList() is { Count: > 0 } cw && CallRx(cw).IsMatch(n));   // #56: range call sign
+        if (byCall >= 0) return byCall;
+        if (checkedIn) return Math.Min(rg, Ranges.Count - 1);
+        var fi = me.Freq > 0 ? Ranges.FindIndex(z => z.Freq > 0 && Math.Abs(z.Freq - me.Freq) < 0.01) : -1;
+        if (fi >= 0) return fi;
+        return me.Tel is { } t ? Ranges.Select((z, i) => (i, d: Dist(t.X, t.Z, z.X, z.Z))).MinBy(x => x.d).i : 0;
+    }
+    public Zone? RangeFor(Me me) => Ranges.Count == 0 ? null : PickZone("", me);   // radio wheel: frequency of the checked-in or nearest range
+    Zone PickZone(string n, Me me) => Ranges.Count == 0 ? NoZone : Ranges[PickRange(n, me)];
 
     List<Call> RangeCall(string n, Me me, IReadOnlyList<Traffic> air, IReadOnlyList<Airfield> fields, double cfgAwacs, double now, Func<Airfield, (double Qnh, double Wx, double Wz)>? qnhOf)
     {
         var c = Cs(me);
-        if (Range is not { } z) return new() { R($"{c}, Range Alpha, range is closed.") };
+        if (Ranges.Count == 0) return new() { R($"{c}, Range Alpha, range is closed.") };
+        var pk = PickRange(n, me);
+        if (!checkedIn) rg = pk;
+        var z = Z;
         if (Has(n, "hung", "hot gun")) hung = Has(n, "hot gun") ? "hot gun" : "hung ordnance";   // R290: remembered in every range call (until the next check-in)
         if (Has(n, "check out", "checking out", "leaving", "departing", "good day"))
         {
-            if (!checkedIn) return new() { R($"{c}, Range Alpha, you are not checked in.") };
+            if (!checkedIn) return new() { R($"{c}, {Z.Name}, you are not checked in.") };
             checkedIn = false; if (isHot) EndPass(); else Cold();   // R58: pass without "off" counts (debriefing, total)
             var sum = passes == 0 ? "no passes" : $"{passes} pass{(passes > 1 ? "es" : "")}" + (bestD < 5000 ? $", best impact {Score(bestD, bestClock)}" : "");
             var own = fields.Where(f => f.Side == 0 || f.Side == me.Coalition).MinBy(f => Dist(z.X, z.Z, f.X, f.Z));   // A123: exit toward the nearest own airfield
             var exit = own != null ? $" to the {Card(Bearing(z.X, z.Z, own.X, own.Z))}" : "";
             var next = AwacsContact(air, me, cfgAwacs) is { } aw ? $", contact {aw}" : "";
             if (hung != null)   // R251 (AFI 13-212): exit via the hung-ordnance route, inform Approach
-                return new() { R($"{c}, Range Alpha, copy {hung}, check switches safe. {sum}. Cleared off the range{exit} via the hung ordnance route, advise Approach, good day.") };
-            return new() { R($"{c}, Range Alpha, check switches safe. {sum}. Cleared off the range{exit}{next}, good day.") };
+                return new() { R($"{c}, {Z.Name}, copy {hung}, check switches safe. {sum}. Cleared off the range{exit} via the hung ordnance route, advise Approach, good day.") };
+            return new() { R($"{c}, {Z.Name}, check switches safe. {sum}. Cleared off the range{exit}{next}, good day.") };
         }
         if (Has(n, "winchester"))   // N36: ammunition empty -> end pass, switch safe
             return new() { R($"{c}, {Ended(post: ", ")}check switches safe, report checking out.") };
@@ -180,10 +260,10 @@ partial class Ops
             { dryReq = false; return new() { R(InHot(me, z, now)) }; }
         // R234: "IP inbound" after the check-in is not a new check-in (no reset, no briefing), only "continue"; before it, it is not one
         if (Has(n, "inbound") && !Has(n, "check") && (checkedIn || Has(n, "ip", "i p")))
-            return new() { R(checkedIn ? $"{c}, continue." : $"{c}, Range Alpha, negative, you are not checked in. Report check in.") };
+            return new() { R(checkedIn ? $"{c}, continue." : $"{c}, {Z.Name}, negative, you are not checked in. Report check in.") };
         if (Has(n, "check in", "checking in", "inbound", "request entry", "entering", "with you", "request range"))
         {
-            RangeReset(); checkedIn = true;   // A126: every visit starts at pass 1
+            RangeReset(); checkedIn = true; rg = pk; z = Z;   // A126: every visit starts at pass 1; #56: RangeReset ends a running pass in the old range first
             var t = me.Tel;
             var far = t != null && Dist(t.X, t.Z, z.X, z.Z) > 3 * NM;
             // QNH of the nearest airfield from the mission weather like Tower; reduced from the aircraft only as a fallback (standard atmosphere, wrong at altitude in a warm/cold mission)
@@ -200,10 +280,10 @@ partial class Ops
             var rh = far ? Math.Round((Bearing(t!.X, t.Z, z.X, z.Z) - MagVar) / 10) * 10 + MagVar : 0;
             var runIn = far ? $"Enter from the {Card(rh + 180)}, run-in headings {Brg(rh - 20)} to {Brg(rh + 20)}" : "Run-in headings any";
             // R235: wording per JFIRE/AFI 13-212 ("range is cold" or "one aircraft in"), no targets (the range knows none), continue with "IP inbound"
-            var busy = hot.Count > 0 ? ", one aircraft in" : ", range is cold";
-            return new() { R($"{c}, Range Alpha{qnh}{wind}{busy}.{where} {runIn}, minimum altitude 1500 feet AGL. Report IP.") };
+            var busy = hot.Any(o => o.rg == rg) ? ", one aircraft in" : ", range is cold";
+            return new() { R($"{c}, {Z.Name}{qnh}{wind}{busy}.{where} {runIn}, minimum altitude 1500 feet AGL. Report IP.") };
         }
-        return new() { R($"{c}, Range Alpha, say again. Report check in, in hot, off, or checking out.") };
+        return new() { R($"{c}, {Z.Name}, say again. Report check in, in hot, off, or checking out.") };
     }
 
     void Cold() { isHot = isDry = false; hot.Remove(this); waitHot = false; offAsk = -1; }
@@ -214,16 +294,16 @@ partial class Ops
     double offAsk = -1;  // #21: when "report off" was asked (-1 = not)
 
     /// "in hot"/"in" (also from Tick after R236): clearance or reason against.
-    string InHot(Me me, (double X, double Z, double R) z, double now)
+    string InHot(Me me, Zone z, double now)
     {
         var c = Cs(me);
         waitHot = false;
-        if (!checkedIn) return $"{c}, Range Alpha, negative, you are not checked in. Report check in.";   // R57: cleared hot only after the check-in
+        if (!checkedIn) return $"{c}, {Z.Name}, negative, you are not checked in. Report check in.";   // R57: cleared hot only after the check-in
         if (hung != null) return $"{c}, negative, {hung}, report checking out.";   // R290: no further passes
         // R14: cleared hot only airborne, within 10 NM and (outside the zone) heading toward the area (JFIRE)
         if (me.Tel is { } ht && (OnGround(ht) || Dist(ht.X, ht.Z, z.X, z.Z) > 10 * NM)) return $"{c}, continue, report in inside 10 miles.";
         if (me.Tel is { } ha && Dist(ha.X, ha.Z, z.X, z.Z) > z.R && HdgDiff(ha.Hdg * 180 / Math.PI, Bearing(ha.X, ha.Z, z.X, z.Z)) > 60) return $"{c}, continue dry.";
-        if (hot.Any(o => o != this)) { waitHot = true; return $"{c}, continue, one aircraft in."; }   // A119: no "fouled"; R236: clearance comes after it becomes free
+        if (hot.Any(o => o != this && o.rg == rg)) { waitHot = true; return $"{c}, continue, one aircraft in."; }   // A119: no "fouled"; R236: clearance comes after it becomes free
         if (dryReq) { if (isHot) EndPass(); isDry = true; hot.Add(this); rgActAt = now; rgAway = double.NaN; offAsk = -1; return $"{c}, cleared dry."; }   // R285: occupied until "off", without scoring/pass counter
         isHot = true; isDry = false; hot.Add(this); rgActAt = now; rgAway = double.NaN; offAsk = -1;
         pass.Clear(); gunHits = 0; passRow = null;
@@ -236,7 +316,7 @@ partial class Ops
     string EndPass()
     {
         Cold();
-        passes++; rgPasses++;
+        passes++; rgPasses++; rgSeen.Add(Z.Name);
         var res = PassText();
         Debrief.Add(passRow = PassRow());
         vol.Clear();   // A72: what has impacted so far is in the pass report, Tick does not say it again (pass remains until "in hot" for late impacts)
@@ -250,7 +330,7 @@ partial class Ops
     public State Save() => new(awacsIn, radarContact, Debrief.ToList(), cas > 0 ? CasSave() : null);
     public void Load(State s) { (awacsIn, radarContact) = (s.AwacsIn, s.RadarContact); Debrief.AddRange(s.Debrief); if (s.Jtac != null) CasLoad(s.Jtac); }
 
-    string PassRow() => L($"Range Alpha Anflug {passes}: {PassText()}", $"Range Alpha pass {passes}: {PassText()}");
+    string PassRow() => L($"{Z.Name} Anflug {passes}: {PassText()}", $"{Z.Name} pass {passes}: {PassText()}");
     string PassText()
     {
         var parts = new List<string>();
@@ -286,15 +366,17 @@ partial class Ops
     /// Impact of a bomb/missile in the range (KutaisiATC.lua): distance to the nearest target, clock position (12 = approach direction).
     /// A72: impacts of the same drop (same weapon, gap < 3 s) are collected and scored from Tick as one call.
     /// R58: without clearance "check fire" (at most every 30 s) and one violation line per drop in the debriefing, no scoring.
-    public List<Call> OnImpact(Me me, double dist, int clock, double now, string weapon = "", double flight = -1)   // flight: weapon time of flight in s (-1 unknown)
+    public List<Call> OnImpact(Me me, double dist, int clock, double now, string weapon = "", double flight = -1, int zone = -1)   // flight: weapon time of flight in s (-1 unknown); zone: range of the impact (#56, -1 unknown)
     {
+        if (OtherZone(zone)) return new();
+        if (!checkedIn && zone >= 0 && zone < Ranges.Count) rg = zone;   // release without clearance: named after the range it fell on
         var res = vol.Count > 0 && (weapon != volW || now - volAt >= 3) ? Flush(me, now, true) : new();   // other drop: the old one first
         if (vol.Count == 0)
         {
             volW = weapon; volCold = !Cleared(now, flight);
             if (volCold)
             {
-                Debrief.Add(L($"Verstoß: Abwurf ohne Freigabe auf Range Alpha ({WeaponName(weapon)})", $"Deviation: release without clearance on Range Alpha ({WeaponName(weapon)})"));
+                Debrief.Add(L($"Verstoß: Abwurf ohne Freigabe auf {Z.Name} ({WeaponName(weapon)})", $"Deviation: release without clearance on {Z.Name} ({WeaponName(weapon)})"));
                 if (now - lastCold >= 30)
                 {
                     lastCold = now;
@@ -330,12 +412,14 @@ partial class Ops
         return new() { R($"{Cs(me)}, {(k == "" ? "" : k + (n > 1 ? "s, " : ", "))}{(n > 1 && b.D >= 1.5 ? "best " : "")}{Score(b.D, b.Clock)}.") };
     }
 
-    public void OnGunHit() { if (isHot) gunHits++; }
+    /// #56: an event in another zone than the one the pilot is checked in to is not his (not checked in or zone unknown: as before)
+    bool OtherZone(int zone) => zone >= 0 && checkedIn && zone != rg;
+    public void OnGunHit(int zone = -1) { if (isHot && !OtherZone(zone)) gunHits++; }
 
     /// Kill in the range: only an object of the opposing side, only with clearance (cold = no scoring), "target destroyed" once per pass (A72/R58).
-    public List<Call> OnKill(Me me, double now, int target = -1)
+    public List<Call> OnKill(Me me, double now, int target = -1, int zone = -1)
     {
-        if (!Cleared(now) || killTold || target >= 0 && target != 3 - me.Coalition) return new();   // R369: only the opposing side counts (target: coalition of the destroyed object, -1 = older mission)
+        if (OtherZone(zone) || !Cleared(now) || killTold || target >= 0 && target != 3 - me.Coalition) return new();   // R369: only the opposing side counts (target: coalition of the destroyed object, -1 = older mission)
         killTold = true;
         return new() { R($"{Cs(me)}, {OneOf("good hits", "good effects")}, target destroyed.") };
     }
@@ -512,10 +596,22 @@ partial class Ops
         // J12: ground targets as a JTAC says them
         (@"^(?:T-\d\d|M-1 |M-60|Leopard|Challenger|Merkava)", "tanks"), (@"^(?:BTR|BRDM|M-113|M1126|LAV|Stryker|MTLB|AAV)", "APCs"), (@"^(?:BMP|M-2 Bradley|Marder|Warrior|BMD)", "IFVs"),
         (@"^ZSU-23", "Shilka"), (@"^2S6", "Tunguska"), (@"^Strela", "Strela"), (@"^Osa", "SA-8"), (@"^2S1", "Gvozdika"), (@"^(?:SA-18|Igla|Stinger)", "MANPADS"),
-        (@"^(?:Ural|KAMAZ|ZIL|GAZ|M 818|M-818)", "trucks"), (@"^(?:Hummer|HMMWV)", "vehicles"), (@"^(?:Soldier|Infantry|Paratrooper)", "infantry"),
+        (@"^(?:Ural|KAMAZ|ZIL|GAZ|M 818|M-818)", "trucks"), (@"^(?:Hummer|HMMWV)", "vehicles"), (@"^(?:tt|HL)_", "technicals"), (@"^(?:Soldier|Infantry|Paratrooper)", "infantry"),
     };
     internal static string TypeSay(string type) => TypeNames.FirstOrDefault(n => Regex.IsMatch(type, n.Re)).Name
         ?? Regex.Replace(type.Split('_')[0], @"(?<=[A-Za-z])-?(?=\d)", " ");
+    /// Minutes of flight on a full internal tank at cruise, per type (emergency call "25 minutes fuel", playtime of the AI flights); unknown type 90.
+    /// ponytail: book values rounded, no external tanks, no altitude or power setting; a burn rate from the mission if a type is clearly off
+    static readonly (string Re, int Min)[] FullTankMin =
+    {
+        (@"^A-10", 180), (@"^F-16", 85), (@"^F/?A-18|^EA-18", 105), (@"^F-15", 95), (@"^F-14", 125), (@"^AV8B", 95), (@"^F-4E", 75), (@"^A-4", 90), (@"^T-45|^Su-25", 90),
+        (@"^F-5|^MiG-19|^MiG-21", 45), (@"^MiG-15|^MiG-29|^Mirage-F1|^AJS37", 60), (@"^M-2000", 65), (@"^F-86", 70), (@"^JF-17", 75), (@"^Su-27|^Su-33|^J-11", 150),
+        (@"^L-39", 100), (@"^MB-339|^Hawk", 110), (@"^C-101|^Yak-52", 150),
+        (@"^UH-1|^Ka-50", 140), (@"^Mi-8", 130), (@"^Mi-24|^OH-?58", 120), (@"^AH-64|^SA342|^CH-47|^UH-60", 150),
+        (@"^P-51|^TF-51|^Mosquito", 240), (@"^F4U", 180), (@"^P-47", 120), (@"^Spitfire|^FW-190", 80), (@"^Bf-109", 70), (@"^I-16|^La-7", 60),
+        (@"^C-130|^KC-?1|^E-[23]|^S-3|^B-52|^B-1|^Tu-|^IL-|^A-50|^An-", 480),
+    };
+    internal static int Endurance(string type) => FullTankMin.FirstOrDefault(n => Regex.IsMatch(type, n.Re)) is { Min: > 0 } e ? e.Min : 90;
     internal static string Card(double trueDeg) =>
         new[] { "north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest" }[(int)Math.Round(((trueDeg % 360) + 360) % 360 / 45) % 8];
 
@@ -582,15 +678,17 @@ partial class Ops
             return new() { A($"{c}, {awName}, {sig}, {ef.Name.Replace('-', ' ')} bears {Brg(Bearing(t!.X, t.Z, ef.X, ef.Z))}, {Miles(Dist(t.X, t.Z, ef.X, ef.Z))}, " +
                              $"contact {ef.StationOf("Approach")} {FreqSay(ef.FreqsOf("Approach") is { } af ? af.FirstOrDefault(x => x >= 200, af[0]) : Freqs.GetValueOrDefault("Approach", 266.5))}.") };
         }
-        if (Has(n, "check out", "checking out"))
+        bool toTanker = last?.Contains("nearest tanker") == true && Has(n, "pushing", "switching", "frequency change", "contacting");   // i49 (log): after the tanker vector, the switch to the tanker is the frequency change, not a new request
+        if (toTanker || Has(n, "check out", "checking out"))
         {
             awacsIn = onStation = false; awId = -1; Abm.Release(side, Flight(me));   // no more calls by itself; LK9: no longer planned
             var home = t == null ? null : fields.Where(f => f.Side == 0 || f.Side == me.Coalition).MinBy(f => Dist(t.X, t.Z, f.X, f.Z));
-            if (home != null && Dist(t!.X, t.Z, home.X, home.Z) > 60 * NM && CenterFor(me.Coalition, t.X, t.Z) is { } cn)   // A6: home farther than 60 NM -> the Center takes over
+            if (!toTanker && home != null && Dist(t!.X, t.Z, home.X, home.Z) > 60 * NM && CenterFor(me.Coalition, t.X, t.Z) is { } cn)   // A6: home farther than 60 NM -> the Center takes over
                 return new() { A($"{c}, {awName}, copy checking out, contact {cn.Name} {FreqSay(cn.Freq)}.") };
             return new() { A($"{c}, {awName}, copy checking out, {OneOf("good day", "good luck")}.") };
         }
         if (t != null && OnGround(t)) { awacsIn = wasIn; return new() { A($"{c}, {awName}, check in airborne.") }; }   // R51: no radar contact on the ground (parked deletes the check-in via TickLive anyway)
+        if (Regex.IsMatch(n, @"\b(?:leaving|climbing|descending|level|passing|maintaining) (?:angels|flight level)\b")) return new() { A($"{c}, {awName}, copy.") };   // i49 (log): altitude report is no request, "leaving angels 15" no check-out
         if (Has(n, "unable"))   // LD14 (ATP 1-02.1 UNABLE): tasking declined -> Abm gives the group to the next flight; winchester/bingo: no longer planned
         {
             ask = null; Abm.Unable(side, Flight(me), now);
@@ -629,6 +727,7 @@ partial class Ops
                 HdgDiff(Bearing(t.X, t.Z, a.X, a.Z), int.Parse(sb) + MagVar) <= 30).MinBy(a => Dist(t.X, t.Z, a.X, a.Z));
             return new() { A($"{c}, {awName}, spike {Digits(sb)}, {(bud != null ? $"buddy spike, {Braa(t, bud)}" : sg == null ? "nothing known" : With($"{Nm(sg)} {Braa(t, sg.Lead)}", Fill(sg, true)))}.") };
         }
+        if (Regex.IsMatch(n, @"\bsorted\b") || Has(n, "magnum", "rifle", "pickle", "bombs away")) return new();   // own report (ATP 1-02.1 SORTED, weapon release): no reply, "sorted" is no "request sort"
         if ((Has(n, "sort", "request target") || Has(n, "targeting") && !Regex.IsMatch(n, @"\b(?:north|south|east|west|northeast|northwest|southeast|southwest|lead|trail|middle|single)\b")) && t != null)   // V20/R55: one group per element (section 1-1, 1-3 …), from left to right; callsign before the sender
         {
             if (groups.Count == 0) return new() { A($"{c}, {awName}, clean.") };
@@ -689,16 +788,16 @@ partial class Ops
         }
         if (Has(n, "merged") && (groups.FirstOrDefault(Own) ?? groups.FirstOrDefault()) is { } mg) { foreach (var id in mg.Ids!) mergeTold[id] = now; return new(); }   // LD3: if he said it himself, no "merged" from the AWACS
         if (tank == 1 && Has(n, "judy")) { vecEnd = true; return new() { A($"{c}, {awName}, roger.") }; }   // E1: radar contact with the tanker ends the AWACS join vectors
-        if (Has(n, "commit", "targeting", "targeted", "engaged", "engaging", "fox", "judy") && t != null)   // Confirm target: named group/direction, otherwise the assigned one, otherwise the nearest
+        if (Has(n, "commit", "targeting", "targeted", "engaged", "engaging", "fox", "pitbull", "judy") && t != null)   // Confirm target: named group/direction, otherwise the assigned one, otherwise the nearest
         {
             var dir = Regex.Match(n, @"\b(?:north|south|east|west)\b").Value;
             var gn = groups.FirstOrDefault(g => Said(g, groups, n));   // R54: name from the picture ("committing lead group")
             var gd = gn ?? (dir == "" ? null : groups.FirstOrDefault(g => Card(Bearing(t.X, t.Z, g.Lead.X, g.Lead.Z)).Contains(dir)));
-            if ((gd ?? groups.FirstOrDefault(Own) ?? groups.FirstOrDefault()) is not { } g) return Has(n, "fox") ? new() : new() { A($"{c}, {awName}, clean.") };
+            if ((gd ?? groups.FirstOrDefault(Own) ?? groups.FirstOrDefault()) is not { } g) return Has(n, "fox", "pitbull") ? new() : new() { A($"{c}, {awName}, clean.") };
             if (gn == null && gd != null && Stored(gd) == null && !named.ContainsValue(dir + " group")) foreach (var id in gd.Ids!) named[id] = dir + " group";   // LK3: the player names a nameless group first -> the name applies
             var pend = ask; ask = null;
             if (!Has(n, "commit")) judy.UnionWith(g.Ids!);   // LD3 (ATP 1-02.1 JUDY): he leads himself, the AWACS keeps the frequency clear
-            if (Has(n, "fox"))   // LD16: shot -> the group belongs to him (AI flights on it get skip it), no reply
+            if (Has(n, "fox", "pitbull"))   // LD16: shot -> the group belongs to him (AI flights on it get skip it), no reply
             {
                 Abm.Claim(side, Flight(me), g.Ids!, Nm(g), g.Count, now); committed.UnionWith(g.Ids!); mine.UnionWith(g.Ids!);
                 return new();
@@ -1122,7 +1221,7 @@ partial class Ops
             return new() { new("Tanker", wt.Name, $"{c}, {wt.Name}, negative, {Kind(wt)} only, {ok}.") };
         }
         if (tk == null) return new() { any.Count == 0 ? new("Tanker", "Tanker", $"{c}, no tanker airborne.") : new("Tanker", any[0].Name, $"{c}, {any[0].Name}, negative, no compatible tanker.") };
-        List<Call> T(string s) => new() { new("Tanker", tk.Name, s) };   // R304: our controller always speaks, the DCS tanker is mute (only radio menu for basket/boom)
+        List<Call> T(string s) => new() { new("Tanker", tk.Name, s) };   // R304: our controller always speaks, the DCS tanker is audible too while refuelling (radio menu for basket/boom)
         var tp = me.Tel;
         double dTk = tp == null ? 0 : Dist(tp.X, tp.Z, tk.A.X, tk.A.Z);
         var brg = tp == null ? "" : $"bearing {Brg(Bearing(tp.X, tp.Z, tk.A.X, tk.A.Z))}, {MilesTxt(dTk)}, ";
@@ -1141,7 +1240,7 @@ partial class Ops
         if (Has(n, "complete", "departing", "thank", "good day", "leaving", "abort"))   // #5 (issue): "abort" ends the refueling like "complete"
         {
             bool first = l.FirstOrDefault(o => o.tank >= 2) == this;   // had the spot (e.g. after a deliberate partial amount, OnRefuel tank 3): the next one moves up (A66/A128)
-            tank = 0; OffLine();
+            tank = 0; afterFull = false; OffLine();
             var total = offload > 0 ? $"total offload {offload / 1000:0.0}, " : "";   // thousand lb; without known internal tank size no amount
             offload = 0;
             var dep = T($"{c}, {tk.Name}, {total}cleared to depart, " + (AwacsContact(air, me, Freqs.GetValueOrDefault("AWACS", 251.0)) is { } aw ? $"contact {aw}." : OneOf("frequency change approved.", "frequency change approved, good day.")));
@@ -1152,11 +1251,12 @@ partial class Ops
         {
             var dc = T($"{c}, {tk.Name}, {OneOf("copy disconnect", "roger disconnect")}, move to the right wing.");
             if (tank != 3) return dc;
-            tank = 2; disc = true; OffLine();   // without DCS event (OnRefuel) only the report frees the spot, the next gets it as in OnRefuel (A65)
+            tank = 2; disc = true; afterFull = false; OffLine();   // without DCS event (OnRefuel) only the report frees the spot, the next gets it as in OnRefuel (A65)
             if (l.FirstOrDefault(o => o.tank >= 2) is { } nx) dc.Add(new("Tanker", tk.Name, $"{nx.cs}, {tk.Name}, cleared pre-contact.", To: nx));
             return dc;
         }
         if (Regex.IsMatch(n, @"\b(?:mov\w*|proceeding|going)\b") && Has(n, "right", "left", "observation", "pre contact", "precontact")) return new();   // LA16 (log) · K1 (#5): "moving to the right / pre-contact / left observation" reads back, the report follows once there
+        if (Regex.IsMatch(n, @"\bcleared\b") && !Has(n, "ready", "request", "confirm", "am i")) return new();   // readback "cleared pre-contact" / "cleared to join, left observation" is no position report (otherwise "cleared contact" at once)
         if (Has(n, "right wing"))   // back on the right wing: no clearance, continue with "pre contact" or "complete"
             return T($"{c}, {tk.Name}, {OneOf("roger", "copy")}, report complete or request more.");
         // R56: confirm join/pre-contact only if the receiver is close enough to the tanker (ATP-56(C)), otherwise state the situation
@@ -1164,15 +1264,15 @@ partial class Ops
         bool far = dTk > 2 * NM;
         List<Call> Join(string neg)   // "cleared to join, left observation" (R287: before that without clearance "negative, not cleared pre-contact, ")
         {
-            if (tp != null && Along(tp, tk.A) > 0.5 * NM)   // TP5 (ATP-56(C)): join only from astern
-                return T($"{c}, {tk.Name}, negative, rejoin from astern, {Clock(tp, tk)}, report visual.");
-            Menu = ("intent", tk.A.Group);   // TP6: DCS "Intent to refuel" only now, not with the request
+            var astern = tp != null && Along(tp, tk.A) > 0.5 * NM ? $" Rejoin from astern, {Clock(tp, tk)}." : "";   // TP5 (ATP-56(C)) / i49: ahead of the 3-9 line the join is cleared with the hint, the receiver sorts it out
+            Menu = ("join", tk.A.Group);   // TP6: DCS "Intent to refuel" only now, not with the request
+            dcsCleared = false;
             if (!l.Contains(this)) l.Add(this);
             Arrive(l);
-            tank = 2; disc = false;
+            tank = 2; disc = false; afterFull = false;
             var ahead = l.Where(o => o.tank >= 2).ToList();   // Order after arrival (A65)
             var order = ahead.Count > 1 ? $" {ahead[0].cs} first, then {string.Join(", then ", ahead.Skip(1).Select(o => o.cs))}." : "";
-            return T($"{c}, {tk.Name}, {neg}cleared to join, left observation, number {Pos(l)}.{order}");
+            return T($"{c}, {tk.Name}, {neg}cleared to join, left observation, number {Pos(l)}.{order}{astern}");
         }
         if (Has(n, "pre contact", "precontact", "in position", "ready for contact", "stabilized", "ready to refuel") && !Has(n, "observation"))   // K1: "stabilized (left) observation" is the observation report
         {
@@ -1180,12 +1280,14 @@ partial class Ops
             if (tank < 2) return Join("negative, not cleared pre-contact, ");   // R287 (ATP-56(C)): pre-contact only after "cleared to join"
             if (!l.Contains(this)) l.Add(this);   // refuel without a new request: line up at the back
             Arrive(l);
-            if (Pos(l) > 1) { tank = 2; return T($"{c}, {tk.Name}, negative, hold left observation, number {Pos(l)}."); }
-            Menu = (tank < 1 || !DcsIntent ? "intent" : "precontact", tk.A.Group);
-            tank = 3; disc = false;
+            if (Pos(l) > 1) { tank = 2; afterFull = false; return T($"{c}, {tk.Name}, negative, hold left observation, number {Pos(l)}."); }
+            if (tank < 1 || !DcsIntent) { Menu = ("intent", tk.A.Group); dcsCleared = false; }   // always a menu step: the DCS stage decides what is pressed
+            else Menu = (dcsCleared ? "cleared" : "precontact", tk.A.Group);
+            tank = 3; disc = false; afterFull = false;
             return T($"{c}, cleared contact, {(Boom(tk.A) ? "boom" : "basket")} ready.");
         }
-        if (tank < 2 && Has(n, "judy", "radar contact")) { vecEnd = true; return T($"{c}, {tk.Name}, {OneOf("roger", "copy")}, report visual."); }   // TP3: radar contact ends the vectors, the join needs "visual"
+        if (tank < 2 && (Has(n, "judy", "radar contact") || Regex.IsMatch(n, @"\b(?:negative|no|not) (?:visual|tally|joy|contact)\b|\bnot in sight\b|\bblind\b"))) {   // "negative visual" is no "visual" (vectors go on)
+            vecEnd |= Has(n, "judy", "radar contact"); return T($"{c}, {tk.Name}, {OneOf("roger", "copy")}, report visual."); }   // TP3: radar contact ends the vectors, the join needs "visual"
         if (tank < 2 && Has(n, "visual", "tally", "in sight"))
             return dTk > 20 * NM ? T($"{c}, {tk.Name}, continue, {MilesTxt(dTk)}, report visual.") : Join("");   // R117: "visual" releases the join (2-5 NM as in TankVec); LA16 (log: "visual" at 16, 13, 8 NM rejected): up to 20 NM (TickLive discards over 25 NM); R286: continue with "visual", the tanker understands that
         if (Has(n, "observation", "left wing", "visual", "tally", "in sight", "joined"))
@@ -1193,14 +1295,14 @@ partial class Ops
             if (far) return Far();
             if (tank < 2) return Join("");   // R287: without "cleared to join" no "cleared pre-contact"
             if (!l.Contains(this)) l.Add(this);
-            tank = 2; disc = false;
+            tank = 2; disc = false; afterFull = false;
             return T(Pos(l) > 1 ? $"{c}, {tk.Name}, stabilize left observation, number {Pos(l)}." : $"{c}, {tk.Name}, cleared pre-contact.");
         }
         // Only a real request starts the rendezvous; chatter with the tanker (fuel state etc.) does not reset contact
         if (tank >= 2 || !Has(n, "join", "rejoin", "rendezvous", "refuel", "fuel", "tank", "gas", "check in", "checking in", "aar", "a a r", "texaco", "shell", "arco"))
             return new() { new("Tanker", tk.Name, $"{c}, {tk.Name}, say again.") };
         if (tank == 1 && was == tk.A.Group) return T($"{c}, {tk.Name}, continue, {brg}report visual.");   // TP1: repeated request during the rendezvous: no restart, no radio menu
-        tank = 1; offload = 0;
+        tank = 1; offload = 0; afterFull = false;
         if (!l.Contains(this)) l.Add(this);
         // R56: rendezvous 1000 ft below the tanker (ATP-56(C)), climb only with "cleared to join"
         if (tp == null) return T($"{c}, {tk.Name}, {TkInfo(tk)}. Join 1000 feet below, report visual.");
@@ -1242,6 +1344,7 @@ partial class Ops
     {
         HotEdge(now);
         var res = Flush(me, now);   // A72: completed drop (3 s without impact) as one call, also on the ground
+        if (tank == 4 && fullAt > -1e8 && now - fullAt >= 5) res.AddRange(Full(me, air));   // pending "full" (see fullAt)
         if (TankerBlock(me, air, now, lead) is { } tb) res.Add(tb);   // N44
         res.AddRange(TickLive(me, air, now, awacs));
         if (lead == null) res.AddRange(JtacTick(me, now));   // J9/J10 (wingmen: lead only)
@@ -1311,34 +1414,35 @@ partial class Ops
             {
                 radarContact = awacsIn = hadContacts = onStation = false; awId = -1;
                 groupsTold.Clear(); committed.Clear(); threatTold.Clear(); mergeTold.Clear(); judy.Clear(); members.Clear(); seenAt.Clear(); heard.Clear(); mine.Clear(); lastPos.Clear(); watching = false;   // LK3: group names belong to the side, not the flight
-                if (cas > 0) CasEnd();   // R418: landed and stopped or gone: the JTAC is free for the next flight
+                if (cas > 0 && t == null) CasEnd();   // R418: telemetry gone; forum Killg0re NL: standing on the ground is no end of the contact (helicopter on the ground / FARP), "checking out" and the 10-minute idle rule in JtacTick free the controller
                 RangeReset(); checkedIn = false;   // R131: landing/shutdown ends the range visit (debrief and rgPasses stay), touch-and-go stays checked in; the new flight starts with check-in again
             }
             return new();
         }
-        if ((isHot || isDry) && Range is { } z)   // R285: a dry pass without "off" also frees the range
+        if ((isHot || isDry) && Ranges.Count > 0)   // R285: a dry pass without "off" also frees the range
         {
+            var z = Z;
             var d = Dist(t.X, t.Z, z.X, z.Z);
             // A119: no "off" -> 60 s after the last impact (without impact 180 s after "in hot") or 60 s beyond 3 NM heading away the range frees itself
             // (the 60 s cover the turn-in after "in hot" and weapons still flying after turning away: loft, Maverick, GBU; "in hot" and every impact restart it)
             if (d > 3 * NM && HdgDiff(t.Hdg * 180 / Math.PI, Bearing(t.X, t.Z, z.X, z.Z)) > 90) { if (double.IsNaN(rgAway)) rgAway = now; } else rgAway = double.NaN;
             if (d > z.R + 10 * NM)   // R14: out of the range, withdrawal announced
-                { var lv = R($"{Cs(me)}, Range Alpha, leaving the range, range is cold{Ended(", ")}. Report in hot or checking out."); HotEdge(now); return new() { lv }; }
+                { var lv = R($"{Cs(me)}, {Z.Name}, leaving the range, range is cold{Ended(", ")}. Report in hot or checking out."); HotEdge(now); return new() { lv }; }
             else if (now - rgActAt > (pass.Count > 0 ? 60 : 180) || now - Math.Max(rgAway, rgActAt) >= 60)
             {
                 // #21 reporting duty: first "report off", 30 s later without "off" freed as before plus violation
-                if (offAsk < 0) { offAsk = now; return new() { R($"{Cs(me)}, Range Alpha, report off.") }; }
+                if (offAsk < 0) { offAsk = now; return new() { R($"{Cs(me)}, {Z.Name}, report off.") }; }
                 if (now - offAsk >= 30)
                 {
-                    Debrief.Add(L("Verstoß: kein „off“ auf Range Alpha gemeldet", "Deviation: no \"off\" call on Range Alpha"));
-                    var ao = R($"{Cs(me)}, Range Alpha, assuming you are off, range is cold{Ended(", ")}. Report in hot or checking out."); HotEdge(now); return new() { ao };   // HotEdge: pass end for the grace period (R58)
+                    Debrief.Add(L($"Verstoß: kein „off“ auf {Z.Name} gemeldet", $"Deviation: no \"off\" call on {Z.Name}"));
+                    var ao = R($"{Cs(me)}, {Z.Name}, assuming you are off, range is cold{Ended(", ")}. Report in hot or checking out."); HotEdge(now); return new() { ao };   // HotEdge: pass end for the grace period (R58)
                 }
             }
         }
         // R236: waiting for the range ("continue, one aircraft in") -> free: "cleared hot" if position and heading still fit, otherwise silent (new "in")
-        if (waitHot && Range is { } zw && !hot.Any(o => o != this) && InHot(me, zw, now) is var ih && (isHot || isDry)) { HotEdge(now); return new() { R(ih) }; }
+        if (waitHot && Ranges.Count > 0 && !hot.Any(o => o != this && o.rg == rg) && InHot(me, Z, now) is var ih && (isHot || isDry)) { HotEdge(now); return new() { R(ih) }; }
         var tk = tank >= 2 ? Tankers(air, me).FirstOrDefault(k => k.A.Group == tanker) : null;
-        if (tk != null && Dist(t.X, t.Z, tk.A.X, tk.A.Z) > 25 * NM) { tank = 0; OffLine(); tk = null; }   // away from the tanker (LA16: join from up to 20 NM)
+        if (tk != null && Dist(t.X, t.Z, tk.A.X, tk.A.Z) > 25 * NM) { tank = 0; afterFull = false; OffLine(); tk = null; }   // away from the tanker (LA16: join from up to 20 NM)
         if (tk != null && TankerCoach(me, t, tk, now) is { } tc) return new() { tc };
         return awacs && AwacsAuto(me, t, air, now) is { } call ? new() { call } : new();
     }
@@ -1380,7 +1484,7 @@ partial class Ops
         // Breakaway (P3-TK3, ATP-56(C)): too close to the tanker, closure too fast, or in contact out of the envelope; repeated every 15 s, priority over everything else
         if (tank >= 3 && now - breakAt >= 15 && Math.Abs(lat) < 30 && Math.Abs(vert) < 30 && along < 40 &&
             ((along > -20 && Math.Abs(lat) < 20 && Math.Abs(vert) < 20) || (closure > 6 && along > -50) || (tank == 4 && (Math.Abs(lat) > 25 || Math.Abs(vert) > 25))))
-        { breakAt = now; Breakaways++; if (tank == 3) tank = 2; return Say($"{c}, breakaway, breakaway, breakaway."); }   // R289: back to observation, contact only after a new clearance (in contact: with the disconnect)
+        { breakAt = now; Breakaways++; if (tank == 3) tank = 2; afterFull = false; return Say($"{c}, breakaway, breakaway, breakaway."); }   // R289: back to observation, contact only after a new clearance (in contact: with the disconnect)
         if (turn != null) return Say(turn, true);
         if (tank == 4 || tank == 2 && disc || along > 0 || along < -300 || Math.Abs(lat) > 60 || now - coachAt < 8) return null;   // LA16: after the disconnect no coaching until pre-contact
         if (closure > 3 && along > -150) return Say($"{c}, slow closure.");   // > 6 kt
@@ -1426,6 +1530,9 @@ partial class Ops
     /// DCS also reports the disconnect on every slip off the basket: it is wanted only with a (nearly) full tank, otherwise back to pre-contact (A66).
     double fuelAtContact, contactSum, rowLb, lastStop = -99;
     double ncAt = -1e9;   // #19: last contact without clearance
+    // Forum (jojojung, Hornet with external tanks): getFuel counts the internal tank, DCS reports stop + new contact while the external tanks fill;
+    // "full" is called only after 5 s without a new contact.
+    double fullAt = -1e9, fullLb;
     bool broken;      // last disconnect unintended: contact shortly afterwards continues the same sequence
     string? dbText;   // Debriefing line of this sequence, each disconnect replaces it
     public List<Call> OnRefuel(Me me, bool start, double fuel, IReadOnlyList<Traffic> air, double now, double kgMax = 0)
@@ -1434,18 +1541,24 @@ partial class Ops
         var name = tkr?.Name ?? "Tanker";
         if (start)
         {
-            if (tank == 4) return new();
-            if (tank != 3)   // #19 reporting duty: contact only after "pre-contact" -> "cleared contact" (ATP-56(C)); at most every 30 s (DCS reports every hookup)
+            DcsIntent = dcsCleared = true;   // a contact means the DCS tanker dialog is open
+            if (tank == 4) { if (fullAt > -1e8) contactAt = now; fullAt = -1e9; return new(); }   // new contact while "full" is pending: same contact goes on
+            // Forum (jojojung): "full" counts the internal tank only; slipping off while the external tanks still fill, then contact again = the same sequence, if nobody else waits for the spot
+            var fl = Line(tkr?.A.Group ?? tanker);
+            bool resume = afterFull && tank == 2 && !fl.Any(o => o != this && o.tank >= 2);
+            if (resume && !fl.Contains(this)) fl.Add(this);
+            if (tank != 3 && !resume)   // #19 reporting duty: contact only after "pre-contact" -> "cleared contact" (ATP-56(C)); at most every 30 s (DCS reports every hookup)
             {
                 if (now - ncAt < 30) return new();
                 ncAt = now;
                 Debrief.Add(L($"Verstoß: Kontakt an {name} ohne Freigabe", $"Deviation: contact with {name} without clearance"));
                 // uncertain: another receiver is already on this tanker -> breakaway (ATP-56(C)) instead of orderly disconnect
                 if (line.GetValueOrDefault(tkr?.A.Group ?? "")?.Any(o => o != this && o.tank == 4) == true) { Breakaways++; return new() { new("Tanker", name, $"{Cs(me)}, breakaway, breakaway, breakaway.") }; }
-                return new() { new("Tanker", name, $"{Cs(me)}, {name}, you are not cleared contact, disconnect, return to left observation.") };
+                var first = tank >= 2 && Pos(fl) == 1;   // Forum (jojojung): already joined and next in line: back to pre-contact (what the call "pre-contact" gets from tank 2 anyway), otherwise observation
+                return new() { new("Tanker", name, $"{Cs(me)}, {name}, you are not cleared contact, disconnect, return to {(first ? "pre-contact" : "left observation")}.") };
             }
-            bool again = broken && tank >= 2 && now - lastStop < 120;   // back on the basket: no new "Contact.", quantity and time continue
-            tank = 4; contactAt = now; broken = false;
+            bool again = resume || broken && tank >= 2 && now - lastStop < 120;   // back on the basket: no new "Contact.", quantity and time continue
+            tank = 4; contactAt = now; broken = false; fullAt = -1e9; afterFull = false;
             if (again) return new();
             fuelAtContact = fuel; contactSum = 0; dbText = null; rowLb = 0;
             return new() { new("Tanker", name, "Contact.") };
@@ -1458,13 +1571,24 @@ partial class Ops
         var row = L("Luftbetankung", "Air refueling") + $" {name}: {contactSum:0} s " + L("Kontakt", "contact") + $", " + L("Tank", "fuel") + $" {fuelAtContact * 100:0} -> {fuel * 100:0} %{(lb > 0 ? $", {lb:0} lb" : "")}";
         if (dbText != null && Debrief.IndexOf(dbText) is var i and >= 0) Debrief[i] = row; else Debrief.Add(row);
         dbText = row; lastStop = now;
-        if (fuel < 0.97 && breakAt >= contactAt) { tank = 2; disc = true; broken = false; return new(); }   // R289: disconnect after breakaway: observation, no "return to pre-contact", contact only after a new clearance
+        if (fuel < 0.97 && breakAt >= contactAt) { tank = 2; disc = true; broken = false; afterFull = false; return new(); }   // R289: disconnect after breakaway: observation, no "return to pre-contact", contact only after a new clearance
         if (fuel < 0.97)   // unwanted, stays in the queue (ponytail: desired quantity only with N37)
         {
-            tank = 3; disc = false; broken = true;
+            tank = 3; disc = false; broken = true; afterFull = false;
             return new() { new("Tanker", name, $"{Cs(me)}, {name}, disconnect, return to pre-contact.") };
         }
-        tank = 2; disc = true; broken = false;
+        fullAt = now; fullLb = lb;
+        return new();
+    }
+
+    List<Call> Full(Me me, IReadOnlyList<Traffic> air)
+    {
+        fullAt = -1e9;
+        var tkr = (tanker != "" ? Tankers(air, me, true).FirstOrDefault(k => k.A.Group == tanker) : null) ?? Tankers(air, me).FirstOrDefault();
+        var name = tkr?.Name ?? "Tanker";
+        double lb = fullLb;
+        tank = 2; disc = true; broken = false; afterFull = true;
+        DcsIntent = dcsCleared = false;   // full: DCS ends its dialog ("refueling complete"), more fuel needs "Intent to refuel" again
         OffLine();
         var next = line.GetValueOrDefault(tkr?.A.Group ?? "")?.FirstOrDefault(o => o.tank >= 2);
         var done = new Call("Tanker", name, $"{Cs(me)}, {name}, disconnect{(lb > 0 ? $", you received {lb / 1000:0.0}" : "")}, move to the right wing.{(next == null ? " Report complete, or pre-contact for more." : "")}");   // R288: "complete" first (Enter suggestion: first option), full is full
@@ -1520,6 +1644,14 @@ partial class Ops
         var ol = new Ops();   // checked in low after takeoff (handover "leaving control zone, contact Overlord" below 900 m): no second one while climbing
         int rl = ol.OnTranscript("AWACS", "Overlord, Enfield 1-1, checking in", me with { Tel = me.Tel! with { Agl = 300 } }, air, f, 0).Concat(ol.Tick(me, air, 1)).Count(x => x.Text.Contains("adar contact"));
         check(rc == 1 && rl == 1 && bc is ["Enfield one one, Overlord, clean."], $"R50: Check-in {rc}x/tief {rl}x radar contact, bogey dope -> {string.Join(" | ", bc)}");
+        var b27 = new[] { "Overload, Enfield 1-1, Bogeydope.", "Overload. Enfield 1-1. Request bogie-dope." }.Select(s => new Ops().OnTranscript("AWACS", s, me, blue, f, 0).FirstOrDefault()?.Text).ToList();
+        check(b27.All(x => x == "Enfield one one, Overlord, clean."), "#27: Overload/Bogeydope wie Whisper -> " + string.Join(" | ", b27));
+        // Names one letter off become the expected name (airfields, call names); exact names, short words, two candidates and other words stay; mishearings from the log
+        var fx = Tower.FixNames("Overlard, Enfield 1-1, inbound Kutaissi, request picture, Vaziani, Kobulet, Texico", new[] { "Overlord", "Kutaisi", "Vaziani", "Enfield 1-1", "Kobuleti", "Kobulets", "Texaco", "Shell" });
+        check(fx == "Overlord, Enfield 1-1, inbound Kutaisi, request picture, Vaziani, Kobulet, Texaco" && Tower.Normalize("Enboard for landing.") == "inbound for landing"
+              && Tower.Normalize("See you again.") == "say again" && Tower.Normalize("See you at 10") == "see you at 10", "Spracherkennung: Namen einen Buchstaben daneben, Verhörer aus dem Log -> " + fx);
+        var srt = new Ops().OnTranscript("AWACS", "Overlord, Enfield 1-1, sorted", me, blue, f, 0).Select(x => x.Text).ToList();
+        check(srt.Count == 0 && Tower.Normalize("Dark Star, Enfield 1-1, picture").StartsWith("darkstar "), "AWACS: 'sorted' still, Dark Star -> darkstar -> " + string.Join(" | ", srt));
         var ifc0 = Tower.IffCheck;   // FI1 I5: IffCheck and Mode 4 off -> "parrot sour" with the radar contact; Mode 4 on, unknown or without IffCheck nothing
         try
         {
@@ -1920,10 +2052,74 @@ partial class Ops
         od.DcsIntent = true;
         var dp = od.OnTranscript("Tanker", "Texaco, ready pre contact", meN, air, f, 1);
         var dk = od.OnRefuel(me, true, 0.4, air, 2);
-        check(dj.Count == 1 && dj[0].Text.Contains("report visual") && dm == null && dv.Count == 1 && dv[0].Text.Contains("cleared to join") && dv2?.Step == "intent"
+        check(dj.Count == 1 && dj[0].Text.Contains("report visual") && dm == null && dv.Count == 1 && dv[0].Text.Contains("cleared to join") && dv2?.Step == "join"
               && dq0.Count == 1 && dq0[0].Text.Contains("cleared contact") && dq?.Step == "intent" && dp.Count == 1 && od.Menu?.Step == "precontact" && dk.FirstOrDefault()?.Text == "Contact.",
               $"Tanker R304: Lotse spricht, Menü {dm} -> {dv2} -> {dq} -> {od.Menu} | {string.Join(" | ", dj.Concat(dv).Concat(dq0).Concat(dp).Concat(dk).Select(x => x.Text))}");
+        {   // forum (jojojung): after a slip off the basket "pre contact" presses nothing in DCS (F1 would be "Abort refuel" or "Flight"), after a full tank "Intent to refuel" again
+            od.Menu = null;
+            var slipDc = od.OnRefuel(me, false, 0.5, air, 10);
+            od.OnTranscript("Tanker", "Texaco, pre contact", meN, air, f, 12);
+            var afterSlip = od.Menu;
+            od.OnRefuel(me, true, 0.5, air, 20);
+            od.OnRefuel(me, false, 0.99, air, 60);
+            od.Tick(meN, air, 66);   // "full" comes 5 s after the stop
+            od.OnTranscript("Tanker", "Texaco, pre contact", meN, air, f, 68);
+            check(slipDc.FirstOrDefault()?.Text.Contains("return to pre-contact") == true && afterSlip?.Step == "cleared" && od.Menu?.Step == "intent" && !od.DcsIntent,
+                  $"Tanker DCS-Menü nach Kontakt: Abrutschen {slipDc.FirstOrDefault()?.Text} -> Menü {afterSlip}, voll -> Menü {od.Menu}, DcsIntent {od.DcsIntent}");
+            od.Menu = null;
+        }
         line.Clear();
+        {   // forum (jojojung, external tanks): stop at >= 97 % + new contact 2 s later = same contact; "full" only 5 s after the last stop
+            var ox = new Ops();
+            ox.OnTranscript("Tanker", "Texaco, request rejoin", me, air, f, 0); ox.Menu = null;
+            ox.OnTranscript("Tanker", "Texaco, visual", meN, air, f, 1); ox.Menu = null;
+            ox.DcsIntent = true;
+            ox.OnTranscript("Tanker", "Texaco, ready pre contact", meN, air, f, 1); ox.Menu = null;
+            ox.OnRefuel(me, true, 0.4, air, 2);
+            var xs = ox.OnRefuel(me, false, 0.98, air, 30);
+            var xt = ox.Tick(meN, air, 33);
+            var xc = ox.OnRefuel(me, true, 0.98, air, 32);
+            ox.OnTranscript("Tanker", "Texaco, pre contact", meN, air, f, 34);
+            var xm = ox.Menu;
+            ox.OnRefuel(me, true, 0.4, air, 40);   // pre-contact call sets tank 3; DCS reports the next contact
+            ox.OnRefuel(me, false, 0.99, air, 50);
+            var xe = ox.Tick(meN, air, 55);
+            check(xs.Count == 0 && xt.All(x => !x.Text.Contains("disconnect")) && xc.Count == 0 && xm?.Step == "cleared" && xe.Any(x => x.Text.Contains("you received") || x.Text.Contains("disconnect")),
+                  $"Tanker Zusatztanks: Stopp + neuer Kontakt = derselbe Kontakt, voll erst 5 s nach Stopp | {string.Join(" | ", xs.Concat(xt).Concat(xc).Concat(xe).Select(x => x.Text))}");
+            line.Clear();
+        }
+        {   // forum (jojojung): "full" (internal tank) + contact again without a call continues, no violation; with another receiver waiting it is still one; wording without clearance
+            var tg = "Texaco (KC-135MPRS Korb)";
+            bool Viol(Ops q) => q.Debrief.Any(d => d.Contains("Verstoß") || d.Contains("Deviation"));
+            Ops Full5(out List<Call> fullCalls)
+            {
+                var q = new Ops();
+                q.OnTranscript("Tanker", "Texaco, request rejoin", me, air, f, 0); q.OnTranscript("Tanker", "Texaco, visual", meN, air, f, 1); q.OnTranscript("Tanker", "Texaco, ready pre contact", meN, air, f, 1);
+                q.OnRefuel(me, true, 0.4, air, 2); q.OnRefuel(me, false, 0.99, air, 30);
+                fullCalls = q.Tick(meN, air, 36);
+                return q;
+            }
+            line.Clear();
+            var o1F = Full5(out var f1);
+            var c1F = o1F.OnRefuel(me, true, 0.99, air, 40);
+            var back = o1F.tank == 4 && Line(tg).Contains(o1F);
+            o1F.OnRefuel(me, false, 0.99, air, 50);
+            var rows1 = o1F.Debrief.Count(d => d.Contains("Air refueling") || d.Contains("Luftbetankung"));
+            line.Clear();
+            var o2F = Full5(out _);
+            var w2 = new Ops { tank = 2, tanker = tg }; Line(tg).Add(w2);
+            var c2F = o2F.OnRefuel(me, true, 0.99, air, 40);
+            line.Clear();
+            var w3 = new Ops { tank = 2, tanker = tg };   // joined, first in line: back to pre-contact
+            var c3 = w3.OnRefuel(me, true, 0.4, air, 100);
+            line.Clear();
+            var c4F = new Ops().OnRefuel(me, true, 0.4, air, 100);   // never joined: observation
+            line.Clear();
+            check(f1.Any(x => x.Text.Contains("move to the right wing")) && c1F.Count == 0 && back && !Viol(o1F) && rows1 == 1
+                  && c2F.Count == 1 && c2F[0].Text.Contains("you are not cleared contact") && c2F[0].Text.EndsWith("return to left observation.") && Viol(o2F)
+                  && c3.Count == 1 && c3[0].Text.EndsWith("return to pre-contact.") && c4F.Count == 1 && c4F[0].Text.EndsWith("return to left observation."),
+                  $"Tanker nach voll: Kontakt ohne Ruf geht weiter ({c1F.Count}, {back}, {rows1} Zeile), mit Wartendem Verstoss | {string.Join(" | ", c2F.Concat(c3).Concat(c4F).Select(x => x.Text))}");
+        }
         {   // TP1/TP2/TP5/TP3: queries without state change or menu, second request without restart, join only from astern, "judy" ends the vectors
             var oq = new Ops();
             var meA = me with { Tel = me.Tel! with { X = 2 * NM, Z = 30 * NM } };   // 2 NM ahead of Texaco (flies north)
@@ -1941,8 +2137,8 @@ partial class Ops
             var me15 = me with { Tel = me.Tel! with { Z = 15 * NM } };
             var j = oj.OnTranscript("Tanker", "Texaco, judy", me15, air, f, 0);
             int jv = Enumerable.Range(1, 300).Sum(s => oj.Tick(me15, air, s, false).Count);
-            check(q0.Contains("angels") && q0.EndsWith("knots.") && q1 == q0 && q2 == q0 && r2.Contains("continue, bearing") && a5.Contains("negative, rejoin from astern, Texaco one one 6 o'clock, 2 miles")
-                  && qp2.Contains("bearing") && !qp2.Contains("contact") && string.Join(",", tkq.Select(x => x[..2].Trim())) == "0,1,1,1,1,2M,2,2"
+            check(q0.Contains("angels") && q0.EndsWith("knots.") && q1 == q0 && q2 == q0 && r2.Contains("continue, bearing") && a5.Contains("cleared to join, left observation") && a5.EndsWith("Rejoin from astern, Texaco one one 6 o'clock, 2 miles.") && !a5.Contains("negative")
+                  && qp2.Contains("bearing") && !qp2.Contains("contact") && string.Join(",", tkq.Select(x => x[..2].Trim())) == "0,1,1,1,2M,2,2,2"
                   && j.Count == 1 && j[0].Text.EndsWith("roger, report visual.") && jv == 0 && oj.tank == 1,
                   $"Tanker TP1/TP2/TP5: Abfragen, zweiter Request, Join von vorn, judy -> {string.Join(" / ", tkq)} / {jv}");
             line.Clear();
@@ -2236,6 +2432,50 @@ partial class Ops
         var role17 = RoleOf("range alpha enfield 1 1 checking in");
         Range = keepR;
         check(role17 == null && RoleOf("range alpha enfield 1 1 checking in") == "Range", "A17: Range nur mit Zone -> " + role17);
+        // #56: several ranges, name and frequency from the zone name
+        var pr56 = new[] { ParseRange("Range", 0, 1, 2, 3), ParseRange("Range-2", 1, 0, 0, 0), ParseRange("Range 62 268.5", 2, 0, 0, 0), ParseRange("range zone", 0, 0, 0, 0), ParseRange("Range 1", 0, 0, 0, 0), ParseRange("Range 105", 0, 0, 0, 0), ParseRange("Range_Kutaisi 250", 0, 0, 0, 0), ParseRange("Range Alpha", 0, 0, 0, 0), ParseRange("Range 62", 0, 0, 0, 0) };
+        check(pr56[0] == new Zone("Range Alpha", 1, 2, 3, 0) && pr56[1].Name == "Range Bravo" && pr56[2].Name == "Range 62" && pr56[2].Freq == 268.5 && pr56[3].Name == "Range Alpha" && pr56[4].Name == "Range Alpha"
+              && pr56[5].Name == "Range 105" && pr56[5].Freq == 0 && pr56[6] is { Name: "Range Kutaisi", Freq: 250 } && pr56[7].Name == "Range Alpha" && pr56[8] is { Name: "Range 62", Freq: 0 }, "#56: ParseRange -> " + string.Join(" | ", pr56.Select(z => $"{z.Name}/{z.Freq}")));
+        var keepRs = Ranges;
+        Ranges = new() { new("Range Alpha", 5 * NM, 0, 2500, 0), new("Range 62", -20 * NM, 0, 2500, 268.5) };
+        var m56a = new Me("Viper 2-1", me.Tel! with { X = 5 * NM }, "FA-18C_hornet", 2);
+        var m56b = new Me("Enfield 1-1", me.Tel! with { X = -20 * NM }, "FA-18C_hornet", 2);
+        var o56a = new Ops(); var o56b = new Ops(); var o56c = new Ops(); var o56d = new Ops(); var o56e = new Ops();
+        List<Call> T56(Ops o, Me m, string s) => o.OnTranscript("Range", s, m, air, f, 0);
+        var ca56 = T56(o56a, m56a, "Range Alpha, Viper 2-1, checking in"); T56(o56a, m56a, "in hot");
+        var cb56 = T56(o56b, m56b, "Range 62, Enfield 1-1, checking in");
+        var hb56 = T56(o56b, m56b, "in hot");
+        check(ca56[0].Text.StartsWith("Viper two one, Range Alpha") && ca56[0].Freq == 0 && cb56[0].Text.StartsWith("Enfield one one, Range 62") && cb56[0].Freq == 268.5 && cb56[0].Text.Contains("range is cold") && hb56[0].Text.Contains("cleared hot") && hb56[0].Freq == 268.5,
+              "#56: Check-in mit Zonenname: " + cb56[0].Text + " | " + hb56[0].Text);
+        var cc56 = T56(o56c, m56a with { Callsign = "Colt 3-3" }, "Range Alpha, Colt 3-3, checking in");
+        check(cc56[0].Text.Contains("one aircraft in") && T56(o56c, m56a with { Callsign = "Colt 3-3" }, "in hot")[0].Text.Contains("continue, one aircraft in"), "#56: Hot nur in der eigenen Range -> " + cc56[0].Text);
+        var cd56 = T56(o56d, m56b with { Tel = m56b.Tel! with { X = -19 * NM } }, "Enfield 1-1, checking in");
+        var ce56 = T56(o56e, m56a with { Freq = 268.5 }, "Viper 2-1, checking in");
+        check(cd56[0].Text.StartsWith("Enfield one one, Range 62") && ce56[0].Text.StartsWith("Viper two one, Range 62") && ce56[0].Freq == 268.5, "#56: ohne Namen: naechste Range / Frequenz -> " + cd56[0].Text + " | " + ce56[0].Text);
+        var ci56 = T56(new Ops(), m56a, "Range sixty two, Viper 2-1, checking in");
+        check(ci56[0].Text.StartsWith("Viper two one, Range 62"), "#56: Zonenname gesprochen -> " + ci56[0].Text);
+        // #56: range call sign ("Dogbone Range 268.5" -> "Dogbone"); "Range Alpha" has none (taxiway)
+        Ranges = new() { ParseRange("Dogbone Range 268.5", 0, 5 * NM, 0, 2500), ParseRange("Range 62", 1, -20 * NM, 0, 2500) };
+        var m56d = m56a with { Callsign = "Enfield 1-1" };
+        var cs1 = T56(new Ops(), m56d, "Dogbone, Enfield 1-1, checking in"); var cs2 = T56(new Ops(), m56d, "Dogbone Range, Enfield 1-1, checking in"); var cs3 = T56(new Ops(), m56b, "Range 62, Enfield 1-1, checking in");
+        var role56 = RoleOf("dogbone enfield 1 1 checking in");
+        Ranges = new() { ParseRange("Range Alpha", 0, 0, 0, 0), ParseRange("R-62A Dogbone Range", 1, 0, 0, 0) };
+        var cw56 = Ranges.Select(z => string.Join("/", CallWords(z))).ToArray(); var rt56 = RoleOf("kutaisi ground enfield 1 1 request taxi via alpha");
+        Ranges = new() { ParseRange("Range Alpha", 0, 0, 0, 0) };
+        var rt56b = RoleOf("kutaisi ground enfield 1 1 request taxi via alpha");
+        Ranges = new() { ParseRange("North Range", 0, 0, 0, 0) };
+        var rn56 = RoleOf("approach enfield 1 1 request vectors north"); var rn56b = RoleOf("north enfield 1 1 checking in");
+        check(role56 == "Range" && cs1[0].Text.StartsWith("Enfield one one, Dogbone Range, ") && cs1[0].Freq == 268.5 && cs2[0].Text.StartsWith("Enfield one one, Dogbone Range, ") && cs3[0].Text.StartsWith("Enfield one one, Range 62, ")
+              && cw56[0] == "" && cw56[1] == "dogbone" && rt56 != "Range" && rt56b != "Range" && rn56 != "Range" && rn56b == "Range",$"#56: Rufzeichen der Range -> {role56} | {cs1[0].Text} | {cs2[0].Text} | {cs3[0].Text} | {string.Join(",", cw56)} | {rt56}");
+        Ranges = new() { new("Range Alpha", 5 * NM, 0, 2500, 0), new("Range 62", -20 * NM, 0, 2500, 268.5) };
+        var oth56 = o56b.OnImpact(m56b, 12, 6, 40, "", -1, 0);
+        var own56 = o56b.OnImpact(m56b, 12, 6, 41, "", -1, 1); var sc56 = o56b.Flush(m56b, 45);
+        o56b.OnGunHit(0); o56b.OnGunHit(1);
+        T56(o56b, m56b, "off safe");
+        check(oth56.Count == 0 && own56.Count == 0 && sc56 is [{ Station: "Range 62", Text: "Enfield one one, 40 feet at 6 o'clock." }] && o56b.Debrief is [var d56] && d56.Contains("Range 62") && d56.Contains("40 feet") && d56.Contains("1 gun hit") && !d56.Contains("2 gun"),
+              "#56: Einschlag je Zone -> " + string.Join(" | ", o56b.Debrief));
+        foreach (var ox in new[] { o56a, o56b, o56c, o56d, o56e }) ox.Leave();
+        Ranges = keepRs;
         // R388: "declare" without position or to an airfield station is the emergency, not the AWACS; the own call sign is no station name
         var r388 = new[] { RoleOf(Normalize("Kutaisi Tower, Enfield 1-1, declare emergency")), RoleOf(Normalize("Kutaisi Tower, Enfield 1-1, declare an emergency, squawk 7700")),
                            RoleOf(Normalize("Spike 1-1, Kutaisi Tower, declare an emergency"), "Spike 1-1"), RoleOf(Normalize("Spike 1-1, Kutaisi Tower, request taxi"), "Spike 1-1"),
@@ -2362,7 +2602,8 @@ partial class Ops
         var h2 = K(k2, nr2, "Texaco, Enfield 1-2, pre contact");
         var c1 = K(k1, nr1, "Texaco, Enfield 1-1, pre contact");
         k1.OnRefuel(me, true, 0.4, air, 10, 4899);
-        var d1 = k1.OnRefuel(me, false, 0.97, air, 70, 4899);
+        k1.OnRefuel(me, false, 0.97, air, 70, 4899);
+        var d1 = k1.Tick(me, air, 75).Where(x => x.Text.Contains("disconnect") || x.Text.Contains("cleared pre-contact")).ToList();   // "full" 5 s after the stop
         var c2 = K(k2, nr2, "Texaco, Enfield 1-2, pre contact");
         check(r1.Contains("bearing zero eight four, 30 miles, anchor Alpha, block 21 to 23") && r1.Contains("Expect the join in 4 minutes, 1000 feet below, report visual"), "Tanker V11: Rendezvous -> " + r1);
         check(vFar.Contains("continue, 30 miles, report visual.") && v1.Contains("cleared to join, left observation, number 1.") && !v1.Contains("first, then") && h2.Contains("number 2") && c1.Contains("cleared contact"), $"Tanker V11/R56: Reihenfolge -> {vFar} | {v1} | {h2}");
@@ -2382,27 +2623,37 @@ partial class Ops
         var wait2 = K(a2, nr2, "Texaco, Enfield 1-2, pre contact");
         check(slip.Count == 1 && slip[0].Text == "Enfield one one, Texaco one one, disconnect, return to pre-contact." && a1.tank == 3 && wait2.Contains("number 2"), $"Tanker A66: Abrutschen bleibt in der Reihe -> {slip.FirstOrDefault()?.Text} | {wait2}");
         var again = Rf(a1, me, true, 0.6, 50);
-        var full = Rf(a1, me, false, 0.99, 100);
+        Rf(a1, me, false, 0.99, 100);
+        var full = a1.Tick(me, air, 105).Where(x => x.Text.Contains("disconnect") || x.Text.Contains("cleared pre-contact")).ToList();
         check(again.Count == 0 && full.Count == 2 && full[0].Text == "Enfield one one, Texaco one one, disconnect, you received 3.9, move to the right wing." && full[1].To == a2
               && a1.Debrief.Count == 1 && a1.Debrief[0].Contains("70 s") && a1.Debrief[0].Contains("40 -> 99 %") && a1.offload == 3900, $"Tanker A66/A124: Fortsetzung, voll -> {string.Join(" | ", full.Select(x => x.Text))} | {string.Join("", a1.Debrief)}");
         line.Clear();   // a2 still waiting
         var a3 = new Ops { tank = 3 };   // #19: cleared contact
         a3.OnRefuel(me, true, 0.4, air, 10);
-        var a3t = a3.OnRefuel(me, false, 0.98, air, 40)[0].Text;
+        a3.OnRefuel(me, false, 0.98, air, 40);
+        var a3t = a3.Tick(me, air, 45).First(x => x.Text.Contains("disconnect")).Text;
         check(a3t == "Enfield one one, Texaco one one, disconnect, move to the right wing. Report complete, or pre-contact for more.", "Tanker A124: ohne Innentank (alte Mission) keine Menge -> " + a3t);
         var a3s = string.Join(" | ", a3.DebriefSummary());
         check(a3s.Contains(": 1 ") && !a3s.Contains("lb"), "N39: Tanker-Zusammenfassung ohne bekannte Menge ohne lb -> " + a3s);
         var a4 = new Ops { tank = 3 };
         Rf(a4, me, true, 0.4, 10); Rf(a4, me, false, 0.6, 30);
-        check(Rf(a4, me, true, 0.6, 200).FirstOrDefault()?.Text == "Contact." && Rf(a4, me, false, 0.99, 230).Count == 1 && a4.Debrief.Count == 2, "Tanker A66: Kontakt nach über 2 min ist ein neuer Vorgang");
+        check(Rf(a4, me, true, 0.6, 200).FirstOrDefault()?.Text == "Contact." && Rf(a4, me, false, 0.99, 230).Count == 0 && a4.Tick(me, air, 235).Count(x => x.Text.Contains("disconnect")) == 1 && a4.Debrief.Count == 2, "Tanker A66: Kontakt nach über 2 min ist ein neuer Vorgang");
         // #19: contact without "cleared contact" (joined but no pre-contact) -> rejected + violation, at most every 30 s, no transaction; R240: AWACS names the tanker with full call sign
         line.Clear();
         var c19 = new Ops();
         K(c19, nr1, "Texaco, Enfield 1-1, request rejoin"); K(c19, nr1, "Texaco, Enfield 1-1, visual");
         var (n19, n19b, n19c) = (Rf(c19, me, true, 0.4, 10), Rf(c19, me, false, 0.5, 15), Rf(c19, me, true, 0.5, 20));
         var (ok19, ct19) = (K(c19, nr1, "Texaco, Enfield 1-1, pre contact"), Rf(c19, me, true, 0.5, 50));
+        {   // i49 log: altitude report to the AWACS -> copy (not "say again"); after the tanker vector "pushing/switching/frequency change" -> frequency change approved once, no second vector
+            string Aq(Ops o, string s) => string.Join(" | ", o.OnTranscript("AWACS", s, me, air, f, 0).Select(x => x.Text));
+            var oi49 = new Ops(); Aq(oi49, "Overlord, Enfield 1-1, check in");
+            var ar = new[] { "Overlord, Enfield 1-1, leaving angels 15, climbing angels 25", "Overlord leaving Nellis corridor, climbing angels 25", "Overlord, Enfield 1-1, leaving flight level 250", "Overlord, Enfield 1-1, level angels 25" }.Select(s => Aq(oi49, s)).ToList();
+            var fq = new[] { "Overlord, Enfield 1-1, pushing Texaco", "Overlord, Enfield 1-1, frequency change to Texaco", "Overlord, Enfield 1-1, switching" }.Select(s => { var oc = new Ops(); Aq(oc, "Overlord, Enfield 1-1, check in"); Aq(oc, "Overlord, Enfield 1-1, vector to tanker"); return Aq(oc, s); }).ToList();
+            check(ar.All(x => x.EndsWith("copy.")) && fq.All(x => x.Contains("copy checking out") && !x.Contains("contact")),
+                  $"AWACS i49: Hoehenmeldung -> copy, Frequenzwechsel nach Tankervektor -> freigegeben -> {string.Join(" | ", ar)} // {string.Join(" | ", fq)}");
+        }
         var aw240 = new Ops().OnTranscript("AWACS", "Overlord, Enfield 1-1, vector to tanker", me, air, f, 0)[0].Text;
-        check(n19 is [{ Text: "Enfield one one, Texaco one one, you are not cleared contact, disconnect, return to left observation." }] && n19b.Count == 0 && n19c.Count == 0
+        check(n19 is [{ Text: "Enfield one one, Texaco one one, you are not cleared contact, disconnect, return to pre-contact." }] && n19b.Count == 0 && n19c.Count == 0
               && c19.Debrief.Count(d => d.StartsWith("Verstoß: Kontakt an Texaco one one")) == 1 && c19.Debrief.Count == 1 && ok19.Contains("cleared contact") && ct19 is [{ Text: "Contact." }]
               && aw240.Contains("nearest tanker Texaco one one, anchor Alpha") && aw240.EndsWith("contact Texaco one one, two five five decimal five."), $"#19/R240: Kontakt ohne Freigabe -> {n19.FirstOrDefault()?.Text} | {ok19} | {aw240}");
         TankerFreq[Tankers(air, me)[0].A.Group] = 225.0;   // TP7: mission frequency of the tanker in the AWACS handoff and the radio wheel
@@ -2439,6 +2690,9 @@ partial class Ops
             var (v45, v20) = (K(rv, m45, "Texaco, Enfield 1-1, visual"), K(rw, m20, "Texaco, Enfield 1-1, visual"));
             check(v45.Contains("cleared to join, left observation, number 1.") && v20 == "Enfield one one, Texaco one one, continue, 26 miles, report visual." && rw.tank == 1,
                   $"Tanker R117: visual aus 4,5 NM Join, aus 26 NM nicht -> {v45} | {v20}");
+            var rn = new Ops(); K(rn, m45, "Texaco, Enfield 1-1, request rejoin");
+            var nv = K(rn, m45, "Texaco, Enfield 1-1, negative visual");
+            check(nv.EndsWith("report visual.") && !nv.Contains("cleared to join") && rn.tank == 1, "Tanker: negative visual ist kein visual -> " + nv);
             line.Clear();
             var r16 = new Ops(); var m16 = me with { Tel = me.Tel! with { Z = 14 * NM } };   // LA16 (log): "visual" at 16 NM
             K(r16, m16, "Texaco, Enfield 1-1, request rejoin");
@@ -2450,6 +2704,8 @@ partial class Ops
             line.Clear();
             var kph = new Ops();   // K1 (#5): "moving to …" reads back (silent), "stabilized left observation" is the observation report, not pre-contact
             K(kph, nr1, "Texaco, Enfield 1-1, request rejoin"); K(kph, nr1, "Texaco, Enfield 1-1, visual");
+            var rbJ = K(kph, nr1, "Enfield 1-1, cleared to join, left observation");
+            check(rbJ == "", "Tanker: Readback 'cleared to join, left observation' still -> " + rbJ);
             var (mvO, stO, mvP, rdP) = (K(kph, nr1, "Enfield 1-1, moving into left observation"), K(kph, nr1, "Texaco, Enfield 1-1, stabilized left observation"),
                                         K(kph, nr1, "Texaco, Enfield 1-1, moving to pre-contact"), K(kph, nr1, "Texaco, Enfield 1-1, stabilized pre-contact"));
             check(mvO == "" && stO.Contains("cleared pre-contact") && mvP == "" && rdP.Contains("cleared contact"), $"K1 Tanker-Phrasen -> {mvO} | {stO} | {mvP} | {rdP}");

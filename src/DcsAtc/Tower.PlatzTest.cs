@@ -148,17 +148,272 @@ public partial class Tower
             w.Tick(At(c.X + 10 * NM, c.Z), none, 0);
             (w.Phase, w.Runway, w.entry, w.nav, w.navName) = (Phase.Inbound, "25", "north", c, "C R P north");
             var msgs = new List<Msg>();
-            double x = c.X + 8 * NM, s = 1;
+            double x = c.X + 4 * NM, s = 1;
             for (; s < 400 && w.Phase == Phase.Inbound; s += 5, x -= 77) msgs.AddRange(w.Tick(At(x, c.Z), none, s));
             double dH = (x - c.X) / NM;
             var ho = msgs.FirstOrDefault(m => m.Role == "Approach");
             var r1 = w.OnTranscript("Kutaisi Tower, Enfield 11, inbound", At(x, c.Z), none, s);
             for (s += 5, x -= 77; x > c.X + 0.2 * NM; s += 5, x -= 77) msgs.AddRange(w.Tick(At(x, c.Z), none, s));   // on to the point
             var r2 = w.OnTranscript("Kutaisi Tower, Enfield 11, C R P north", At(x, c.Z), none, s);
-            Chk(ho != null && ho.Text.StartsWith("Enfield one one, contact Kutaisi Tower ") && ho.Text.EndsWith("report C R P north.") && dH is > 3 and < 6.5 &&
+            Chk(ho != null && ho.Text.StartsWith("Enfield one one, contact Kutaisi Tower ") && ho.Text.EndsWith("report C R P north.") && dH is > 1.5 and < 3.5 &&
                 r1.Count == 1 && r1[0].Role == "Tower" && r1[0].Text.EndsWith("report C R P north.") && r2.Count == 1 && r2[0].Role == "Tower" && r2[0].Text.StartsWith("Enfield one one, proceed overhead") && !r2[0].Text.Contains("contact"),
                 $"Übergabe vor dem CRP ({dH:0.0} NM, {w.Phase}): " + ho?.Text + " / " + J(r1) + " / " + J(r2));
             n += 3;
+        }
+
+        // #49 (Log Nellis): the handover comes about one minute before the point (K22 was 2 minutes); "pushing Tower" acknowledges it, no "contact Tower now" afterwards,
+        // also not while the point is still ahead; without any acknowledgement the reminder only comes at the point
+        {
+            var k = Airfield.Kutaisi();
+            var c = k.Crp["north"];
+            Telemetry At(double x) => new(k.Elev + k.PatternFt * Ft, k.PatternFt * Ft, 150 * Kt, 180 * Math.PI / 180, x, c.Z, 0, 0, 760);
+            Tower Handed(out double x, out double s)
+            {
+                var w = new Tower(k, "Enfield 1-1");
+                w.Tick(At(c.X + 10 * NM), none, 0);
+                (w.Phase, w.Runway, w.entry, w.nav, w.navName) = (Phase.Inbound, "25", "north", c, "C R P north");
+                (x, s) = (c.X + 4 * NM, 1);
+                for (; s < 400 && w.Phase == Phase.Inbound; s += 5, x -= 77) w.Tick(At(x), none, s);
+                return w;
+            }
+            bool Nag(IEnumerable<Msg> m) => m.Any(g => g.Text.Contains("contact Kutaisi Tower now"));
+            var wa = Handed(out var xa, out var sa);
+            var ack = wa.OnTranscript("Enfield 11, pushing Tower", At(xa), none, sa + 2);
+            var nagAck = Nag(wa.Tick(At(xa), none, sa + 70));
+            var wb = Handed(out var xb, out var sb);
+            var nagFar = Nag(wb.Tick(At(xb), none, sb + 70));
+            var nagAt = Nag(wb.Tick(At(c.X + 0.5 * NM), none, sb + 75));
+            Chk(ack.Count == 0 && !nagAck && !nagFar && nagAt, $"#49 Übergabe: pushing Tower still, keine Erinnerung vor dem Punkt ({nagAck}/{nagFar}), am Punkt ohne Meldung ({nagAt}): " + J(ack));
+            n += 3;
+        }
+
+        // Forum (Lt_Jaeger, Nellis MINTT): charts.jsonc route on request ("Mint" = MINTT), fixes with altitudes, points in capitals said by name, silently on from fix to fix,
+        // handover before the last point as at a C R P, the point reported to the Tower; a fix report goes on to the next point
+        {
+            var k = Airfield.Kutaisi();
+            var c = k.Crp["north"];
+            (double X, double Z) P(double nm) => (c.X + nm * NM, c.Z);
+            k.Crp["CRAIG"] = c;
+            k.Entry["25"].Insert(0, ("CRAIG", "overhead", null));
+            k.Routes["MINTT#1"] = new("MINTT", new[] { "07" }, "CRAIG", new[] { ("YANKEE", P(20).X, P(20).Z, 0.0, "", 0.0) });   // variant for the other runway listed first: 25 in use takes the 25 one
+            k.Routes["MINTT"] = new("MINTT", new[] { "25" }, "CRAIG", new[] { ("MINTT", P(25).X, P(25).Z, 15000.0, "at or above", 0.0), ("GASS_PEAK", P(12).X, P(12).Z, 9000.0, "at or above", 0.0) });
+            var e25 = k.Ends.First(e => e.Name == "25");
+            Telemetry At(double x) => new(k.Elev + 1000, 1000, 150 * Kt, Math.PI, x, c.Z, 0, 0, 760);
+            Tower Fly(double x) { var w = new Tower(k, "Enfield 1-1") { FieldWind = (-e25.Dx * 5, -e25.Dz * 5) }; w.Tick(At(x), none, 0); w.Runway = "25"; return w; }
+            double x = c.X + 30 * NM, s = 2;
+            var w = Fly(x);
+            var r1 = w.OnTranscript("Kutaisi Approach, Enfield 11, inbound via mint", At(x), none, s);
+            bool clr = r1.Count == 1 && r1[0].Role == "Approach" && r1[0].Text.Contains("cleared Mintt recovery runway two five, proceed direct Mintt") &&
+                       r1[0].Text.Contains("cross Mintt at or above 15000 feet, Gass Peak at or above 9000 feet, report Craig.") && w.navName == "Mintt";
+            var (seen, msgs) = (new List<string> { w.navName }, new List<Msg>());
+            for (; w.Phase == Phase.Inbound && x > c.X; x -= 385) { msgs.AddRange(w.Tick(At(x), none, s += 5)); if (seen[^1] != w.navName) seen.Add(w.navName); }
+            var ho = msgs.FirstOrDefault(m => m.Role == "Approach");
+            for (; x > c.X + 0.3 * NM; x -= 385) msgs.AddRange(w.Tick(At(x), none, s += 5));
+            var r2 = w.OnTranscript("Kutaisi Tower, Enfield 11, Craig", At(x), none, s += 2);
+            var wf = Fly(c.X + 14 * NM);
+            wf.OnTranscript("Kutaisi Approach, Enfield 11, request mintt recovery", At(c.X + 14 * NM), none, 2);
+            var r3 = wf.OnTranscript("Kutaisi Approach, Enfield 11, gass peak", At(c.X + 12 * NM), none, 20);
+            Chk(clr && string.Join(",", seen) == "Mintt,Gass Peak,Craig" && ho != null && ho.Text.Contains("contact Kutaisi Tower") && ho.Text.EndsWith("report Craig.") &&
+                r2.Count == 1 && r2[0].Role == "Tower" && r2[0].Text.StartsWith("Enfield one one, proceed overhead") &&
+                r3.Count == 1 && r3[0].Text == "Enfield one one, roger, report Craig." && wf.navName == "Craig" && Airfield.Say("north") == "C R P north",
+                $"Route MINTT ({string.Join(",", seen)}, {w.Phase}): " + J(r1) + " / " + ho?.Text + " / " + J(r2) + " / " + J(r3) + $" ({wf.navName})");
+            {   // #36: next fix with a 90 degree turn at 450 kt: the heading to it is spoken before the current fix, not miles behind it
+                k.Routes["MINTT"] = new("MINTT", new[] { "25" }, "CRAIG", new[] { ("MINTT", P(25).X, P(25).Z, 15000.0, "at or above", 0.0), ("GASS_PEAK", P(10).X, c.Z + 15 * NM, 9000.0, "at or above", 0.0) });   // 45 degree turn at MINTT
+                var wt = Fly(c.X + 40 * NM);
+                wt.OnTranscript("Kutaisi Approach, Enfield 11, inbound via mint", At(c.X + 40 * NM), none, 2);
+                double tx = c.X + 40 * NM, ts = 2, said = double.NaN;
+                for (; tx > c.X + 20 * NM && double.IsNaN(said); tx -= 450 * Kt * 5)
+                    if (wt.Tick(new(k.Elev + 1000, 1000, 450 * Kt, Math.PI, tx, c.Z, 0, 0, 760), none, ts += 5).Any(m => m.Text.Contains("Gass Peak"))) said = tx - P(25).X;
+                Chk(said > 0, $"Route #36: Kurs zum naechsten Fix vor dem Fix bei 450 kt ({said / NM:0.0} NM davor)");
+            }
+            // #28 (log): Whisper writes "strike" for the route STRYK; "striker" and other words stay different
+            bool Snd(string said, string name) => System.Text.RegularExpressions.Regex.IsMatch(Sq(said), $@"\b{Sq(Rx(name))}\b");
+            Chk(Snd("inbound request arco", "ARCOE") && Snd("request strike recovery", "STRYK") &&Snd("request stryk 21 recovery", "STRYK") && Snd("inbound via mint", "MINTT") && Snd("gass peak", "GASS_PEAK") && Snd("sin city", "SIN_CITY")
+                && !Snd("request striker recovery", "STRYK") && !Snd("request straight in", "STRYK") && !Snd("request minute", "MINTT"), "Route nach Klang: strike = STRYK");
+            {   // #23 (LtJaeger): "say": other spoken names of a route ("ECHO" for ARCOE)
+                var ka = w.F.Routes.Values.First();
+                w.F.Routes["ARCOE"] = ka with { Name = "ARCOE", Say = new[] { "ECHO" } };
+                var (ae, an, unk) = (w.RouteOf("request echo recovery")?.Name, w.RouteOf("request arcoe recovery")?.Name, w.UnknownProc("request echo recovery"));
+                w.F.Routes.Remove("ARCOE");
+                Chk(ae == "ARCOE" && an == "ARCOE" && unk == null, $"Route-Zweitname (say): {ae} / {an} / {unk}");
+            }
+            n++;
+            n += 5;
+        }
+
+        // Forum: charts.jsonc departure on request ("ready for departure, Tiki departure"): takeoff clearance with the fixes and altitudes, silently from fix to fix,
+        // after the last fix own navigation; a departure for another runway is refused
+        {
+            var k = Airfield.Kutaisi();
+            var e = k.End("25");
+            var (pa, pb) = (e.At(-e.Len - 6 * NM, 0), e.At(-e.Len - 10 * NM, 4 * NM));
+            k.Departures["TIKI#1"] = new("TIKI", new[] { "07" }, "", new[] { ("YANKEE", pb.X, pb.Z, 0.0, "", 0.0) });   // variant for the other runway listed first: 25 in use takes the 25 one
+            k.Departures["TIKI"] = new("TIKI", new[] { "25" }, "", new[] { ("ALPHA", pa.X, pa.Z, 3000.0, "at or below", 0.0), ("BRAVO", pb.X, pb.Z, 6000.0, "at or above", 0.0) });
+            k.Departures["ZULU"] = new("ZULU", new[] { "07" }, "", new[] { ("ALPHA", pa.X, pa.Z, 0.0, "", 0.0) });
+            var hp = e.At(150, 100);
+            Telemetry G0() => new(k.Elev, 0, 0, e.Hdg * Math.PI / 180, hp.X, hp.Z, 0, 0, 760);
+            Telemetry Air((double X, double Z) p, double hdg) => new(k.Elev + 500, 500, 150 * Kt, hdg * Math.PI / 180, p.X, p.Z, 0, 0, 760);
+            Tower Hold() { var w = new Tower(k, "Enfield 1-1") { FieldWind = (-e.Dx * 5, -e.Dz * 5) }; w.Tick(G0(), none, 0); (w.Phase, w.Runway, w.home) = (Phase.TaxiOut, "25", k.Ramps[0]); return w; }
+            var rz = Hold().OnTranscript("Kutaisi Tower, Enfield 11, ready for departure, zulu departure", G0(), none, 10);
+            var w = Hold(); w.Squawk = "4321";
+            var r1 = w.OnTranscript("Kutaisi Tower, Enfield 11, ready for departure, tiki departure", G0(), none, 10);
+            bool clr = r1.Any(m => m.Text.Contains("after departure Tiki departure, proceed direct Alpha, cross Alpha at or below 3000 feet, Bravo at or above 6000 feet, then own navigation")) && w.navName == "Alpha";
+            var seen = new List<string> { w.navName };
+            double s = 12;
+            var (start, msgs, ci) = (e.At(-e.Len, 0), new List<Msg>(), new List<Msg>());
+            foreach (var (from, to) in new[] { (start, pa), (pa, pb) })
+            {
+                double len = Dist(from.X, from.Z, to.X, to.Z), hd = Bearing(from.X, from.Z, to.X, to.Z);
+                for (double q = 0; q <= len && w.nav != null; q += 385)
+                {
+                    var at = Air((from.X + (to.X - from.X) * q / len, from.Z + (to.Z - from.Z) * q / len), hd);
+                    msgs.AddRange(w.Tick(at, none, s += 5));
+                    if (ci.Count == 0 && msgs.Any(m => m.Text.Contains("contact Kutaisi Approach"))) ci = w.OnTranscript("Kutaisi Approach, Enfield 11, airborne", at, none, s += 2);
+                    if (w.nav != null && seen[^1] != w.navName) seen.Add(w.navName);
+                }
+            }
+            Chk(rz.Count == 1 && rz[0].Text.Contains("negative, Zulu departure is for runway zero seven") && clr && ci.Any(m => m.Text.Contains("Continue Tiki departure")) &&
+                string.Join(",", seen) == "Alpha,Bravo" && w.nav == null && w.depRoute == null,
+                $"Abflug TIKI ({string.Join(",", seen)}, {w.Phase}, nav {w.nav != null}, dep {w.depRoute != null}, at {w.depAt}): " + J(rz) + " / " + J(r1) + " / " + J(ci) + " // " + J(msgs));
+            {   // #49/#36 (log Nellis: heading to the next departure fix came 30 s after the fix at 400 kt): since #57 a chart departure gets no such call (only 4 NM off the route), the arrival route keeps it
+                var wd = Hold();
+                wd.OnTranscript("Kutaisi Tower, Enfield 11, ready for departure, tiki departure", G0(), none, 10);
+                double dsay = double.NaN, ds = 20; var dall = new List<Msg>();
+                var dfrom = e.At(-e.Len, 0);
+                double dlen = Dist(dfrom.X, dfrom.Z, pa.X, pa.Z), dhd = Bearing(dfrom.X, dfrom.Z, pa.X, pa.Z);
+                var a0 = Air(dfrom, dhd);   // takeoff, handover to Departure, check-in; then 450 kt along the route
+                wd.Tick(a0, none, 15);
+                wd.OnTranscript("Kutaisi Approach, Enfield 11, airborne", a0, none, 17);
+                for (double q = 1000; q <= dlen + 3000 && double.IsNaN(dsay); q += 450 * Kt * 5)
+                {
+                    var at = new Telemetry(k.Elev + 3000, 3000, 450 * Kt, dhd * Math.PI / 180, dfrom.X + (pa.X - dfrom.X) * q / dlen, dfrom.Z + (pa.Z - dfrom.Z) * q / dlen, 0, 0, 760);
+                    var dm = wd.Tick(at, none, ds += 5).ToList();
+                    dall.AddRange(dm);
+                    if (dm.Any(m => m.Text.Contains("Bravo"))) dsay = dlen - q;
+                }
+                Chk(double.IsNaN(dsay), $"Departure #57 (vorher #49: Kurs zum naechsten Fix nach jedem Fix): auf der Route bei 450 kt keine Kursansage ({dsay / NM:0.0} NM davor, {wd.navName}, {wd.Phase}): " + J(dall));
+            }
+            // #23 (log 12.11.): a departure asked for by name that the chart does not have is said so; known names, CRPs and ordinary wordings are not
+            var ru = Hold().OnTranscript("Kutaisi Tower, Enfield 11, ready for departure, departure via Dream", G0(), none, 10);
+            var hu = Hold();
+            Chk(ru.Count == 1 && ru[0].Text.Contains("cleared for takeoff") && ru[0].Text.EndsWith(" Unable Dream departure, not on file.")
+                && hu.UnknownProc("request dream recovery") == "Dream recovery" && hu.UnknownProc("request taxi and departure via dream") == "Dream departure"
+                && new[] { "ready for departure tiki departure", "request tiki departure", "request taxi for departure", "request immediate departure", "ready for departure",
+                           "departure via " + k.Exit["25"][0].ToLowerInvariant(), "request ifr departure", "inbound via the initial" }.All(x => hu.UnknownProc(x) == null)
+                && new Tower("Enfield 1-1").UnknownProc("departure via dream") == null,
+                "#23 unbekannte Departure angesagt: " + J(ru));
+            // #40 (log Nellis 14:40/14:43: "request clearance, dream" / "request clearance to fitter" got the plain runway-heading clearance): the departure named in the clearance request is cleared and kept for takeoff
+            k.Departures["FYTTR"] = new("FYTTR", new[] { "25" }, "", new[] { ("ALPHA", pa.X, pa.Z, 0.0, "", 0.0) });
+            var (wc, wf) = (Hold(), Hold());
+            var (rc, rf) = (wc.OnTranscript("Kutaisi Ground, Enfield 11, request clearance, tiki departure", G0(), none, 10), wf.OnTranscript("Kutaisi Ground, Enfield 11 with kilo, request clearance to fitter.", G0(), none, 10));
+            Chk(rc.Any(m => m.Text.Contains("cleared to Bravo via the Tiki departure, climb and maintain") && !m.Text.Contains("radar vectors") && !m.Text.Contains("airport")) && wc.depRoute?.Name == "TIKI"
+                && rf.Any(m => m.Text.Contains("cleared to Alpha via the Fyttr departure, climb and maintain")) && wf.depRoute?.Name == "FYTTR"
+                && Hold().OnTranscript("Kutaisi Ground, Enfield 11, request clearance, zulu departure", G0(), none, 10).Any(m => m.Text.Contains("Zulu departure is for runway zero seven")),
+                "#40 Clearance mit Departure: " + J(rc) + " / " + J(rf));
+            // #54 (log Nellis: "ready for departure, Dream departure" -> "negative, no departure via Dream"): DREAM is a CRP and a departure; the departure name is no exit direction.
+            // A real non-exit CRP without such a departure is still refused (K20)
+            k.Crp["FYTTR"] = k.Crp["north"]; k.Crp["XRAY"] = k.Crp["north"];
+            var r54 = Hold().OnTranscript("Kutaisi Tower, Enfield 11, ready for departure, fyttr departure", G0(), none, 10);
+            var t54 = Hold().OnTranscript("Kutaisi Ground, Enfield 11, request taxi, fyttr departure", G0(), none, 10);
+            var x54 = Hold().OnTranscript("Kutaisi Tower, Enfield 11, ready for departure via xray", G0(), none, 10);
+            k.Crp.Remove("FYTTR"); k.Crp.Remove("XRAY");
+            Chk(!r54.Any(m => m.Text.Contains("no departure via")) && r54.Any(m => m.Text.Contains("cleared for takeoff")) && !t54.Any(m => m.Text.Contains("no departure via"))
+                && x54.Any(m => m.Text.Contains("negative, no departure via")),
+                "#54 Departure-Name gleich CRP: " + J(r54) + " / " + J(t54) + " / " + J(x54));
+            // #31 (log Nellis, "request clearance to Dream" -> "cleared to North Las Vegas airport"): departure without a named airfield: the limit is its last fix, no airfield, no radar vectors;
+            // with a named airfield the wording stays
+            var allSv = Tower.All;
+            Tower.All = new[] { k, Airfield.FromDcs("Batumi", 90000, 90000, 10, new[] { ("13", -131 * Math.PI / 180, 100.0, 50.0, 2400.0) }) };
+            var rn = Hold().OnTranscript("Kutaisi Ground, Enfield 11, request clearance to Batumi, tiki departure", G0(), none, 10);
+            Tower.All = allSv;
+            Chk(rn.Any(m => m.Text.Contains("cleared to Batumi airport via radar vectors, after departure fly the Tiki departure")),
+                "#31: Clearance mit Flugplatz und Departure: " + J(rn));
+            // #61: a range as clearance limit (full name, without departure, call-sign form), no "airport"
+            var rgSv = Ops.Ranges;
+            Ops.Ranges = new() { new("Three Lakes Range", k.X + 20 * 1852, k.Z, 2500, 0), new("R-62A Dogbone Range", -20000, 20000, 2500, 0) };   // Three Lakes 20 NM from the field: no far cruise level
+            var rr1 = Hold().OnTranscript("Kutaisi Ground, Enfield 11, request clearance to Three Lakes Range, tiki departure", G0(), none, 10);
+            var rr2 = Hold().OnTranscript("Kutaisi Ground, Enfield 11, request IFR clearance to Three Lakes Range", G0(), none, 10);
+            var rr3 = Hold().OnTranscript("Kutaisi Ground, Enfield 11, request clearance to Dogbone Range", G0(), none, 10);
+            Ops.Ranges = rgSv;
+            Chk(rr1.Any(m => m.Text.Contains("cleared to Three Lakes Range via the Tiki departure") && !m.Text.Contains("airport"))
+                && rr2.Any(m => m.Text.Contains("cleared to Three Lakes Range via radar vectors") && !m.Text.Contains("airport") && !m.Text.Contains("expect 14000 feet") && !m.Text.Contains("expect 15000 feet"))
+                && rr3.Any(m => m.Text.Contains("cleared to R-62A Dogbone Range via radar vectors")),
+                "#61: Clearance zu einer Range: " + J(rr1) + " / " + J(rr2) + " / " + J(rr3));
+            // #31 (log Nellis): takeoff clearance after the IFR clearance names the departure only (no second list of fixes); VFR keeps the long form
+            var rt = wc.OnTranscript("Kutaisi Tower, Enfield 11, ready for departure", G0(), none, 20);
+            Chk(rt.Any(m => m.Text.Contains("after departure fly the Tiki departure, runway") && m.Text.Contains("cleared for takeoff") && !m.Text.Contains("cross")) && wc.navName == "Alpha"
+                && r1.Any(m => m.Text.Contains("proceed direct Alpha, cross Alpha at or below 3000 feet")),
+                "#31 Takeoff-Freigabe nach Clearance kurz: " + J(rt));
+            // #31: departure with a higher "at or above" fix: cleared altitude raised to the next 1000 ft, no "expect" below it, Departure says the same
+            k.Departures["HIGH"] = new("HIGH", new[] { "25" }, "", new[] { ("ALPHA", pa.X, pa.Z, 4000.0, "at or above", 0.0), ("BRAVO", pb.X, pb.Z, 19200.0, "at or above", 0.0), ("CHARLIE", pb.X, pb.Z, 25000.0, "at or below", 0.0) });
+            var wh = Hold();
+            var rh = wh.OnTranscript("Kutaisi Ground, Enfield 11, request clearance, high departure", G0(), none, 10);
+            Chk(rh.Any(m => m.Text.Contains("via the High departure, climb and maintain flight level two zero zero, ") && !m.Text.Contains("expect")) && wh.depFt == 20000 && wh.cruiseFt >= 20000
+                && rc.Any(m => m.Text.Contains("expect")),
+                $"#31 Hoehe nach Departure: {wh.depFt}/{wh.cruiseFt} " + J(rh));
+            // #57 (LtJaeger, FYTTR departure with an arc): a point named "_..." is flown but never spoken; ATC corrects a chart departure only when the aircraft is more than 4 NM off the route
+            {
+                var (start57, sp, bp) = (e.At(-e.Len, 0), e.At(-e.Len - 9 * NM, 0), e.At(-e.Len - 12 * NM, 5.2 * NM));   // ALPHA, silent arc point, BRAVO: 60 degree turn at the silent point
+                k.Departures["ZEBRA"] = new("ZEBRA", new[] { "25" }, "", new[] { ("ALPHA", pa.X, pa.Z, 0.0, "", 0.0), ("_ARC_SOUTH", sp.X, sp.Z, 8000.0, "at", 0.0), ("BRAVO", bp.X, bp.Z, 12000.0, "at or above", 0.0) });
+                k.Departures["MUTE"] = new("MUTE", new[] { "25" }, "", new[] { ("_ONE", pa.X, pa.Z, 0.0, "", 0.0), ("_TWO", sp.X, sp.Z, 8000.0, "at", 0.0) });
+                var rg = Hold().OnTranscript("Kutaisi Ground, Enfield 11, request clearance, zebra departure", G0(), none, 10);
+                var rv = Hold().OnTranscript("Kutaisi Tower, Enfield 11, ready for departure, zebra departure", G0(), none, 10);
+                var rm = Hold().OnTranscript("Kutaisi Ground, Enfield 11, request clearance, mute departure", G0(), none, 10);
+                var rmt = Hold().OnTranscript("Kutaisi Tower, Enfield 11, ready for departure, mute departure", G0(), none, 10);
+                Chk(rg.Any(m => m.Text.Contains("cleared to Bravo via the Zebra departure")) && !rg.Any(m => m.Text.Contains("Arc") || m.Text.Contains("ARC"))
+                    && rv.Any(m => m.Text.Contains("proceed direct Alpha, cross Bravo at or above 12000 feet, then own navigation")) && !rv.Any(m => m.Text.Contains("Arc") || m.Text.Contains("8000")),
+                    "#57 stiller Punkt nicht angesagt: " + J(rg) + " / " + J(rv));
+                Chk(rm.Any(m => m.Text.Contains("after departure fly the Mute departure")) && !rm.Any(m => m.Text.Contains("Two")) && rmt.Any(m => m.Text.Contains("after departure fly the Mute departure"))
+                    && !rmt.Any(m => m.Text.Contains("proceed direct") || m.Text.Contains("Two")), "#57 nur stille Punkte: " + J(rm) + " / " + J(rmt));
+                double zs = 20;
+                Tower Zeb() { var w0 = Hold(); w0.OnTranscript("Kutaisi Tower, Enfield 11, ready for departure, zebra departure", G0(), none, 10); var a = Air(start57, e.Hdg); w0.Tick(a, none, 15); w0.OnTranscript("Kutaisi Approach, Enfield 11, airborne", a, none, 17); return w0; }
+                List<Msg> Fly(Tower w0, (double X, double Z) from, (double X, double Z) to, double off = 0)
+                {
+                    var ms = new List<Msg>(); double len = Dist(from.X, from.Z, to.X, to.Z), hd = Bearing(from.X, from.Z, to.X, to.Z);
+                    for (double q = 0; q <= len; q += 772) ms.AddRange(w0.Tick(new Telemetry(k.Elev + 3000, 3000, 300 * Kt, hd * Math.PI / 180, from.X + (to.X - from.X) * q / len, from.Z + (to.Z - from.Z) * q / len, 0, 0, 760), none, zs += 5));
+                    return ms;
+                }
+                var wz = Zeb(); var fz = new List<Msg>();
+                foreach (var (from, to) in new[] { (start57, pa), (pa, sp), (sp, bp) }) fz.AddRange(Fly(wz, from, to));
+                Chk(!fz.Any(m => m.Text.Contains("fly heading")) && wz.nav == null && wz.depRoute == null, $"#57 genau auf der Route, 60 Grad Knick am stillen Punkt: keine Kursansage ({wz.depAt}): " + J(fz));
+                var wo = Zeb(); Fly(wo, start57, pa);
+                double hdgLeg = Bearing(pa.X, pa.Z, sp.X, sp.Z) * Math.PI / 180;
+                Telemetry Off(double lat) { var p = e.At(-e.Len - 7.5 * NM, lat); return new Telemetry(k.Elev + 3000, 3000, 300 * Kt, hdgLeg, p.X, p.Z, 0, 0, 760); }
+                var near = wo.Tick(Off(-3 * NM), none, zs += 60).ToList();   // 3 NM beside the route: left alone
+                var far = wo.Tick(Off(-6 * NM), none, zs += 60).ToList();    // 6 NM: heading, naming the next spoken point (the zone watch may speak first)
+                if (!far.Any(m => m.Text.Contains("fly heading"))) far.AddRange(wo.Tick(Off(-6 * NM), none, zs += 60));
+                Chk(!near.Any(m => m.Text.Contains("fly heading")) && far.Any(m => m.Text.Contains("fly heading") && m.Text.Contains("to Bravo")) && !far.Any(m => m.Text.Contains("Arc")),
+                    "#57 Kurskorrektur erst ab 4 NM neben der Route: " + J(near) + " / " + J(far));
+            }
+            n += 12;
+        }
+
+        // Forum (Heling): chart with entries but no exit (Andersen: no published VFR exits) - departure as without a chart, arrival still from the entries; runway end missing in the chart: as without a chart
+        {
+            var k = Airfield.Kutaisi();
+            k.Exit.Remove("25"); k.Entry.Remove("07"); k.Exit.Remove("07");
+            var e = k.End("25");
+            var hp = e.At(150, 100);
+            Telemetry G0() => new(k.Elev, 0, 0, e.Hdg * Math.PI / 180, hp.X, hp.Z, 0, 0, 760);
+            Tower Hold() { var w = new Tower(k, "Enfield 1-1") { FieldWind = (-e.Dx * 5, -e.Dz * 5) }; w.Tick(G0(), none, 0); (w.Phase, w.Runway, w.home) = (Phase.TaxiOut, "25", k.Ramps[0]); return w; }
+            var dn = Hold().OnTranscript("Kutaisi Tower, Enfield 11, ready for departure, departure north", G0(), none, 10);
+            var dp = Hold().OnTranscript("Kutaisi Tower, Enfield 11, ready for departure", G0(), none, 10);
+            var far = e.At(-20 * NM, 0);
+            Telemetry Fa(string rw) => new(k.Elev + 3000 * Ft, 3000 * Ft, 150 * Kt, 0, far.X, far.Z, 0, 0, 760);
+            var wi = new Tower(k, "Enfield 1-1") { FieldWind = (-e.Dx * 5, -e.Dz * 5) };
+            wi.Tick(Fa("25"), none, 0);
+            (wi.Phase, wi.Runway) = (Phase.Inbound, "25");
+            var cs = k.Crp["south"];
+            var ia = wi.OnTranscript("Kutaisi Approach, Enfield 11, C R P south", new(k.Elev + 3000 * Ft, 3000 * Ft, 150 * Kt, 0, cs.X, cs.Z, 0, 0, 760), none, 2);
+            var w7 = new Tower(k, "Enfield 1-1") { FieldWind = (-e.Dx * 5, -e.Dz * 5) };
+            w7.Tick(Fa("07"), none, 0);
+            w7.Runway = "07";
+            var i7 = w7.OnTranscript("Kutaisi Approach, Enfield 11, C R P north", Fa("07"), none, 2);
+            Chk(dn.Count == 1 && dn[0].Text.Contains("cleared for takeoff") && dn[0].Text.Contains("leave the control zone northbound") && !dn[0].Text.Contains("negative") && !dn[0].Text.Contains("C R P north") &&
+                dp.Count == 1 && dp[0].Text.Contains("cleared for takeoff") && dp[0].Text.Contains("own navigation") && !dp[0].Text.Contains("negative") &&
+                ia.Count == 1 && ia[0].Text.Contains("proceed to initial runway two five") && i7.Count == 1 && i7[0].Text.Contains("no reporting points"),
+                "Platz ohne exit: " + J(dn) + " / " + J(dp) + " / " + J(ia) + " / " + J(i7));
+            n++;
         }
 
         // Etappe 4 (K29/K33/K34/K36): taxi, holding point, vacate and return route from the data, every apron x every runway of all airfields (and via radio from the apron)
@@ -276,7 +531,7 @@ public partial class Tower
                     var ramp = new Ramp("Ramp North", rn.X, rn.Z, new(), new() { ["07"] = "RnTest" }, new(), new(), new(), new());
                     Telemetry K(double x, double z, double kt) => new(ku.Elev, 0, kt * Kt, e7.Hdg * Math.PI / 180, x, z, 0, 0, 760);
                     Tower W(double x, double z) { var w = new Tower(ku, "Enfield 1-1") { FieldWind = (-e7.Dx * 5, -e7.Dz * 5) }; w.Tick(K(x, z, 0), none, 0); (w.Phase, w.Runway, w.home) = (Phase.TaxiOut, "07", ramp); return w; }
-                    var rt = ku.Net.RouteTo((rn.X, rn.Z), hd, (x, z) => ku.OnRunway(x, z));
+                    var rt = ku.Net.RouteTo((rn.X, rn.Z), hd, ku.AlongRunway);
                     Chk(rt != null && rt.Lines.Count > 0 && rt.Dist(rn.X, rn.Z) < 100 && rt.Dist(hd.X, hd.Z) < 1, "Rollnetz Kutaisi: Korridor Rampe Nord - Warteplatz");
                     if (rt != null)
                     {
@@ -297,7 +552,7 @@ public partial class Tower
                         Chk(Enumerable.Range(2, 30).All(q => st.Tick(K(far.Item1, far.Item2, 2), none, q).Count == 0), "Rollnetz Kutaisi: Stillstand abseits des Rollwegs bleibt still");
                         // taxi guidance on the network: progressive along the shortest way -> silent (no left/right, no clock); backwards -> "wrong way, turn around" with the route after 8 s; "say again taxi" -> the route; 90 s stopped on the taxiway -> asked once
                         bool Rw(double x, double z) => ku.OnRunway(x, z);
-                        var pth = ku.Net.PathTo((rn.X, rn.Z), hd, ku.Net.Spread(hd, Rw)!, Rw);
+                        var pth = ku.Net.PathTo((rn.X, rn.Z), hd, ku.Net.Spread(hd, ku.AlongRunway)!, ku.AlongRunway);
                         Telemetry KH(double x, double z, double kt, (double X, double Z) to) => new(ku.Elev, 0, kt * Kt, Math.Atan2(to.Z - z, to.X - x), x, z, 0, 0, 760);
                         Chk(pth is { Count: > 5 }, $"Rollnetz Kutaisi: Weg Rampe Nord - Warteplatz ({pth?.Count} Punkte)");
                         if (pth is { Count: > 5 })
@@ -331,6 +586,122 @@ public partial class Tower
                     n += 6;
                 }
                 finally { ku.Holds.Remove("RnTest"); }
+            }
+        }
+
+        // Issue #51: edge node index >= 0x80000000 became a negative int, passed the range check and crashed Skipped/Spread; synthetic .rn4: nodes at 400/600, edges before
+        {
+            var rb = new byte[800];
+            void W(int o, double v) => BitConverter.GetBytes(v).CopyTo(rb, o);
+            void WU(int o, uint v) => BitConverter.GetBytes(v).CopyTo(rb, o);
+            void Edge(int p, uint a, uint b) { WU(p - 16, a); WU(p - 12, b); WU(p - 4, 2); W(p, 5000); W(p + 16, 5000); W(p + 24, 5100); W(p + 40, 5000); }
+            Edge(100, 0, 1);
+            Edge(166, 0xFFFFFFFE, 1);
+            for (int k = 0; k < 2; k++)
+            {
+                int p = 400 + 200 * k;
+                W(p - 96, 1); W(p - 56, 1); W(p - 16, 1); W(p, 5000 + 100 * k); W(p + 16, 5000); W(p + 24, 1);
+            }
+            var rf = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "dcsatc-rn51-" + Environment.ProcessId + ".rn4");
+            try
+            {
+                File.WriteAllBytes(rf, rb);
+                var net = Rollnetz.Read(rf);
+                Chk(net != null && net.Nodes.Length == 2 && net.Edges.Length == 1 && net.Edges.All(e => e.A >= 0 && e.B >= 0 && e.A < net.Nodes.Length && e.B < net.Nodes.Length), "Rollnetz: Kante mit Index >= 0x80000000 verworfen: " + net?.Edges.Length);
+                try { Chk(net?.RouteTo((5000, 5000), (5100, 5000), (a, b) => false) is { Lines.Count: 1 }, "Rollnetz: RouteTo über das Netz"); }
+                catch (Exception ex) { Chk(false, "Rollnetz: RouteTo wirft " + ex.GetType().Name); }
+                n += 2;
+            }
+            finally { File.Delete(rf); }
+        }
+
+        // Issue #60: Andersen (X~10000/Z~14000) has zero-filled blocks in the .rn4 that looked like edges ((0,0,0) points, valid a/b): 1828 of 2992 edges, shortcuts in the path search
+        {
+            var rb = new byte[800];
+            void W(int o, double v) => BitConverter.GetBytes(v).CopyTo(rb, o);
+            void WU(int o, uint v) => BitConverter.GetBytes(v).CopyTo(rb, o);
+            void Edge(int p, double x, double z) { WU(p - 16, 0); WU(p - 12, 1); WU(p - 4, 2); W(p, x); W(p + 16, z); W(p + 24, x + 100); W(p + 40, z); }   // #62: polyline as long as the 100 m between the nodes
+            Edge(100, 10000, 14000);
+            WU(166 - 16, 0); WU(166 - 12, 1); WU(166 - 4, 2);   // zero-filled block: valid a/b/n, points (0,0,0)
+            for (int k = 0; k < 2; k++)
+            {
+                int p = 400 + 200 * k;
+                W(p - 96, 1); W(p - 56, 1); W(p - 16, 1); W(p, 10000 + 100 * k); W(p + 16, 14000); W(p + 24, 1);
+            }
+            var rf = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "dcsatc-rn60-" + Environment.ProcessId + ".rn4");
+            try
+            {
+                File.WriteAllBytes(rf, rb);
+                var net = Rollnetz.Read(rf);
+                Chk(net != null && net.Nodes.Length == 2 && net.Edges.Length == 1 && net.Edges[0].Poly[0].Item1 > 1, "Rollnetz #60: Nullblock ist keine Kante: " + net?.Edges.Length);
+                n++;
+            }
+            finally { File.Delete(rf); }
+        }
+
+        // Issue #62 (Andersen): a runway crossing of several short edges (both middle nodes on the runway) must stay passable, only edges ALONG the runway are skipped
+        if (all.FirstOrDefault(a => a.Name == "Kutaisi" && a.Charted) is { } k62)
+        {
+            var r62 = k62.End("07");
+            (double X, double Z) P(double s, double l) => (r62.CX + s * r62.Dx + l * r62.Dz, r62.CZ + s * r62.Dz - l * r62.Dx);
+            var nd = new List<(double X, double Z)>();
+            int N(double s, double l) { nd.Add(P(s, l)); return nd.Count - 1; }
+            var ed = new List<(int A, int B, (double X, double Z)[] Poly, double Len)>();
+            void E(int a, int b) => ed.Add((a, b, new[] { nd[a], nd[b] }, Dist(nd[a].X, nd[a].Z, nd[b].X, nd[b].Z)));
+            int nA = N(0, -60), nR1 = N(0, -4), nR2 = N(0, 4), nS = N(0, 60);        // crossing 1: middle piece 8 m across the runway
+            E(nA, nR1); E(nR1, nR2); E(nR2, nS);
+            int nA2 = N(100, -60), nR3 = N(100, -3), nR4 = N(100, 2), nS2 = N(100, 60);   // crossing 2: middle piece 5 m
+            E(nA2, nR3); E(nR3, nR4); E(nR4, nS2);
+            int nD1 = N(r62.Len / 2 + 200, -60), nD2 = N(r62.Len / 2 + 200, 60);      // detour around the runway end
+            E(nA, nD1); E(nD1, nD2); E(nD2, nS);
+            int nL1 = N(-600, -5), nL2 = N(-500, -5);                                   // along the runway, 100 m
+            E(nL1, nL2);
+            var net62 = new Rollnetz { Nodes = nd.ToArray(), Edges = ed.ToArray() };
+            var dS = net62.Spread(nd[nS], k62.AlongRunway, 1);
+            var dS2 = net62.Spread(nd[nS2], k62.AlongRunway, 1);
+            var dL = net62.Spread(nd[nL1], k62.AlongRunway, 1);
+            Chk(dS != null && dS[nA] < 200 && dS2 != null && dS2[nA2] < 200, $"Rollnetz #62: Bahnkreuzung aus mehreren Kanten bleibt befahrbar: {dS?[nA]:0} / {dS2?[nA2]:0} m");
+            var path62 = dS == null ? null : net62.PathTo(P(0, -55), nd[nS], dS, k62.AlongRunway, 20);
+            Chk(path62 != null && path62.Any(p => Math.Abs((p.X - r62.CX) * r62.Dz - (p.Z - r62.CZ) * r62.Dx) < 5) && path62.Max(p => Math.Abs((p.X - r62.CX) * r62.Dx + (p.Z - r62.CZ) * r62.Dz)) < 50,
+                "Rollnetz #62: Weg von Norden führt über die Bahn, nicht außen herum: " + path62?.Count);
+            Chk(dL != null && dL[nL2] > 1e9 && k62.AlongRunway(nd[nL1], nd[nL2]) && !k62.AlongRunway(nd[nR1], nd[nR2]) && !k62.AlongRunway(nd[nA], nd[nR1]), "Rollnetz #62: Kante längs der Bahn bleibt ausgelassen, Querstücke nicht");
+            n += 3;
+        }
+
+        // Issue #62 with the real nets (DCS needed): Sochi-Adler crossing, Batumi along-runway edge; Read drops edges shorter than half their node distance
+        foreach (var (fname, check) in new (string, Action<Airfield>)[] {
+            ("Sochi-Adler", f =>
+            {
+                var s = f.Net!; var a = s.Nodes.Length > 69 ? s.Nodes[55] : default; var b = s.Nodes.Length > 69 ? s.Nodes[69] : default;
+                if (Dist(a.X, a.Z, -163872, 462905) > 5 || Dist(b.X, b.Z, -163972, 463561) > 5) { Console.WriteLine("--   Rollnetz #62 Sochi: Netz weicht ab (Test übersprungen)"); return; }
+                var d = s.Spread(a, f.AlongRunway, 1);
+                Chk(d != null && d[69] < 2000, $"Rollnetz #62 Sochi-Adler: Stand 55 - Stand 69 über die Bahnkreuzung {d?[69]:0} m");
+                n++;
+            }),
+            ("Batumi", f =>
+            {
+                var s = f.Net!; var ok = s.Nodes.Length > 30 && s.Edges.Any(e => e.A == 27 && e.B == 28 || e.A == 28 && e.B == 27);
+                if (!ok) { Console.WriteLine("--   Rollnetz #62 Batumi: Netz weicht ab (Test übersprungen)"); return; }
+                var e2 = s.Edges.First(e => e.A == 27 && e.B == 28 || e.A == 28 && e.B == 27);
+                var d = s.Spread(s.Nodes[27], f.AlongRunway, 1);
+                Chk(f.AlongRunway(s.Nodes[27], s.Nodes[28]) && d != null && d[28] > e2.Len + 1, $"Rollnetz #62 Batumi: Kante 27-28 längs der Bahn bleibt ausgelassen: {d?[28]:0} m, Kante {e2.Len:0} m");
+                n++;
+            }) })
+            if (all.FirstOrDefault(a => a.Name == fname && a.Charted) is { } rf62)
+            {
+                Rollnetz.LoadAll(new[] { rf62 }, Program.DcsDir());
+                if (rf62.Net == null) Console.WriteLine($"--   Rollnetz #62 {fname}: DCS fehlt (Test übersprungen)");
+                else check(rf62);
+            }
+        if (all.FirstOrDefault(a => a.Name == "Kutaisi" && a.Charted) is { } kr62)
+        {
+            Rollnetz.LoadAll(new[] { kr62 }, Program.DcsDir());
+            if (kr62.Net == null) Console.WriteLine("--   Rollnetz #62 Read: DCS fehlt (Test übersprungen)");
+            else
+            {
+                var bad = kr62.Net.Edges.Count(e => { var d = Dist(kr62.Net.Nodes[e.A].X, kr62.Net.Nodes[e.A].Z, kr62.Net.Nodes[e.B].X, kr62.Net.Nodes[e.B].Z); return e.Len < 0.5 * d && d > 20; });
+                Chk(bad == 0, $"Rollnetz #62 Read: {bad} Kanten kürzer als die halbe Knotenentfernung (Fehllesung)");
+                n++;
             }
         }
 

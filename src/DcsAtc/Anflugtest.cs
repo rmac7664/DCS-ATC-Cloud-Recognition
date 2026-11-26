@@ -56,7 +56,8 @@ class SimPilot
         bool fixedTrack = Mode is "brk" or "dw" or "fin" || Mode == "loc" && Glide;   // Pattern/final: headings (PAR, steering) are advisory only
         if (HdgOf(s) is { } h && !fixedTrack && !(Mode == "loc" && Tower.HdgDiff(h, F.End(Rw).Hdg) < 15)) { tHdg = h; Mode = "hdg"; Glide = false; tDir = s.Contains("urn right") ? 1 : s.Contains("urn left") ? -1 : 0; }   // ≈ runway heading: stays on the centerline
         if (!strict && IcptRe.Match(s) is { Success: true } ic) icpt = RwOf(ic.Groups[1].Value);
-        var alt = Regex.Replace(s, @"[Tt]raffic[^.]*?(?=advise you|\.|$)\.?", "");   // Traffic advisories ("..., 100 feet", "climbing through 1500 feet") are not an altitude instruction, the avoidance altitude in the safety alert ("advise you … climb to …", R214) is
+        var alt = Regex.Replace(s, @"[Tt]raffic[^.]*?(?=advise you|\.|$)\.?", "");
+        alt = Regex.Replace(alt, @"decision height \d+ feet", "");   // PAR setup "decision height 260 feet" is no altitude instruction; traffic advisories ("..., 100 feet", "climbing through 1500 feet") are not an altitude instruction, the avoidance altitude in the safety alert ("advise you … climb to …", R214) is
         var fm = FtRe.Match(alt);
         var lm = FlRe.Match(alt);
         if (lm.Success && (!fm.Success || lm.Index < fm.Index)) tAlt = Num(lm.Groups[1].Value) * 100 * Ft;
@@ -206,7 +207,35 @@ public partial class Tower
         return bad == 0 ? 0 : 1;
     }
 
-    static readonly string[] Bad = { "check runway", "check altitude", "low altitude alert", "expedite", "wrong side", "negative", "not following", "go around", "too low", "unable", "say again", "pattern is south", "no transmissions", "verify heading" };   // R271: PAR lost-comm ("… five seconds on final approach") only with talk-down
+    /// Self-test: one straight-in flight on rw from distNm out at bearing brg (deg from the field), 2500 ft, 220 kt, heading hdg, request "straight in"; the pilot flies the instructions until touchdown.
+    /// Returns every radio call (second, distance before the threshold in NM, role, text) and the pilot's own calls (role "Pilot").
+    internal static List<(int S, double A, string Role, string Text)> StraightInFlight(Airfield f, string rw, string acType, double brg, double distNm, double hdg)
+    {
+        var e = f.End(rw);
+        var wind = (X: -e.Dx * 5, Z: -e.Dz * 5);
+        var p = new SimPilot(f, f.X + distNm * NM * Math.Cos(brg * Math.PI / 180), f.Z + distNm * NM * Math.Sin(brg * Math.PI / 180), 2500 * Ft, hdg, 220 * Kt, wind, false);
+        var tw = new Tower(f, "Enfield 1-1") { FieldWind = wind, AcType = acType };
+        var none = new List<Traffic>();
+        var o = new List<(int, double, string, string)>();
+        int sec = 0;
+        void Hear(List<Msg> ms)
+        {
+            foreach (var m in ms.Where(m => m.Role != "Info")) { o.Add((sec, p.AL(e).A / NM, m.Role, m.Text)); p.Hear(m.Text, sec); }
+        }
+        tw.Tick(p.Tel(), none, 0);
+        sec = 1;
+        Hear(tw.OnTranscript($"{f.StationOf("Approach")}, Enfield 1-1, request straight in", p.Tel(), none, 1));
+        for (sec = 2; sec < 1500 && !p.Landed; sec++)
+        {
+            p.Step(sec);
+            var ms = tw.Tick(p.Tel(), none, sec);
+            if (p.Call(sec) is { } call) { o.Add((sec, p.AL(e).A / NM, "Pilot", call)); ms.AddRange(tw.OnTranscript(call, p.Tel(), none, sec)); }
+            Hear(ms);
+        }
+        return o;
+    }
+
+    static readonly string[] Bad = { "check runway", "check altitude", "low altitude alert", "expedite", "wrong side", "negative", "not following", "go around", "too low", "unable", "say again", "pattern is south", "verify heading" };   // R271: "no transmissions" is allowed now: the PAR setup call carries the lost-comm instruction
 
     static (bool Ok, string Info, List<string> Log) SimRun(Airfield f, string rw, bool ifr, double dir, bool strict)
     {
@@ -226,6 +255,8 @@ public partial class Tower
         int calls = 0;
         double maxTurn = 0, clrVec = 1e9, clrTwr = 1e9, clrFin = 1e9, hoLat = double.NaN, hoFt = double.NaN, hoA = double.NaN, brkFt = double.NaN, clearedAt = double.NaN, sec = 0;
         double lastApp = -1e9, pilotAt = -1e9;   // R351: last Approach call, last pilot call
+        double lastAsg = double.NaN;   // #45: heading of the last Approach vector and the waypoint it led to
+        (double, double)? lastLeg = null;
         int sinceIcpt = -1;   // R353: Approach calls since the intercept vector, -1 = none pending
         string[]? annRw = null;   // R352: runways of the last runway announcement
         var alts = new List<(double S, string A)>();   // R355: altitudes assigned by Approach
@@ -245,7 +276,7 @@ public partial class Tower
                     lastApp = sec;
                     // R353: approach clearance with the intercept vector, at most one call in between
                     if (Regex.IsMatch(m.Text, @"cleared (ILS|P A R) approach")) { if (sinceIcpt > 1) errs.Add($"Freigabe {sinceIcpt} Ansagen nach dem Eindrehvektor @{sec}s"); sinceIcpt = -1; }
-                    else if (m.Text.Contains("intercept")) sinceIcpt = 0;
+                    else if (m.Text.Contains("intercept") && tw.Proc(tw.Runway) != "P A R") sinceIcpt = 0;   // PAR: the clearance comes once with the final turn-on / handoff (8 NM or more), not with the first intercept vector
                     else if (sinceIcpt >= 0 && !Regex.IsMatch(m.Text, @"^[^,]+, (descend|climb) and maintain [^,]+\.$")) sinceIcpt++;   // profile descent alone (R305, long final) does not count
                     // R355: no other altitude shortly before the handoff
                     if (Regex.Match(m.Text, @"maintain (flight level [a-z ]+?|\d+ feet)\b") is { Success: true } am)
@@ -258,6 +289,13 @@ public partial class Tower
                 {
                     calls++;
                     if (!first && p.HdgOf(m.Text) is { } h) maxTurn = Math.Max(maxTurn, HdgDiff(h, p.Hdg));
+                    // #45: a leg to a waypoint gets one heading: a new one less than 15° from the last, to the same waypoint, only when he would miss it by more than 2 NM
+                    if (p.HdgOf(m.Text) is { } nh)
+                    {
+                        (double, double)? lp = tw.vec is { Count: > 0 } ? tw.vec[0] : null;
+                        if (lp != null && lp == lastLeg && HdgDiff(nh, lastAsg) < 15 && Dist(p.Tel().X, p.Tel().Z, lp.Value.Item1, lp.Value.Item2) >= MissFar && tw.Miss(p.Tel()) is var miss && miss <= MissMax) errs.Add($"Kurskorrektur {HdgDiff(nh, lastAsg):0}° auf demselben Abschnitt, Verfehlen nur {miss / NM:0.0} NM @{sec}s");
+                        (lastAsg, lastLeg) = (nh, lp);
+                    }
                 }
                 if (double.IsNaN(brkFt) && Regex.IsMatch(m.Text, @"report base|hand downwind|cleared (ILS|P A R|straight in) approach|proceed straight in"))   // Altitude at initial/overhead or above the 3° glide path at approach clearance
                     brkFt = m.Text.Contains(" approach") ? (p.Alt - f.Elev - Math.Max(p.AL(f.End(tw.vrw != "" ? tw.vrw : tw.Runway)).A, 0) * Math.Tan(3 * Math.PI / 180)) / Ft : p.Alt / Ft - tw.PatternFt;

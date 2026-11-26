@@ -59,6 +59,7 @@ abSilent = {}
 local function airbase(name, id, x, z)
   local spots = {}
   for i = 1, 6 do spots[i] = { vTerminalPos = vec(x, z + (i - 1) * 50), Term_Index = i, Term_Type = (i == 6) and 104 or 72 } end
+  spots[7] = { vTerminalPos = vec(x + 1500, z), Term_Index = 7, Term_Type = 16 }   -- #26: spawn point on the runway
   return { getName = function() return name end, getID = function() return id end, getPoint = function() return vec(x, z) end,
            getDesc = function() return { category = 0 } end, getRunways = function() return {} end, getCoalition = function() return 2 end,
            getParking = function() return spots end, setRadioSilentMode = function(_, s) abSilent[name] = s end }
@@ -89,7 +90,7 @@ local function unit(name, x, z, player, side)
   function u:getCallsign() return name end
   function u:getTypeName() return "FA-18C_hornet" end
   function u:getID() return 1 end
-  function u:getGroup() return { getName = function() return u.group end, getID = function() return 1 end } end
+  function u:getGroup() return { getName = function() return u.group end, getID = function() return 1 end, getController = function() return groups[u.group]:getController() end } end
   function u:getCategory() return 1 end
   function u:hasAttribute(a) return a == "AWACS" and (self.group or ""):find("Overlord", 1, true) ~= nil end
   return u
@@ -167,10 +168,12 @@ local function has(e) for _, x in ipairs(events) do if x == e then return true e
 local function hasTask(s) for _, x in ipairs(tasks) do if x:find(s, 1, true) then return true end end end
 
 -- A17: range zone of the mission and a red tank in it
-env.mission.triggers = { zones = { { name = "Range Alpha", x = 20000, y = 0, radius = 3000 } } }
+env.mission.triggers = { zones = { { name = "Range Alpha", x = 20000, y = 0, radius = 3000 }, { name = "Range 62 268.5", x = 26000, y = 0, radius = 1000 },
+  { name = "Dogbone Range 268.5", x = 32000, y = 0, radius = 500 }, { name = "Orange zone", x = 38000, y = 0, radius = 500 } } }   -- the word Range anywhere counts, "Orange" not   -- #56: second range, own name and frequency
 tank = unit("Tank1", 20000, 0, nil, 1)
 function tank:getTypeName() return "T-72B" end
-REDGROUND = { { getUnits = function() return { tank } end, getUnit = function() return tank end } }
+tank2 = unit("Tank2", 26000, 0, nil, 1); function tank2:getTypeName() return "BMP-2" end   -- #56: target of the second range
+REDGROUND = { { getUnits = function() return { tank } end, getUnit = function() return tank end }, { getUnits = function() return { tank2 } end, getUnit = function() return tank2 end } }
 static1 = unit("Depot1", 20000, 2000, nil, 1); function static1:getTypeName() return "Warehouse" end; REDSTATIC = { static1 }   -- R369: static object and ship of the red side in the range
 ship1 = unit("Boat1", 20000, -2000, nil, 1); function ship1:getTypeName() return "Speedboat" end
 REDSHIPS = { { getUnits = function() return { ship1 } end, getUnit = function() return ship1 end, getName = function() return "RedBoat" end,
@@ -190,7 +193,24 @@ assert(DCSATC, "DCSATC fehlt")
 
 -- Player stands on Kutaisi parking spot 1 (player slot, taboo for AI)
 local p1 = plane("P1", 0, 0, "Player1")
-assert(cvSilent == nil); run(18); assert(cvSilent == true, "DCS-ATC des Trägers nicht stumm"); assert(#find("ATC GC") == 1 and has("C;P1;crew"), "Crew P1 fehlt: GC=" .. #find("ATC GC") .. " ev=" .. table.concat(events, ","))
+plane("RwyStart", 1500, 0)   -- #26: stands on the runway spawn point, gets no ground crew (the count below stays 1)
+assert(cvSilent == nil); run(18); assert(cvSilent == true, "DCS-ATC des Trägers nicht stumm"); assert(#find("ATC GC") == 2 and has("C;P1;crew"), "Crew P1 fehlt: GC=" .. #find("ATC GC") .. " ev=" .. table.concat(events, ","))
+-- Forum (A-10C): each soldier is its own group; when the aircraft rolls (> 0.7 m/s) both walk sideways out of the wing span, never along the nose
+do
+  local half = p1:getDesc().box.max.z
+  local st = {}
+  for n, g in pairs(groups) do if n:find("ATC GC", 1, true) then st[#st + 1] = { n = n, g = g, p = g:getUnit():getPoint() } end end
+  assert(#st == 2 and #st[1].g:getUnits() == 1 and #st[2].g:getUnits() == 1, "Soldaten nicht je eigene Gruppe")
+  p1.v = vec(1, 0); run(T + 2); p1.v = vec(0, 0)
+  for _, s in ipairs(st) do
+    local pts = s.g.task and s.g.task.params.route.points
+    assert(pts and #pts >= 2, "Soldat ohne Route beim Rollen: " .. s.n)
+    local e = pts[#pts]
+    assert(math.abs(e.y - 0) > half + 5, "Soldat bleibt in der Flaechenbreite: lat=" .. (e.y))
+    assert(e.x <= s.p.x + 0.01, "Soldat geht nach vorn: " .. e.x .. " vs " .. s.p.x)
+    for i = 2, #pts do assert(not (math.abs(pts[i].y) < half + 2 and pts[i].x > 0), "Route quert den Korridor vor dem Flugzeug") end
+  end
+end
 
 assert(#find("ATC Senaki ARR") == 2, "Startanflüge Senaki: " .. #find("ATC Senaki ARR"))
 -- R8: F10 Ground -> IFR clearance: without destination, then own/neutral airfields without the own one (Kutaisi under 5 km)
@@ -328,6 +348,32 @@ run(T + 14); assert(has("C;P2;back"), "Welcome back fehlt")
 run(T + 25); assert(has("C;P2;fuel"), "Lkw fehlen")
 p1.v = vec(5, 0)
 run(T + 50)
+do   -- Forum (A-10C): trucks stay when the aircraft rolls; at the end of their turn they leave sideways, never across the aircraft
+  local half = p2:getDesc().box.max.z
+  local function trucks() local l = {} for n, g in pairs(groups) do if n:find("ATC GC", 1, true) and g.d.units[1].type == "M978 HEMTT Tanker" then l[#l + 1] = g end end return l end
+  local p1v = p1.v; p1.v = vec(0, 0)   -- a moving P1 nearby delays the trucks (taxiingNear)
+  local p3 = plane("P3", 0, 150, "Wing3")
+  for _, h in ipairs(handlers) do h:onEvent({ id = world.event.S_EVENT_LAND, initiator = p3 }) end
+  run(T + 40); local tr3 = trucks(); local before = #tr3
+  assert(before >= 2, "Lkw fuer P3 fehlen: " .. before)
+  p3.v = vec(2, 0); run(T + 4); p3.v = vec(0, 0); p1.v = p1v
+  for _, g in ipairs(tr3) do if g.d.route and g.d.route.points[2].y > 120 then assert(g.task == nil, "Lkw fahren beim Rollen los") end end
+  for _ = 1, 20 do   -- until P2's turn is over (doneAt = TURN after arrival)
+    run(T + 20)
+    local l = trucks()
+    if #l == 1 and l[1].task then break end
+  end
+  local checked = 0  for _, g in ipairs(trucks()) do
+    local pts = g.task and g.task.params.route.points
+    if pts and g.d.route.points[2].y < 120 then   -- P2's trucks (z near 100)
+      checked = checked + 1
+      for _, q in ipairs(pts) do assert(math.abs(q.y - 100) >= half + 3, "Lkw quert das Flugzeug: lat=" .. (q.y - 100)) end
+      local a, e = pts[1], pts[#pts]
+      assert(math.abs(math.sqrt((e.x - a.x) ^ 2 + (e.y - a.y) ^ 2) - 40) < 0.5 and math.abs(e.x - a.x) < 0.01, "Lkw fahren nicht 40 m seitlich weg")
+    end
+  end
+  assert(checked == 1, "P2-Lkw ohne Abfahrt-Route: " .. checked)
+end
 run(T + 300); assert(not has("C;P2;done"), "Lkw melden \"done\", getankt wird nichts (A37)")
 -- DCS radio menu: tanker position in the DCS list (by distance), airfield only at night
 coalition.service = { ATC = 0, AWACS = 1, TANKER = 2 }
@@ -342,12 +388,24 @@ Unit = { getByName = function(n) return n == "P1" and p1 or nil end }
 coord = { LOtoLL = function() return 42.18, 42.48 end }   -- Kutaisi; Caucasus UTC+4, 21 June: sunset ~20:45
 local function ev() return table.concat(events, " ") end
 timer.getAbsTime = function() return 19 * 3600 end
-files["9-5.cmd"] = "MENU;P1;tanker;" .. find("ATC Texaco")[1]:getName() .. ";s"   -- R304: s = tanker stays silent
+files["9-5.cmd"] = "MENU;P1;tanker;" .. find("ATC Texaco")[1]:getName()   -- tanker audible from the first menu press (a muted DCS tanker ignores the menu)
 files["9-6.cmd"] = "MENU;P1;atc;26"
 files["9-7.cmd"] = "MENU;P1;atc;77"
 run(T + 1)
+assert(not has("M;P1;tanker;1;1"), "MENU tanker: M sofort trotz stummem Tanker (DCS ignoriert den ersten Intent)")
+assert(gSilent[find("ATC Texaco")[1]:getName()] == false, "Tanker nach MENU nicht hoerbar")
+run(T + 5)
 assert(has("M;P1;tanker;1;1"), "MENU tanker fehlt")
-assert(gSilent[find("ATC Texaco")[1]:getName()] == true, "R304: Tanker nicht stumm (Spawn bzw. MENU mit s)")
+do local tk, t0 = find("ATC Texaco")[1]:getName(), T - 6   -- tanker menu: audible, stays so through the 60 s ticks of the 900 s window, muted again afterwards
+  assert(gSilent[tk] == false, "Tanker nach MENU nicht hoerbar")
+  files["9-5b.cmd"] = "MENU;P1;tanker;" .. tk   -- already audible: M at once
+  run(T + 1); assert(select(2, ev():gsub("M;P1;tanker;1;1", "")) == 2, "zweites MENU tanker bei hoerbarem Tanker nicht sofort: " .. ev())
+  run(t0 + 300); assert(gSilent[tk] == false, "Tanker im 900-s-Fenster wieder stumm")
+  run(t0 + 1000); assert(gSilent[tk] == true, "Tanker nach dem Fenster nicht wieder stumm")
+  files["9-5c.cmd"] = "LOUD;" .. tk   -- issue #45: another player / dedicated server presses the DCS menu himself, the app only un-mutes the tanker
+  run(T + 1); assert(gSilent[tk] == false and not ev():find("M;P1;tanker;1;1;", 1, true), "LOUD: Tanker nicht hoerbar")
+  run(T + 300); assert(gSilent[tk] == false, "LOUD: Tanker im 900-s-Fenster wieder stumm")
+  run(T + 1000); assert(gSilent[tk] == true, "LOUD: Tanker nach dem Fenster nicht wieder stumm") end
 assert(gSilent["Hornet CV"] == true and gSilent.P1 == nil, "R308: KI-Flug der Mission nicht stumm bzw. Spielergruppe stumm")
 assert(gNoWp["Hornet CV"] == true and gNoWp.P1 == nil, "R312: Wegpunktmeldung des KI-Flugs nicht verboten")
 assert(ev():find("M;P1;atc;0;Tag (Sonne 1", 1, true) and has("M;P1;atc;0;Platz 77 nicht in der Mission"), "Befeuerung am Tag / Platz unbekannt: " .. ev())
@@ -381,7 +439,7 @@ run(T + 1)
 assert(select(2, ev():gsub("M;P1;dep;0;DCS%-ATC%-Dialog offen", "")) == 1, "Heißstart: DCS-Dialog offen fehlt: " .. ev())
 files["9-12.cmd"] = "MENU;P1;tanker;" .. find("ATC Texaco")[1]:getName()
 run(T + 1)
-assert(ev():find("M;P1;tanker;0;DCS-ATC-Dialog offen", 1, true) and select(2, ev():gsub("M;P1;tanker;1;1", "")) == 1, "Heißstart: Tanker trotz offenem DCS-Dialog: " .. ev())
+assert(ev():find("M;P1;tanker;0;DCS-ATC-Dialog offen", 1, true) and select(2, ev():gsub("M;P1;tanker;1;1", "")) == 2, "Heißstart: Tanker trotz offenem DCS-Dialog: " .. ev())
 menu("Bodenpersonal an/aus"); run(T + 310); assert(#find("ATC GC") == 0, "Bodenpersonal aus wirkt nicht")
 do local kinds = 0 for _, m in ipairs(MENU) do if type(m.arg) == "table" and m.arg.text and m.arg.text:find("^mayday mayday mayday, .+, request immediate landing$") then kinds = kinds + 1 end end
   assert(kinds > 0 and kinds % 5 == 0, "F10 MAYDAY mit Art (A30): " .. kinds) end
@@ -399,6 +457,24 @@ do local g, tx = {}, {}   -- R390: F10 like the radio wheel – groups, wheel na
   assert(tx["Tower: base, gear down, touch and go"] == "Base, touch and go" and not tx["Tower: final, gear down, touch and go"]
     and tx["Approach: traffic in sight"] and tx["Approach: report airspeed"] and tx["Tanker: visual"] and tx["Tanker: refuel complete"]
     and tx["Range: in hot"] == "In hot" and tx["Carrier: ball"] and tx["AWACS: checking in"] and tx["AWACS: bingo, RTB"] and tx["Tower: request S F O"] and tx["Approach: cancel approach"], "F10 Antwort-Einträge (R390)") end
+assert(has("SESSION;Caucasus;;1"), "SESSION-Ereignis (Karte, Easy Communication an) fehlt")   -- bug reports: map, mission name, Easy Communication
+do   -- Log mark: F10 "Debriefing / Log" with Debriefing and "mark log" (like the radio wheel)
+  local log, tx = false, {}
+  for _, x in ipairs(GROUPS) do if x.name == "Debriefing / Log" then log = x.n end end
+  for _, m in ipairs(MENU) do if type(m.arg) == "table" and m.arg.text then tx[m.arg.text] = m.name end end
+  assert(log == 2 and tx["debrief"] == "Debriefing" and tx["mark log"], "F10 Debriefing / Log: " .. tostring(log))
+end
+do   -- Easy Communication off in the mission's forced options -> 0, mission name from env.mission.sortie
+  local fo, so = env.mission.forcedOptions, env.mission.sortie
+  env.mission.forcedOptions, env.mission.sortie = { easyCommunication = false }, "Op Test"
+  for i = #queue, 1, -1 do queue[i] = nil end
+  for i = #handlers, 1, -1 do handlers[i] = nil end
+  DCSATC, DCSATC_SPAWNTEST, DCSATC_OPTIONS, MENU, GROUPS = nil, nil, { crew = true }, {}, {}
+  dofile(arg[1])
+  run(T + 3)
+  assert(has("SESSION;Caucasus;Op Test;0"), "SESSION-Ereignis ohne Easy Communication fehlt")
+  env.mission.forcedOptions, env.mission.sortie = fo, so
+end
 do local fh = realOpen(tmp .. "\\DcsAtc-Terrain-Caucasus-map.txt.tmp", "r"); assert(fh and fh:read("*l"):find("^Map;"), "Kartenraster (V15) fehlt"); fh:close() end
 for _, id in ipairs({ "23", "26" }) do local fh = realOpen(tmp .. "\\DcsAtc-Terrain-Caucasus-" .. id .. ".txt.tmp", "r"); assert(fh, "Platzraster " .. id .. " fehlt"); local s = fh:read("*a") fh:close()
   assert(select(2, s:gsub("\n", "")) == 62 and select(2, s:match("\n([^\n]*)"):gsub(",", "")) == 60, "Platzraster " .. id .. " nicht 61x61") end   -- one after another (queue)
@@ -437,6 +513,16 @@ trigger.action.signalFlare = function(p, c) SIG[#SIG + 1] = string.format("flare
 files["9-90.cmd"] = "SIGNAL;61200;450;smoke"; run(T + 1)
 files["9-91.cmd"] = "SIGNAL;-300;-20;flare"; run(T + 1)
 assert(table.concat(SIG, ",") == "smoke 61200 450 3,flare -300 -20 1", "SIGNAL Rauch/Leuchtkugel: " .. table.concat(SIG, ","))
+-- F10 map: DRAW from the app -> circle, text and line marks (departure leg dashed); the next DRAW removes the previous drawing
+local MARKS, GONE = {}, {}
+trigger.action.circleToAll = function(_, id, p, r, _, _, lt) MARKS[#MARKS + 1] = string.format("C%d %.0f %.0f %.0f %d", id, p.x, p.z, r, lt) end
+trigger.action.textToAll = function(_, id, p, _, _, _, _, text) MARKS[#MARKS + 1] = string.format("T%d %.0f %.0f %s", id, p.x, p.z, text) end
+trigger.action.lineToAll = function(_, id, a, b, _, lt) MARKS[#MARKS + 1] = string.format("L%d %.0f %.0f %.0f %.0f %d", id, a.x, a.z, b.x, b.z, lt) end
+trigger.action.removeMark = function(id) GONE[#GONE + 1] = id end
+files["9-92.cmd"] = "DRAW;C;1;-284000;683000;9260|T;1;-274740;683000;Kutaisi CTR 2700 ft|L;3;100;200;300;400"; run(T + 1)
+assert(table.concat(MARKS, ",") == "C7730001 -284000 683000 9260 1,T7730002 -274740 683000 Kutaisi CTR 2700 ft,L7730003 100 200 300 400 2", "DRAW: " .. table.concat(MARKS, ","))
+files["9-93.cmd"] = "DRAW;C;1;0;0;300"; run(T + 1)
+assert(table.concat(GONE, ",") == "7730001,7730002,7730003" and #MARKS == 4, "DRAW ersetzt die alte Zeichnung nicht: " .. table.concat(GONE, ","))
 landX = nil
 -- KF6/LK14: red SAM radar tracks the AI Viper -> X;spike (once, with type and location), ends -> X;naked; radar on the player -> nothing
 local sr = unit("SR1", 70000, 1000, nil, 1)
@@ -481,7 +567,8 @@ function p1:getFuel() return 0.4 end   -- only here, the P line above expects th
 fire({ id = world.event.S_EVENT_REFUELING, initiator = p1 }); assert(has("F;P1;start;0.400;4899"), "F;start mit Innentank (A124) fehlt: " .. table.concat(events, " "))
 fire({ id = world.event.S_EVENT_REFUELING_STOP, initiator = p1 }); assert(has("F;P1;stop;0.400;4899"), "F;stop mit Innentank fehlt")
 -- A17: range zone "Range Alpha" -> Z line; player bomb 12 m before the red tank (approach to the north: 6 o'clock) -> R with flight time; gun hit/kill in the zone -> H/K
-assert(stateFile():find("Z;20000;0;3000", 1, true), "Z-Zeile (Range) fehlt: " .. stateFile())
+assert(stateFile():find("Z;20000;0;3000;Range Alpha", 1, true) and stateFile():find("Z;26000;0;1000;Range 62 268.5", 1, true), "Z-Zeilen (Range) fehlen: " .. stateFile())
+assert(stateFile():find("Z;32000;0;500;Dogbone Range 268.5", 1, true) and not stateFile():find("Orange", 1, true), "Range als Wort im Zonennamen: " .. stateFile())
 local bomb = { p = vec(19988, 0), alive = true }
 function bomb:getDesc() return { category = 3 } end
 function bomb:getTypeName() return "weapons.bombs.Mk_82" end
@@ -490,7 +577,17 @@ function bomb:getPoint() return self.p end
 function bomb:getVelocity() return vec(0, 0) end
 fire({ id = world.event.S_EVENT_SHOT, initiator = p1, weapon = bomb })
 run(T + 1); bomb.alive = false; run(T + 1)
-assert(table.concat(events, " "):find("R;P1;weapons.bombs.Mk_82;12;6;T%-72B;1%.%d"), "R-Ereignis (Einschlag) fehlt: " .. table.concat(events, " "))
+assert(table.concat(events, " "):find("R;P1;weapons.bombs.Mk_82;12;6;T%-72B;1%.%d;0"), "R-Ereignis (Einschlag) fehlt: " .. table.concat(events, " "))
+-- #56: a bomb in the second range: zone index 1, scored against the target of that range (not the first range's tank)
+local bomb2 = { p = vec(25988, 0), alive = true }
+function bomb2:getDesc() return { category = 3 } end
+function bomb2:getTypeName() return "weapons.bombs.Mk_82" end
+function bomb2:isExist() return self.alive end
+function bomb2:getPoint() return self.p end
+function bomb2:getVelocity() return vec(0, 0) end
+fire({ id = world.event.S_EVENT_SHOT, initiator = p1, weapon = bomb2 })
+run(T + 1); bomb2.alive = false; run(T + 1)
+assert(table.concat(events, " "):find("R;P1;weapons.bombs.Mk_82;12;6;BMP%-2;1%.%d;1"), "R-Ereignis in der zweiten Range fehlt: " .. table.concat(events, " "))
 -- R369: static objects and ships count as range targets, not only ground groups
 for _, c in ipairs({ { 20000, 1980, "Warehouse" }, { 20000, -2020, "Speedboat" } }) do
   local b2 = { p = vec(c[1], c[2]), alive = true }
@@ -501,15 +598,16 @@ for _, c in ipairs({ { 20000, 1980, "Warehouse" }, { 20000, -2020, "Speedboat" }
   function b2:getVelocity() return vec(0, 0) end
   fire({ id = world.event.S_EVENT_SHOT, initiator = p1, weapon = b2 })
   run(T + 1); b2.alive = false; run(T + 1)
-  assert(table.concat(events, " "):find("R;P1;weapons.bombs.Mk_82;20;%d+;" .. c[3] .. ";1%.%d"), "R-Ereignis auf " .. c[3] .. " fehlt: " .. table.concat(events, " "))
+  assert(table.concat(events, " "):find("R;P1;weapons.bombs.Mk_82;20;%d+;" .. c[3] .. ";1%.%d;0"), "R-Ereignis auf " .. c[3] .. " fehlt: " .. table.concat(events, " "))
 end
 local shell = { getDesc = function() return { category = 0 } end, getTypeName = function() return "shell" end }
-fire({ id = world.event.S_EVENT_HIT, initiator = p1, target = tank, weapon = shell }); assert(has("H;P1;T-72B"), "H-Ereignis (Kanonentreffer) fehlt")
-fire({ id = world.event.S_EVENT_KILL, initiator = p1, target = tank }); assert(has("K;P1;T-72B;1"), "K-Ereignis (Abschuss) fehlt")
+fire({ id = world.event.S_EVENT_HIT, initiator = p1, target = tank, weapon = shell }); assert(has("H;P1;T-72B;0"), "H-Ereignis (Kanonentreffer) fehlt")
+fire({ id = world.event.S_EVENT_KILL, initiator = p1, target = tank }); assert(has("K;P1;T-72B;1;0"), "K-Ereignis (Abschuss) fehlt")
+fire({ id = world.event.S_EVENT_KILL, initiator = p1, target = tank2 }); assert(has("K;P1;BMP-2;1;1"), "K-Ereignis in der zweiten Range (#56) fehlt")
 -- R369: K carries the coalition of the target (the app drops own-side kills)
-fire({ id = world.event.S_EVENT_KILL, initiator = p1, target = static1 }); assert(has("K;P1;Warehouse;1"), "K-Ereignis auf Static fehlt")
+fire({ id = world.event.S_EVENT_KILL, initiator = p1, target = static1 }); assert(has("K;P1;Warehouse;1;0"), "K-Ereignis auf Static fehlt")
 local own = unit("Own1", 20000, 500, nil, 2); function own:getTypeName() return "Truck" end
-fire({ id = world.event.S_EVENT_KILL, initiator = p1, target = own }); assert(has("K;P1;Truck;2"), "K-Ereignis auf eigene Seite ohne Koalition")
+fire({ id = world.event.S_EVENT_KILL, initiator = p1, target = own }); assert(has("K;P1;Truck;2;0"), "K-Ereignis auf eigene Seite ohne Koalition")
 -- R27: DCS LSO grade on trap -> W;Unit;Wire;grade (player only, only with wire); player under 2 NM at the carrier in the air -> state every 0.25 s instead of 0.5 s
 fire({ id = world.event.S_EVENT_LANDING_QUALITY_MARK, initiator = p1, comment = "LSO: GRADE:OK  : WIRE# 3" })
 fire({ id = world.event.S_EVENT_LANDING_QUALITY_MARK, initiator = vip, comment = "LSO: GRADE:OK  : WIRE# 2" })
@@ -606,6 +704,96 @@ do   -- fog off in the ME (fog2.mode 1 / older missions without enable_fog): lef
   local _, nLL = stateFile():gsub("\nL;%-?%d+;%-?%d+;42%.180000;42%.480000", "")   -- FI2: 7x7 lat/lon grid for the SRS transmitter positions
   assert(nLL == 49, "FI2 Lat/Lon-Raster: " .. nLL .. " L-Zeilen")
   pl[#pl], w.enable_fog, FOG[1], FOG[2], env.mission.version = nil, nil, 0, 0, nil
+end
+do   -- player changes aircraft within a group with 2 player slots: the F10 submenu of the unit he left goes away (forum Killg0re NL)
+  local pl = env.mission.coalition.blue.country[1].plane.group
+  pl[#pl + 1] = { name = "Springfield", units = { { skill = "Client" }, { skill = "Client" } } }
+  local uA, uB, PU, getByName0 = unit("Spring-1", 5000, 5000), unit("Spring-2", 5050, 5000), {}, Unit.getByName
+  PU["Spring-1"], PU["Spring-2"] = uA, uB
+  Unit.getByName = function(n) return PU[n] or getByName0(n) end
+  missionCommands.removeItemForGroup = function(_, path) path.removed = true end
+  local list = { uA, uB }
+  local sg = { getUnits = function() return list end, getName = function() return "Springfield" end, getID = function() return 77 end, getUnit = function() return list[1] end,
+    getController = function() return { setOption = function() end } end }
+  for _, u in ipairs({ uA, uB }) do u.group = "Springfield"; u.getGroup = function() return sg end end
+  planes[#planes + 1] = { g = sg, u = uA }
+  for i = #queue, 1, -1 do queue[i] = nil end
+  for i = #handlers, 1, -1 do handlers[i] = nil end
+  DCSATC, DCSATC_SPAWNTEST, DCSATC_OPTIONS, MENU, GROUPS = nil, nil, { crew = true }, {}, {}
+  dofile(arg[1])
+  local function subs(n) local c, r = 0, 0 for _, x in ipairs(GROUPS) do if x.name == n then c = c + 1; if x.removed then r = r + 1 end end end return c, r end
+  function uA:getPlayerName() return self.pn end
+  function uB:getPlayerName() return self.pn end
+  uA.pn = "PA"
+  run(T + 12)
+  assert(select(1, subs("Spring-1")) == 1 and subs("Spring-2") == 0, "F10 Spieler in A: nur Untermenue A")
+  PU["Spring-1"], list, uB.pn = nil, { uB }, "PB"   -- A gone, player now in B
+  run(T + 12)
+  local c1, r1 = subs("Spring-1")
+  assert(c1 == 1 and r1 == 1 and subs("Spring-2") == 1 and select(2, subs("Spring-2")) == 0, "F10 Wechsel A -> B: Untermenue A bleibt oder B fehlt")
+  PU["Spring-1"], list = uA, { uA, uB }   -- back in A, B keeps his player: both stay
+  run(T + 12)
+  c1, r1 = subs("Spring-1")
+  assert(c1 == 2 and r1 == 1 and select(2, subs("Spring-2")) == 0, "F10 zurueck in A: Untermenue A nicht neu gebaut")
+  Unit.getByName, missionCommands.removeItemForGroup, planes[#planes], pl[#pl] = getByName0, nil, nil, nil
+end
+do   -- JTAC/FAC(A) born during the mission (forum Killg0re NL): "JTAC" in the name, copy of a mission leader ("Reaper#001"), unrelated name = nothing
+  local pl = env.mission.coalition.blue.country[1].plane.group
+  pl[#pl + 1] = { name = "Reaper", task = "AFAC", units = { {} }, route = { points = { { type = "Turning Point", task = { id = "FAC", params = { frequency = 251000000, callname = 2 } } } } } }
+  pl[#pl + 1] = { name = "FACA-UAV", units = { {} }, route = { points = { { type = "Turning Point", task = { id = "FAC", params = { frequency = 243000000, callname = 8 } } } } } }
+  for i = #queue, 1, -1 do queue[i] = nil end
+  for i = #handlers, 1, -1 do handlers[i] = nil end
+  DCSATC, DCSATC_SPAWNTEST, DCSATC_OPTIONS, MENU = nil, nil, { crew = true }, {}
+  dofile(arg[1])
+  run(T + 3)
+  local born = {}
+  for _, n in ipairs({ "Reaper", "Reaper#001", "Spawned JTAC UAV", "Random#001", "FACA-UAV#001" }) do
+    local g = coalition.addGroup(2, 0, { name = n, units = { { name = n .. "-1", x = 100, y = 0, alt = 3000 } } })
+    born[#born + 1] = g
+    if n == "FACA-UAV#001" then g:getUnit().getCallsign = function() return "Colt11" end end   -- own callsign must not beat the template's
+    if n ~= "Reaper" then fire({ id = world.event.S_EVENT_BIRTH, initiator = g:getUnit() }) end
+  end
+  run(T + 12)
+  local s = stateFile()
+  assert(s:find("\nJ;Reaper#001;faca;Darknight;2;[^\n]*;251%.000;AM;;1\n") and s:find("\nJ;Spawned JTAC UAV;faca;") and not s:find("J;Random#001", 1, true), "JTAC/FAC(A) zur Laufzeit: " .. s)
+  assert(s:find("\nJ;FACA%-UAV#001;faca;Finger;2;[^\n]*;243%.000;"), "Kopie mit FACA im Namen erbt Rufzeichen/Frequenz der Vorlage nicht: " .. s)   -- forum Killg0re NL
+  -- no template: the unit's own callsign ("Pontiac11" -> "Pontiac"); numeric callsign -> name from the JTAC list as before
+  for n, cs in pairs({ ["FACA-Scout"] = "Pontiac11", ["Plain JTAC"] = "101" }) do
+    local g = coalition.addGroup(2, 0, { name = n, units = { { name = n .. "-1", x = 100, y = 0, alt = 3000 } } })
+    born[#born + 1] = g
+    g:getUnit().getCallsign = function() return cs end
+    fire({ id = world.event.S_EVENT_BIRTH, initiator = g:getUnit() })
+  end
+  do   -- ground unit: what DCS gives as its callsign is no name to call it by, name from the JTAC list as before
+    local g = coalition.addGroup(2, 0, { name = "Truck JTAC", units = { { name = "Truck JTAC-1", x = 100, y = 0, alt = 0 } } })
+    born[#born + 1] = g
+    g:getUnit().getCallsign = function() return "Ground11" end
+    g:getUnit().getDesc = function() return { box = { max = { x = 8, z = 6 }, min = { x = -9 } }, category = 2 } end
+    fire({ id = world.event.S_EVENT_BIRTH, initiator = g:getUnit() })
+  end
+  run(T + 12)
+  s = stateFile()
+  assert(s:find("\nJ;Truck JTAC;jtac;%a%a%a%a+;") and not s:find("J;Truck JTAC;jtac;Ground", 1, true), "Boden-JTAC: Name aus der JTAC-Liste, nicht das Rufzeichen der Einheit: " .. s)
+  assert(s:find("\nJ;FACA%-Scout;faca;Pontiac;"), "Lotse ohne Vorlage nimmt Rufzeichen des Flugzeugs nicht: " .. s)
+  assert(s:find("\nJ;Plain JTAC;faca;%a%a%a%a+;") and not s:find("J;Plain JTAC;faca;101", 1, true), "Zahlen-Rufzeichen: Name aus der JTAC-Liste: " .. s)
+  -- target list is sticky: a FAC(A) orbit must not swap the 5 nearest all the time (the app would lose the target of a running 9-line)
+  local red0, ents, land0, mgrs0 = REDGROUND, {}, land.isVisible, coord.LLtoMGRS
+  land.isVisible, coord.LLtoMGRS = function() return true end, function() return { UTMZone = "38T", MGRSDigraph = "KM", Easting = 1, Northing = 2 } end
+  REDGROUND = {}
+  for i = 1, 6 do
+    local g = coalition.addGroup(1, 2, { name = "RT" .. i, units = { { name = "RT" .. i .. "-1", x = i * 1000, y = 0 } } })
+    g.cat = 99; ents[i] = g; REDGROUND[i] = g
+  end
+  local function listed() local l = {} for n in stateFile():gmatch("\nQ;Reaper;RT(%d);") do l[#l + 1] = n end table.sort(l) return table.concat(l, ",") end
+  run(T + 12); assert(listed() == "1,2,3,4,5", "Q-Liste: die 5 naechsten: " .. listed())
+  groups["Reaper"]:getUnit().p = vec(6100, 0)   -- RT6 is now nearer than RT1
+  run(T + 12); assert(listed() == "1,2,3,4,5", "Q-Liste bleibt bei den bisherigen: " .. listed())
+  ents[2]:destroy(); table.remove(REDGROUND, 2)
+  run(T + 12); assert(listed() == "1,3,4,5,6", "Q-Liste: freier Platz geht an den neuen: " .. listed())
+  for i = 1, 6 do ents[i]:destroy() end
+  REDGROUND, land.isVisible, coord.LLtoMGRS = red0, land0, mgrs0
+  for _, g in ipairs(born) do g:destroy() end
+  pl[#pl], pl[#pl - 1] = nil, nil
 end
 -- Hook: file paths with a real backslash (Lua 5.1: '\D' becomes 'D' -> %TMP%DcsAtc-..., autostart/session/DCS folder never arrived)
 local opened = {}
