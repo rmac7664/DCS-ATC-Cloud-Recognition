@@ -25,6 +25,16 @@ jobs:
         shell: cmd
         run: if not exist models mkdir models
 
+      - name: ffmpeg for the radio-effect self-test (the setup ships a BtbN build; the runner's own ffmpeg rejects the graph)
+        shell: pwsh
+        run: |
+          $u = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip'
+          Invoke-WebRequest $u -OutFile ff.zip
+          Expand-Archive ff.zip -DestinationPath ff
+          New-Item -ItemType Directory -Force tools\ffmpeg | Out-Null
+          Copy-Item (Get-ChildItem ff -Recurse -Filter ffmpeg.exe | Select-Object -First 1).FullName tools\ffmpeg\ffmpeg.exe
+          tools\ffmpeg\ffmpeg.exe -version | Select-Object -First 1
+
       - name: Test suites (selftest, approach test, multiplayer test)
         id: tests
         continue-on-error: true
