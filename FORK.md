@@ -9,7 +9,7 @@ This fork changes one thing:
    `clamp(1 + 0.35 × avg_logprob, 0, 1)`: the same calls score 0.70-0.87.
 Upstream masks the API keys in atc-debug.txt itself since 0.23.x (`MaskKey`), so the fork's own masking was dropped.
 For CI (no DCS, no test terrain on the runner) the fork also skips the charts.jsonc-on-Syria self-test step when DCS is missing, skips
-`--anflugtest` when `tests\terrain` is missing (the release repo does not ship it), and the workflow fetches a BtbN ffmpeg for the radio-effect test.
+`--anflugtest` and `--mptest` when `tests\terrain` is missing (the release repo does not ship it), and the workflow fetches a BtbN ffmpeg for the radio-effect test.
 
 The calibration is covered by the self-test (`DcsAtc.exe --selftest`).
 
