@@ -9,7 +9,8 @@ if not defined DCS_ROOT set "DCS_ROOT=%ProgramFiles%\Eagle Dynamics\DCS World"
 set "LUAE=%DCS_ROOT%\bin\luae.exe"
 dotnet build src\DcsAtc -c Release -v q -nologo > tmp\tests.log || (echo Build fehlgeschlagen & type tmp\tests.log & exit /b 1)
 call :run selftest %EXE% --selftest || exit /b 1
-call :run anflugtest %EXE% --anflugtest || exit /b 1
+rem fork: the release repo has no tests\terrain snapshot, so the approach test is skipped without it (CI)
+if exist tests\terrain (call :run anflugtest %EXE% --anflugtest || exit /b 1) else echo -- anflugtest: tests\terrain fehlt, uebersprungen
 call :run mptest %EXE% --mptest * * || exit /b 1
 if not exist "%LUAE%" (
   echo Teilpruefung: C#-Tests OK. Vier DCS-Lua-Suiten uebersprungen.
