@@ -303,10 +303,10 @@ class DCSATC(Plugin):
                 self.log.exception("DCS-ATC")
                 await msg.edit(content=f"DCS-ATC: {ex}")
 
-    @dcsatc.command(description="DCS-ATC version, newest release and whether it is on")
+    @dcsatc.command(name="status", description="DCS-ATC version, newest release and whether it is on")
     @app_commands.guild_only()
     @utils.app_has_role('DCS Admin')
-    async def status(self, interaction: discord.Interaction,
+    async def status_cmd(self, interaction: discord.Interaction,
                      server: app_commands.Transform[Server, utils.ServerTransformer]):
         ephemeral = utils.get_ephemeral(interaction)
         # noinspection PyUnresolvedReferences
@@ -366,10 +366,10 @@ class DCSATC(Plugin):
             "DCS-ATC is off" + (" and stopped." if stopped else ".") + " /dcsatc on switches it back on.",
             ephemeral=ephemeral)
 
-    @dcsatc.command(description="Update DCS-ATC to the newest release (or the version you give)")
+    @dcsatc.command(name="update", description="Update DCS-ATC to the newest release (or the version you give)")
     @app_commands.guild_only()
     @utils.app_has_role('DCS Admin')
-    async def update(self, interaction: discord.Interaction,
+    async def update_cmd(self, interaction: discord.Interaction,
                      server: app_commands.Transform[Server, utils.ServerTransformer], version: str | None = None):
         async def job(status) -> str:
             installed = self.installed_version()
@@ -383,10 +383,10 @@ class DCSATC(Plugin):
                     f"Restart the server (/server restart) to load the new version.")
         await self._work(interaction, "Checking for a DCS-ATC update ...", job)
 
-    @dcsatc.command(description="Install DCS-ATC (newest release, or the version you give)")
+    @dcsatc.command(name="install", description="Install DCS-ATC (newest release, or the version you give)")
     @app_commands.guild_only()
     @utils.app_has_role('DCS Admin')
-    async def install(self, interaction: discord.Interaction,
+    async def install_cmd(self, interaction: discord.Interaction,
                       server: app_commands.Transform[Server, utils.ServerTransformer], version: str | None = None):
         async def job(status) -> str:
             if self.installed_version():
@@ -397,10 +397,10 @@ class DCSATC(Plugin):
             return f"DCS-ATC {new} installed.{kept} Restart the server (/server restart) to start it with missions."
         await self._work(interaction, "Installing DCS-ATC ...", job)
 
-    @dcsatc.command(description="Uninstall DCS-ATC (your config, charts and frequencies are kept for a reinstall)")
+    @dcsatc.command(name="uninstall", description="Uninstall DCS-ATC (your config, charts and frequencies are kept for a reinstall)")
     @app_commands.guild_only()
     @utils.app_has_role('DCS Admin')
-    async def uninstall(self, interaction: discord.Interaction,
+    async def uninstall_cmd(self, interaction: discord.Interaction,
                         server: app_commands.Transform[Server, utils.ServerTransformer]):
         async def job(status) -> str:
             app = self.app_dir()
