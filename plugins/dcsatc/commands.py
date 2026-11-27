@@ -19,7 +19,7 @@ import discord
 import psutil
 import ssl
 
-from core import Plugin, Group, utils, Server, Status
+from core import Plugin, Group, utils, Server, Status, command, MizFile
 from discord import app_commands
 from services.bot import DCSServerBot
 
@@ -110,6 +110,24 @@ def _run(args: list[str], timeout: int = SETUP_TIMEOUT) -> int:
         _confirm_folder_dialogs(proc.pid)
         time.sleep(0.5)
     return proc.returncode
+
+
+TIME_CHOICES = ["mission", "real", "05:30", "06:30", "08:00", "10:00", "12:00", "14:00", "16:00", "18:00", "19:30", "22:00"]
+
+
+def _parse_time(value: str) -> int | None:
+    """'HH:MM' -> seconds after midnight; None if it isn't a time."""
+    import re
+    m = re.fullmatch(r"\s*(\d{1,2})[:.h]?(\d{2})\s*", value or "")
+    if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+        return None
+    return int(m.group(1)) * 3600 + int(m.group(2)) * 60
+
+
+async def time_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    labels = {"mission": "Keep the mission's time", "real": "Real time now at that airport"}
+    return [app_commands.Choice(name=labels.get(x, x), value=x) for x in TIME_CHOICES
+            if not current or current.lower() in x or current.lower() in labels.get(x, '').lower()][:25]
 
 
 class DCSATC(Plugin):
@@ -410,6 +428,81 @@ class DCSATC(Plugin):
                     f"{self.backup_dir(app)} and come back with /dcsatc install. "
                     f"Restart the server (/server restart) so DCS drops the hook.")
         await self._work(interaction, "Uninstalling DCS-ATC ...", job)
+
+    # ---- Real weather with a time you pick --------------------------------------------------------------------------
+
+    @command(description="Real weather from an airport, with the mission time you pick (date stays)")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    @app_commands.rename(idx="airport")
+    @app_commands.describe(idx="Airport whose current weather to use",
+                           time="mission = keep, real = real time now, or a time like 06:30 (local)",
+                           use_orig="Start from your original mission (recommended)")
+    @app_commands.autocomplete(idx=utils.airbase_autocomplete, time=time_autocomplete)
+    async def weather(self, interaction: discord.Interaction,
+                      server: app_commands.Transform[Server, utils.ServerTransformer(
+                          status=[Status.RUNNING, Status.PAUSED, Status.STOPPED])],
+                      idx: int, time: str = "mission", use_orig: bool = True):
+        ephemeral = utils.get_ephemeral(interaction)
+        seconds = None
+        if time not in ("mission", "real"):
+            seconds = _parse_time(time)
+            if seconds is None:
+                # noinspection PyUnresolvedReferences
+                await interaction.response.send_message(
+                    f"\"{time}\" isn't a time. Use mission, real, or a time like 06:30.", ephemeral=ephemeral)
+                return
+        if not server.current_mission or idx >= len(server.current_mission.airbases):
+            # noinspection PyUnresolvedReferences
+            await interaction.response.send_message("Pick the airport from the list.", ephemeral=ephemeral)
+            return
+        airbase = server.current_mission.airbases[idx]
+        if not airbase.get('code'):
+            # noinspection PyUnresolvedReferences
+            await interaction.response.send_message(f"{airbase.get('name')} has no ICAO code, pick another airport.",
+                                                    ephemeral=ephemeral)
+            return
+        # noinspection PyUnresolvedReferences
+        await interaction.response.defer(ephemeral=ephemeral)
+        if server.is_populated() and not await utils.yn_question(
+                interaction, "Players are on the server. Reload the mission with the new weather now?",
+                ephemeral=ephemeral):
+            await interaction.followup.send("Weather not changed.", ephemeral=ephemeral)
+            return
+        msg = await interaction.followup.send("Changing the weather ...", ephemeral=ephemeral, wait=True)
+        try:
+            on = {"enable": True}
+            config = {"options": {
+                "weather": {"enable": True, "icao": airbase['code'], "wind": on, "clouds": on, "fog": on,
+                            "dust": on, "temperature": on, "pressure": on},
+                "time": {"enable": time == "real"},
+                "date": {"enable": False}
+            }}
+            filename = await server.get_current_mission_file()
+            status = server.status
+            new_filename = await server.run_on_extension('RealWeather', 'apply_realweather',
+                                                         filename=filename, config=config, use_orig=use_orig)
+            if seconds is not None:
+                def set_time():
+                    miz = MizFile(new_filename)
+                    miz.start_time = seconds
+                    miz.save()
+                await asyncio.to_thread(set_time)
+            if new_filename != filename:
+                await server.replaceMission(int(server.settings['listStartIndex']), new_filename)
+            text = f"Weather from {airbase['name']} ({airbase['code']})"
+            text += {"mission": ", mission time kept", "real": ", real time now"}.get(time, f", time {time}")
+            text += ", date kept."
+            if status in [Status.RUNNING, Status.PAUSED]:
+                await server.restart(modify_mission=False)
+                text += " Mission reloaded."
+            await msg.edit(content=text)
+        except ValueError:
+            await msg.edit(content="The RealWeather extension isn't loaded on this server.")
+        except Exception as ex:
+            self.log.exception("weather")
+            await msg.edit(content=f"Couldn't change the weather: {ex}")
+
 
     # ---- SkyEye (DCSServerBot's own SkyEye extension) ---------------------------------------------------------------
 

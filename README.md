@@ -19,6 +19,8 @@ Discord commands for DCS-ATC on a DCSServerBot server (role DCS Admin):
 | `/skyeye on` / `off` | Same as `/extension enable` / `disable SkyEye`: starts or stops it now and keeps that setting |
 | `/skyeye update` | Downloads the newest SkyEye and restarts it if it was running |
 
+**Weather:** `/weather <server> <airport> [time] [use_orig]` applies the airport's real weather (all of wind, clouds, fog, dust, temperature, pressure) through the RealWeather extension and sets the mission time: `mission` keeps it, `real` uses the real time now, or a time like `06:30`. The date is never changed. Reloads the mission (asks first if players are on).
+
 `config.jsonc`, `charts.jsonc` and `frequencies.jsonc` are copied to `Saved Games\DCS-ATC-DCSServerBot-backup` before every
 install, update and uninstall and put back afterwards.
 
