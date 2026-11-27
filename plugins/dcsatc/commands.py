@@ -429,6 +429,34 @@ class DCSATC(Plugin):
                     f"Restart the server (/server restart) so DCS drops the hook.")
         await self._work(interaction, "Uninstalling DCS-ATC ...", job)
 
+    async def _apply_realweather(self, server: Server, filename: str, override: dict, use_orig: bool) -> str:
+        """Run DCS Real Weather on the mission with OUR settings, airport included. The extension's own
+        apply_realweather only runs when config.toml (or the file name) names an airport, and an airport in
+        config.toml would also rewrite every mission on every load."""
+        import tempfile
+        try:
+            import tomllib as toml
+        except ImportError:
+            import tomli as toml
+        ext = server.extensions.get('RealWeather')
+        if not ext:
+            raise ValueError("RealWeather extension not loaded")
+        src = utils.get_orig_file(filename) if use_orig else filename
+        if not src or not os.path.exists(src):
+            src = filename
+        with open(ext.config_path, mode='rb') as f:
+            cfg = toml.load(f)
+        cfg = utils.deep_merge(cfg, override)
+        cfg['options']['weather'].pop('icao-list', None)
+        fd, tmpname = tempfile.mkstemp()
+        os.close(fd)
+        mission = cfg.setdefault('realweather', {}).setdefault('mission', {})
+        mission['input'] = src
+        mission['output'] = tmpname
+        ext.locals = cfg
+        new_filename, _ = await ext.run_realweather(src, tmpname)
+        return new_filename
+
     # ---- Real weather with a time you pick --------------------------------------------------------------------------
 
     @command(description="Real weather from an airport, with the mission time you pick (date stays)")
@@ -480,8 +508,7 @@ class DCSATC(Plugin):
             }}
             filename = await server.get_current_mission_file()
             status = server.status
-            new_filename = await server.run_on_extension('RealWeather', 'apply_realweather',
-                                                         filename=filename, config=config, use_orig=use_orig)
+            new_filename = await self._apply_realweather(server, filename, config, use_orig)
             if seconds is not None:
                 def set_time():
                     miz = MizFile(new_filename)
