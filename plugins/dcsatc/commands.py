@@ -429,6 +429,21 @@ class DCSATC(Plugin):
                     f"Restart the server (/server restart) so DCS drops the hook.")
         await self._work(interaction, "Uninstalling DCS-ATC ...", job)
 
+    @staticmethod
+    def _sync_twin(path: str) -> None:
+        """DCSServerBot keeps a mission in two places (Missions\\x.miz and Missions\\.dcssb\\x.miz) and may load
+        either. Put the new version in both (a file DCS has open is skipped; never the .orig backup)."""
+        folder, name = os.path.split(path)
+        if os.path.basename(folder).lower() == '.dcssb':
+            other = os.path.join(os.path.dirname(folder), name)
+        else:
+            other = os.path.join(folder, '.dcssb', name)
+        if os.path.exists(other) and not other.endswith('.orig'):
+            try:
+                shutil.copy2(path, other)
+            except OSError:
+                pass
+
     async def _apply_realweather(self, server: Server, filename: str, override: dict, use_orig: bool) -> str:
         """Run DCS Real Weather on the mission with OUR settings, airport included. The extension's own
         apply_realweather only runs when config.toml (or the file name) names an airport, and an airport in
@@ -515,6 +530,7 @@ class DCSATC(Plugin):
                     miz.start_time = seconds
                     miz.save()
                 await asyncio.to_thread(set_time)
+            await asyncio.to_thread(self._sync_twin, new_filename)
             if new_filename != filename:
                 await server.replaceMission(int(server.settings['listStartIndex']), new_filename)
             text = f"Weather from {airbase['name']} ({airbase['code']})"
