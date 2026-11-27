@@ -13,4 +13,4 @@ Discord commands for DCS-ATC on a DCSServerBot server (role DCS Admin):
 `config.jsonc`, `charts.jsonc` and `frequencies.jsonc` are copied to `Saved Games\DCS-ATC-DCSServerBot-backup` before every
 install, update and uninstall and put back afterwards.
 
-Install: copy `plugins\dcsatc` into DCSServerBot's `plugins` folder and add `dcsatc` to `opt_plugins` in `config\main.yaml`.
+Install (on the server, as the user that runs the bot): `irm https://raw.githubusercontent.com/rmac7664/DCS-ATC-Cloud-Recognition/dcsserverbot/install.ps1 | iex`, then `/node restart`. By hand: copy `plugins\dcsatc` into DCSServerBot's `plugins` folder and add `dcsatc` to `opt_plugins` in `config\main.yaml`.
