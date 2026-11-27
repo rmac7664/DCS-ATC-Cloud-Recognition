@@ -10,6 +10,15 @@ Discord commands for DCS-ATC on a DCSServerBot server (role DCS Admin):
 | `/dcsatc install [version]` | Same for a new install (server task, this server's Saved Games) |
 | `/dcsatc uninstall` | Runs DCS-ATC's uninstaller silently |
 
+**SkyEye** (DCSServerBot's own SkyEye extension, set up in nodes.yaml):
+
+| Command | What it does |
+|---|---|
+| `/skyeye status` | Installed and newest version, on/off, running, callsign and frequencies |
+| `/skyeye restart` | Restarts SkyEye only, DCS keeps running |
+| `/skyeye on` / `off` | Same as `/extension enable` / `disable SkyEye`: starts or stops it now and keeps that setting |
+| `/skyeye update` | Downloads the newest SkyEye and restarts it if it was running |
+
 `config.jsonc`, `charts.jsonc` and `frequencies.jsonc` are copied to `Saved Games\DCS-ATC-DCSServerBot-backup` before every
 install, update and uninstall and put back afterwards.
 

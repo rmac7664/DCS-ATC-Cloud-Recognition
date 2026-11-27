@@ -113,6 +113,7 @@ def _run(args: list[str], timeout: int = SETUP_TIMEOUT) -> int:
 
 
 class DCSATC(Plugin):
+    """/dcsatc for DCS-ATC, /skyeye for DCSServerBot's SkyEye extension."""
 
     dcsatc = Group(name="dcsatc", description="Manage DCS-ATC on the server")
 
@@ -409,6 +410,112 @@ class DCSATC(Plugin):
                     f"{self.backup_dir(app)} and come back with /dcsatc install. "
                     f"Restart the server (/server restart) so DCS drops the hook.")
         await self._work(interaction, "Uninstalling DCS-ATC ...", job)
+
+    # ---- SkyEye (DCSServerBot's own SkyEye extension) ---------------------------------------------------------------
+
+    skyeye = Group(name="skyeye", description="Manage SkyEye on the server")
+
+    @staticmethod
+    def _skyeye_configured(server: Server) -> bool:
+        return 'SkyEye' in (server.instance.locals.get('extensions') or {})
+
+    async def _skyeye(self, interaction: discord.Interaction, server: Server, start: str, job) -> None:
+        if not self._skyeye_configured(server):
+            # noinspection PyUnresolvedReferences
+            await interaction.response.send_message(f"SkyEye is not set up for {server.name} in nodes.yaml.",
+                                                    ephemeral=utils.get_ephemeral(interaction))
+            return
+        await self._work(interaction, start, job)
+
+    @skyeye.command(name="status", description="SkyEye version, newest release, on/off and running")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def skyeye_status(self, interaction: discord.Interaction,
+                            server: app_commands.Transform[Server, utils.ServerTransformer]):
+        async def job(status) -> str:
+            ext = server.extensions.get('SkyEye')
+            enabled = (server.instance.locals['extensions']['SkyEye'] or {}).get('enabled', True)
+            if not ext:
+                return f"SkyEye is switched {'on' if enabled else 'off'} but not loaded (the server isn't running)."
+            version = ext.version
+            latest = await server.run_on_extension('SkyEye', 'get_latest_version')
+            running = await server.run_on_extension('SkyEye', 'is_running')
+            lines = [f"**SkyEye on {server.name}**",
+                     f"Installed: {version or 'unknown'}  |  Newest: {latest or 'unknown'}",
+                     f"Switched: {'on' if enabled else 'off'}  |  Running now: {'yes' if running else 'no'}"]
+            for cfg in getattr(ext, 'configs', []):
+                lines.append(f"{cfg.get('coalition', 'blue')}: {cfg.get('callsign', '?')} on "
+                             f"{cfg.get('srs-frequencies', '?')}")
+            if latest and version and _num(latest) > _num(version):
+                lines.append("Update with /skyeye update")
+            return "\n".join(lines)
+        await self._skyeye(interaction, server, "Checking SkyEye ...", job)
+
+    @skyeye.command(name="restart", description="Restart SkyEye only (DCS keeps running)")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def skyeye_restart(self, interaction: discord.Interaction,
+                             server: app_commands.Transform[Server, utils.ServerTransformer(
+                                 status=[Status.RUNNING, Status.PAUSED])]):
+        async def job(status) -> str:
+            if 'SkyEye' not in server.extensions:
+                return "SkyEye isn't loaded. Is it switched on? (/skyeye on)"
+            await server.run_on_extension('SkyEye', 'shutdown')
+            await asyncio.sleep(2)
+            await server.run_on_extension('SkyEye', 'prepare')
+            ok = await server.run_on_extension('SkyEye', 'startup')
+            return "SkyEye restarted." if ok else "SkyEye did not start again, check the DCSServerBot log."
+        await self._skyeye(interaction, server, "Restarting SkyEye ...", job)
+
+    @skyeye.command(name="on", description="Switch SkyEye on (starts now if the server is running)")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def skyeye_on(self, interaction: discord.Interaction,
+                        server: app_commands.Transform[Server, utils.ServerTransformer]):
+        async def job(status) -> str:
+            ok = await server.enable_extension('SkyEye')
+            return "SkyEye is on." if ok else "SkyEye could not be switched on, check the DCSServerBot log."
+        await self._skyeye(interaction, server, "Switching SkyEye on ...", job)
+
+    @skyeye.command(name="off", description="Stop SkyEye and keep it off (files stay installed)")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def skyeye_off(self, interaction: discord.Interaction,
+                         server: app_commands.Transform[Server, utils.ServerTransformer]):
+        async def job(status) -> str:
+            ok = await server.disable_extension('SkyEye')
+            return "SkyEye is off. /skyeye on switches it back on." if ok \
+                else "SkyEye could not be switched off, check the DCSServerBot log."
+        await self._skyeye(interaction, server, "Switching SkyEye off ...", job)
+
+    @skyeye.command(name="update", description="Update SkyEye to the newest release (restarts SkyEye)")
+    @app_commands.guild_only()
+    @utils.app_has_role('DCS Admin')
+    async def skyeye_update(self, interaction: discord.Interaction,
+                            server: app_commands.Transform[Server, utils.ServerTransformer]):
+        async def job(status) -> str:
+            if 'SkyEye' not in server.extensions:
+                return "SkyEye isn't loaded. Switch it on first (/skyeye on)."
+            old = server.extensions['SkyEye'].version
+            latest = await server.run_on_extension('SkyEye', 'get_latest_version')
+            if not latest:
+                return "Couldn't reach GitHub for the newest SkyEye."
+            if old and _num(latest) <= _num(old):
+                return f"SkyEye {old} is already the newest."
+            was_running = await server.run_on_extension('SkyEye', 'is_running')
+            if was_running:
+                await status("Stopping SkyEye ...")
+                await server.run_on_extension('SkyEye', 'shutdown')
+                await asyncio.sleep(2)
+            await status(f"Downloading SkyEye {latest} ...")
+            if not await server.run_on_extension('SkyEye', 'update', version=latest):
+                return "The SkyEye update failed, check the DCSServerBot log."
+            server.extensions['SkyEye']._version = None
+            if was_running:
+                await server.run_on_extension('SkyEye', 'prepare')
+                await server.run_on_extension('SkyEye', 'startup')
+            return f"SkyEye updated from {old} to {latest}." + (" It's running again." if was_running else "")
+        await self._skyeye(interaction, server, "Checking for a SkyEye update ...", job)
 
 
 async def setup(bot: DCSServerBot):
