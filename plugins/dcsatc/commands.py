@@ -537,7 +537,7 @@ class DCSATC(Plugin):
             text += {"mission": ", mission time kept", "real": ", real time now"}.get(time, f", time {time}")
             text += ", date kept."
             if status in [Status.RUNNING, Status.PAUSED]:
-                await server.restart(modify_mission=False)
+                await server.restart(modify_mission=False, use_orig=False)
                 text += " Mission reloaded."
             await msg.edit(content=text)
         except ValueError:
