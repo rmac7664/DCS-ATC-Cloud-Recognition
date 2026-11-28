@@ -430,19 +430,14 @@ class DCSATC(Plugin):
         await self._work(interaction, "Uninstalling DCS-ATC ...", job)
 
     @staticmethod
-    def _sync_twin(path: str) -> None:
-        """DCSServerBot keeps a mission in two places (Missions\\x.miz and Missions\\.dcssb\\x.miz) and may load
-        either. Put the new version in both (a file DCS has open is skipped; never the .orig backup)."""
+    def _twin(path: str) -> str:
+        """The other copy DCSServerBot keeps of a mission: Missions\\x.miz <-> Missions\\.dcssb\\x.miz."""
         folder, name = os.path.split(path)
+        if name.endswith('.orig'):
+            name = name[:-5]
         if os.path.basename(folder).lower() == '.dcssb':
-            other = os.path.join(os.path.dirname(folder), name)
-        else:
-            other = os.path.join(folder, '.dcssb', name)
-        if os.path.exists(other) and not other.endswith('.orig'):
-            try:
-                shutil.copy2(path, other)
-            except OSError:
-                pass
+            return os.path.join(os.path.dirname(folder), name)
+        return os.path.join(folder, '.dcssb', name)
 
     async def _apply_realweather(self, server: Server, filename: str, override: dict, use_orig: bool) -> str:
         """Run DCS Real Weather on the mission with OUR settings, airport included. The extension's own
@@ -469,7 +464,11 @@ class DCSATC(Plugin):
         mission['input'] = src
         mission['output'] = tmpname
         ext.locals = cfg
-        new_filename, _ = await ext.run_realweather(src, tmpname)
+        # DCS has the running mission file open, so the result goes to its twin (Missions\\x.miz <->
+        # Missions\\.dcssb\\x.miz), which DCS then loads.
+        target = self._twin(filename)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        new_filename, _ = await ext.run_realweather(target, tmpname)
         return new_filename
 
     # ---- Real weather with a time you pick --------------------------------------------------------------------------
@@ -530,7 +529,6 @@ class DCSATC(Plugin):
                     miz.start_time = seconds
                     miz.save()
                 await asyncio.to_thread(set_time)
-            await asyncio.to_thread(self._sync_twin, new_filename)
             if new_filename != filename:
                 await server.replaceMission(int(server.settings['listStartIndex']), new_filename)
             text = f"Weather from {airbase['name']} ({airbase['code']})"
